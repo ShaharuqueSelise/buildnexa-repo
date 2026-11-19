@@ -1,5 +1,6 @@
 {
-  "app.name": "Plumbline",
+  "app.name": "Buildnexa",
+  "app.tagline": "One platform. Every project. In sync.",
   "auth.back": "Back to sign in",
   "auth.continue": "Continue with Blocks",
   "auth.failed": "Sign-in failed",

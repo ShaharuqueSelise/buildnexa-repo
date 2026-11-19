@@ -1,5 +1,6 @@
 export const defaultDictionary = {
-  "app.name": "Plumbline",
+  "app.name": "Buildnexa",
+  "app.tagline": "One platform. Every project. In sync.",
   "nav.profile": "Profile",
   "nav.spike": "Tenancy spike",
   "nav.logout": "Log out",

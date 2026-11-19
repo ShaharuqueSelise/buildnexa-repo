@@ -167,6 +167,7 @@ pre { background: hsl(var(--foreground)); border-radius: var(--radius); color: h
 .auth-brand { align-items: center; display: flex; font-weight: 700; gap: 10px; }
 .auth-card h2 { font-size: 22px; margin: 0; }
 .auth-card > p { color: hsl(var(--muted-foreground)); margin: 0; }
+.auth-card > p.auth-tagline { color: hsl(var(--foreground)); font-size: 13px; font-weight: 600; margin-top: -8px; }
 .auth-submit { justify-content: center; width: 100%; }
 
 /* Alerts */

@@ -27,6 +27,7 @@ export function LoginPage({ returnTo }: { returnTo?: string }) {
     <div className="auth-screen">
       <div className="auth-card">
         <div className="auth-brand"><span className="brand-mark"><Activity size={18} /></span><span>{t("app.name")}</span></div>
+        <p className="auth-tagline">{t("app.tagline")}</p>
         <h2>{t("auth.welcome")}</h2>
         <p>{t("auth.subtitle")}</p>
         {!configured ? (
