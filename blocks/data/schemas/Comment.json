@@ -1,0 +1,67 @@
+{
+  "schemaName": "Comment",
+  "collectionName": "Comments",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "recordType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "recordId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "recordNumber",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "body",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "attachments",
+      "type": "Attachment",
+      "isArray": true
+    },
+    {
+      "name": "authorCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "visibility",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "mentionUserIds",
+      "type": "ID",
+      "isArray": true
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "voidReason",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

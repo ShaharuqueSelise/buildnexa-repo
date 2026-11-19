@@ -1,0 +1,32 @@
+{
+  "schemaName": "Address",
+  "collectionName": "Addresss",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "street",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "postalCode",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "city",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "region",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "country",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

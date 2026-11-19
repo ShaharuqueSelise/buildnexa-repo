@@ -1,0 +1,107 @@
+{
+  "schemaName": "Project",
+  "collectionName": "Projects",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "number",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "name",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "description",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "address",
+      "type": "Address",
+      "isArray": false
+    },
+    {
+      "name": "location",
+      "type": "GeoJson",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "startDate",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "endDate",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "currency",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "timezone",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "locale",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "defaultLanguage",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "clientName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "settings",
+      "type": "ProjectSettings",
+      "isArray": false
+    },
+    {
+      "name": "calendar",
+      "type": "WorkingCalendar",
+      "isArray": false
+    },
+    {
+      "name": "lastDailyLogDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "createdByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "logoFileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "retentionUntil",
+      "type": "DateTime",
+      "isArray": false
+    }
+  ]
+}

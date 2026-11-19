@@ -1,0 +1,67 @@
+{
+  "schemaName": "Company",
+  "collectionName": "Companys",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "name",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "legalName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "vatId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "relation",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "tradeCodes",
+      "type": "String",
+      "isArray": true
+    },
+    {
+      "name": "address",
+      "type": "Address",
+      "isArray": false
+    },
+    {
+      "name": "defaultLanguage",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "brandColor",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "logoFileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    }
+  ]
+}

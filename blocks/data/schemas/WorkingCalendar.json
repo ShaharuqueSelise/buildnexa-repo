@@ -1,0 +1,32 @@
+{
+  "schemaName": "WorkingCalendar",
+  "collectionName": "WorkingCalendars",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "country",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "region",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "weekendDays",
+      "type": "Int",
+      "isArray": true
+    },
+    {
+      "name": "holidays",
+      "type": "Holiday",
+      "isArray": true
+    },
+    {
+      "name": "holidaysLoadedUntil",
+      "type": "DateTime",
+      "isArray": false
+    }
+  ]
+}

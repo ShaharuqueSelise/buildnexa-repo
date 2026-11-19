@@ -1,0 +1,42 @@
+{
+  "schemaName": "ProjectSettings",
+  "collectionName": "ProjectSettingss",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "rfiDefaultDueWorkingDays",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "submittalReviewWorkingDays",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "punchDefaultDueDays",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "rfiManagerUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "drawingDistributionUserIds",
+      "type": "ID",
+      "isArray": true
+    },
+    {
+      "name": "disciplines",
+      "type": "Discipline",
+      "isArray": true
+    },
+    {
+      "name": "changeOrderApprover",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

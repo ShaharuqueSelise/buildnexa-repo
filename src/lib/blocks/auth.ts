@@ -190,6 +190,109 @@ export async function completeLogin(callbackUrl: string): Promise<CallbackResult
   return { ok: true, returnTo };
 }
 
+// ---------- App-owned sign-in (Buildnexa's own login screen) ----------
+// IAM's embedded password login (`POST /iam/v4/auth/login`, enabled for this tenant:
+// login-options says signIn.embedded.password = true). The response either carries tokens in
+// the body or sets the session cookie; both are handled, exactly as completeLogin does.
+
+export type SignInResult =
+  | { ok: true }
+  | { ok: false; reason: "invalid" | "mfa" | "locked" | "tooMany" | "network" | "other"; message: string };
+
+function errorBody(error: unknown): Record<string, unknown> | undefined {
+  const body = (error as { body?: unknown })?.body;
+  return body && typeof body === "object" ? (body as Record<string, unknown>) : undefined;
+}
+
+function signInFailure(body: Record<string, unknown> | undefined, fallback: string): SignInResult {
+  const code = String(body?.error ?? "");
+  const message = String(body?.error_description ?? body?.message ?? fallback);
+  if (code === "invalid_username_password") return { ok: false, reason: "invalid", message };
+  // IAM locks a username for 5 minutes after 5 failed attempts (blocks auth config).
+  if (/temporarily locked|failed authentication attempts/i.test(message)) return { ok: false, reason: "tooMany", message };
+  if (/lock|disabled|inactive|not_active|verification/i.test(code + message)) return { ok: false, reason: "locked", message };
+  return { ok: false, reason: "other", message };
+}
+
+export async function signInWithPassword(email: string, password: string): Promise<SignInResult> {
+  let data: Record<string, unknown>;
+  try {
+    data = (await blocksClient.auth.login({ username: email.trim(), password })) as Record<string, unknown>;
+  } catch (error) {
+    const body = errorBody(error);
+    if (!body && !(error as { status?: number })?.status) return { ok: false, reason: "network", message: (error as Error).message };
+    return signInFailure(body, (error as Error).message);
+  }
+
+  if (data.error) return signInFailure(data, "Sign-in failed");
+  // A second factor is not part of the MVP; say so instead of failing silently.
+  if (data.enable_mfa || data.enableMfa || data.mfaId || data.mfa_id) {
+    return { ok: false, reason: "mfa", message: "This account needs a second sign-in step, which Buildnexa does not support yet." };
+  }
+
+  const accessToken = (data.access_token ?? data.accessToken) as string | undefined;
+  if (accessToken) persistTokens(accessToken, (data.refresh_token ?? data.refreshToken) as string | undefined);
+  return { ok: true };
+}
+
+// Forgot password: IAM emails a reset link. The answer is the same whether or not the address
+// has an account, so the screen never reveals which emails exist.
+export async function requestPasswordReset(email: string): Promise<{ ok: boolean; message?: string }> {
+  try {
+    await blocksClient.auth.recover({ email: email.trim() });
+    return { ok: true };
+  } catch (error) {
+    const status = (error as { status?: number })?.status;
+    if (status && status < 500) return { ok: true };
+    return { ok: false, message: (error as Error).message };
+  }
+}
+
+// ---------- Emailed links: accept an invitation, reset a password ----------
+// Contracts probed on dev (19 Nov 2026): validate-activation takes `activationCode` and answers
+// { status, firstName, lastName, errors }; activate and reset-password take `code` + `password`
+// and answer { isSuccess, errors: { Field: "message" } }. All three are public.
+
+export type CodeCheck = { ok: true; firstName?: string; lastName?: string } | { ok: false; message: string };
+export type CodeSubmit = { ok: true } | { ok: false; message: string };
+
+function firstError(body: Record<string, unknown> | undefined, fallback: string): string {
+  const errors = body?.errors;
+  if (errors && typeof errors === "object") {
+    const first = Object.values(errors as Record<string, unknown>).find((v) => typeof v === "string" && v);
+    if (typeof first === "string") return first;
+  }
+  return String(body?.error_description ?? body?.message ?? fallback);
+}
+
+async function submitCode(call: () => Promise<unknown>, fallback: string): Promise<CodeSubmit> {
+  try {
+    const body = (await call()) as Record<string, unknown>;
+    if (body?.isSuccess === false) return { ok: false, message: firstError(body, fallback) };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: firstError(errorBody(error), (error as Error).message || fallback) };
+  }
+}
+
+export async function checkActivationCode(code: string): Promise<CodeCheck> {
+  try {
+    const body = (await blocksClient.auth.validateActivation({ activationCode: code })) as Record<string, unknown>;
+    if (body?.isSuccess === false || body?.status === "Invalid") return { ok: false, message: firstError(body, "Invalid_ActivationCode") };
+    return { ok: true, firstName: (body?.firstName as string) || undefined, lastName: (body?.lastName as string) || undefined };
+  } catch (error) {
+    return { ok: false, message: firstError(errorBody(error), (error as Error).message) };
+  }
+}
+
+export function activateAccount(code: string, password: string, firstName?: string, lastName?: string): Promise<CodeSubmit> {
+  return submitCode(() => blocksClient.auth.activate({ code, password, firstName, lastName }), "Activation failed");
+}
+
+export function resetPassword(code: string, password: string): Promise<CodeSubmit> {
+  return submitCode(() => blocksClient.auth.resetPassword({ code, password }), "Password reset failed");
+}
+
 export async function logout(): Promise<void> {
   // Ask IAM to end the session (clears the httpOnly cookie server-side)
   // before dropping any locally cached bearer token; best-effort so a

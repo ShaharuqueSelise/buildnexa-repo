@@ -1,0 +1,117 @@
+{
+  "schemaName": "OrgMember",
+  "collectionName": "OrgMembers",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "userId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "email",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "firstName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "displayName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "phone",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "jobTitle",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "companyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "companyName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "companyRelation",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "orgRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "isCompanyAdmin",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "canCreateProjects",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "invitedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "invitedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "inviteExpiresAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "signupLinkId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "joinedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "removedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "removedReason",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

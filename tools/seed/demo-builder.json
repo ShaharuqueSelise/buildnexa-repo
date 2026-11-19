@@ -1,0 +1,19 @@
+{
+  "organization": {
+    "name": "Demo Builder GmbH",
+    "description": "Dummy customer for the Buildnexa pilot (dev/stg only)"
+  },
+  "tenantRole": "co-demobuilder",
+  "company": {
+    "name": "Demo Builder GmbH",
+    "legalName": "Demo Builder GmbH",
+    "tradeCodes": ["GC"],
+    "address": { "street": "Musterstrasse 1", "postalCode": "10115", "city": "Berlin", "region": "Berlin", "country": "DE" },
+    "defaultLanguage": "en"
+  },
+  "admin": {
+    "email": "shahrukhamin65+demoadmin@gmail.com",
+    "firstName": "Demo",
+    "lastName": "Admin"
+  }
+}

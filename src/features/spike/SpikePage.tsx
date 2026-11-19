@@ -32,6 +32,9 @@ const PROJECT_ROLES: Record<string, string> = {
   "47594bad-8e71-4339-a241-ce84a34ebb9e": "prj-b"
 };
 
+// Function spike-onboard on the test environment (spike/test-workspace/functions/spike-onboard).
+const ONBOARD_FUNCTION_ID = "9243e546-dfb2-432f-8109-5f895aa6cfa9";
+
 function orgIdOf(value: unknown): string {
   if (Array.isArray(value)) return String(value[0] ?? "");
   return String(value ?? "");
@@ -130,6 +133,67 @@ export function SpikePage() {
     await list.refetch();
   }
 
+  // Phase 1 onboarding spike: the deployed test Function, called with this user's token.
+  const [companyName, setCompanyName] = useState("SPIKE Co C");
+  async function onboard(mode: "whoami" | "onboard") {
+    await run(`function ${mode}${mode === "onboard" ? ` "${companyName}" -> grant to me` : ""}`, () =>
+      blocksClient.logic.functions.call(ONBOARD_FUNCTION_ID, {
+        method: "POST",
+        body: mode === "onboard" ? { mode, companyName, adminUserId: userId } : { mode }
+      })
+    );
+    if (mode === "onboard") await myOrgs.refetch();
+  }
+
+  // End-to-end onboarding test: what a company admin can do from the app in their own org.
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRoles, setInviteRoles] = useState("staff");
+  const [grantUserId, setGrantUserId] = useState("");
+  const [grantRoles, setGrantRoles] = useState("staff");
+  const rolesOf = (text: string) => text.split(",").map((r) => r.trim()).filter(Boolean);
+  async function invitePerson() {
+    const email = inviteEmail.trim();
+    if (!email) return;
+    const roles = rolesOf(inviteRoles);
+    await run(`invite ${email} roles [${roles.join(", ")}] in my org`, () =>
+      blocksClient.iam.users.create({ email, firstName: "Demo", lastName: "Person", organizationId: String(tokenOrg ?? ""), roles })
+    );
+  }
+  async function grantRolesTo() {
+    const target = grantUserId.trim();
+    if (!target) return;
+    const roles = rolesOf(grantRoles);
+    await run(`grant ${target.slice(0, 8)} roles [${roles.join(", ")}] in my org`, () =>
+      blocksClient.iam.users.updateAccess({ userId: target, organizationId: String(tokenOrg ?? ""), roles })
+    );
+  }
+  async function readUser() {
+    const target = grantUserId.trim();
+    if (!target) return;
+    await run(`read user ${target.slice(0, 8)} in my org`, () => blocksClient.iam.users.get(target, { organizationId: String(tokenOrg ?? "") }));
+  }
+
+  // Phase 1 rules check (dev): Company is readable by its own company and the service only.
+  async function companyCheck(kind: "read" | "create") {
+    if (kind === "read") {
+      await run("read Companys as me", () =>
+        blocksClient.data.graphql({
+          operationName: "getCompanys",
+          query: "query getCompanys($input: DynamicQueryInput) { getCompanys(input: $input) { totalCount items { ItemId name tenantRole } } }",
+          variables: { input: { pageNo: 1, pageSize: 10 } }
+        })
+      );
+    } else {
+      await run("create Company as me (tenantRole co-servicecheck)", () =>
+        blocksClient.data.graphql({
+          operationName: "insertCompany",
+          query: "mutation insertCompany($input: CompanyInsertInput!) { insertCompany(input: $input) { acknowledged itemId message } }",
+          variables: { input: { tenantRole: "co-servicecheck", name: "USER CHECK - should be refused", relation: "self", status: "inactive", isVoided: true } }
+        })
+      );
+    }
+  }
+
   async function probe(kind: "get" | "edit") {
     const id = probeId.trim();
     if (!id) return;
@@ -205,6 +269,41 @@ export function SpikePage() {
           <input value={probeId} onChange={(e) => setProbeId(e.target.value)} placeholder="ItemId" style={{ flex: 1 }} />
           <ActionButton onClick={() => void probe("get")}>Probe read</ActionButton>
           <ActionButton onClick={() => void probe("edit")}>Probe edit</ActionButton>
+        </p>
+      </div>
+
+      <div className="profile-card" style={{ display: "block", marginTop: 16 }}>
+        <h3>Onboarding Function spike</h3>
+        <p>Calls the test Function with your token. Onboard creates an organization and a co- role, and grants them to you.</p>
+        <p style={{ display: "flex", gap: 8 }}>
+          <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Company name" style={{ flex: 1 }} />
+          <ActionButton onClick={() => void onboard("whoami")}>Who am I (no changes)</ActionButton>
+          <ActionButton onClick={() => void onboard("onboard")}>Onboard test company</ActionButton>
+        </p>
+      </div>
+
+      <div className="profile-card" style={{ display: "block", marginTop: 16 }}>
+        <h3>Company admin test</h3>
+        <p>Everything here runs in your current organization with your own token. Roles are comma-separated slugs.</p>
+        <p style={{ display: "flex", gap: 8 }}>
+          <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="Email to invite" style={{ flex: 2 }} />
+          <input value={inviteRoles} onChange={(e) => setInviteRoles(e.target.value)} placeholder="roles" style={{ flex: 1 }} />
+          <ActionButton onClick={() => void invitePerson()}>Invite person</ActionButton>
+        </p>
+        <p style={{ display: "flex", gap: 8 }}>
+          <input value={grantUserId} onChange={(e) => setGrantUserId(e.target.value)} placeholder="User id" style={{ flex: 2 }} />
+          <input value={grantRoles} onChange={(e) => setGrantRoles(e.target.value)} placeholder="roles" style={{ flex: 1 }} />
+          <ActionButton onClick={() => void grantRolesTo()}>Set roles</ActionButton>
+          <ActionButton onClick={() => void readUser()}>Read user</ActionButton>
+        </p>
+      </div>
+
+      <div className="profile-card" style={{ display: "block", marginTop: 16 }}>
+        <h3>Phase 1 data rules check</h3>
+        <p>With your own token. Without a company role you should see 0 companies and the create should be refused.</p>
+        <p style={{ display: "flex", gap: 8 }}>
+          <ActionButton onClick={() => void companyCheck("read")}>Read companies</ActionButton>
+          <ActionButton onClick={() => void companyCheck("create")}>Try to create a company</ActionButton>
         </p>
       </div>
 

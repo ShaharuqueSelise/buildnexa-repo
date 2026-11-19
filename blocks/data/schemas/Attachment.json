@@ -1,0 +1,42 @@
+{
+  "schemaName": "Attachment",
+  "collectionName": "Attachments",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "fileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "fileName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "contentType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "sizeBytes",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "thumbnailFileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "uploadedBy",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "uploadedAt",
+      "type": "DateTime",
+      "isArray": false
+    }
+  ]
+}

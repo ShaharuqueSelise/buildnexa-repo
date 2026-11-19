@@ -3,10 +3,18 @@ import { AppShell } from "../layout/AppShell";
 import { RedirectIfAuthenticated, RequireAuth } from "./guards";
 import { CallbackPage } from "../../features/auth/CallbackPage";
 import { ErrorPage } from "../../features/auth/ErrorPage";
+import { ActivatePage, ResetPasswordPage } from "../../features/auth/AccountLinkPages";
 import { LoginPage } from "../../features/auth/LoginPage";
+import { useT } from "../../lib/i18n/LocalizationProvider";
+import type { TranslationKey } from "../../lib/i18n/dictionary";
 import { NotFoundPage } from "../../features/auth/NotFoundPage";
 import { ProfilePage } from "../../features/profile/ProfilePage";
 import { SpikePage } from "../../features/spike/SpikePage";
+
+const LOGIN_NOTICES: Record<string, TranslationKey> = {
+  activated: "auth.noticeActivated",
+  reset: "auth.noticeReset"
+};
 
 const protectedRoutes = {
   "/": ProfilePage,
@@ -17,6 +25,7 @@ const protectedRoutes = {
 export function AppRouter() {
   const [path, setPath] = useState(() => window.location.pathname);
   const [search, setSearch] = useState(() => window.location.search);
+  const { t } = useT();
 
   useEffect(() => {
     const onPopState = () => {
@@ -39,12 +48,24 @@ export function AppRouter() {
   }
 
   if (path === "/login") {
-    const returnTo = new URLSearchParams(search).get("returnTo") || undefined;
+    const params = new URLSearchParams(search);
+    const returnTo = params.get("returnTo") || undefined;
+    const notice = LOGIN_NOTICES[params.get("notice") ?? ""];
     return (
-      <RedirectIfAuthenticated onNavigate={navigate}>
-        <LoginPage returnTo={returnTo} />
+      <RedirectIfAuthenticated onNavigate={navigate} to={returnTo}>
+        <LoginPage notice={notice ? t(notice) : undefined} />
       </RedirectIfAuthenticated>
     );
+  }
+
+  // Emailed links. IAM builds them as <accountActionBaseUrl>/<path>?code=..., with the paths
+  // from `blocks auth config` (accountActivationPath "oidc/activate/", recoverAccountPath
+  // "resetpassword"); the short forms are accepted too.
+  if (/^\/(oidc\/)?activate(\/|$)/.test(path)) {
+    return <ActivatePage onNavigate={navigate} />;
+  }
+  if (/^\/(resetpassword|reset-password)(\/|$)/.test(path)) {
+    return <ResetPasswordPage onNavigate={navigate} />;
   }
 
   const Page = protectedRoutes[path as keyof typeof protectedRoutes];

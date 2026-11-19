@@ -1,0 +1,92 @@
+{
+  "schemaName": "ProjectMember",
+  "collectionName": "ProjectMembers",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "userId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "orgMemberId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "email",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "displayName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "companyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "companyName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "companyRelation",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "trade",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "role",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "isBallInCourtEligible",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "joinedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "removedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "removedReason",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "roleBeforeArchive",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

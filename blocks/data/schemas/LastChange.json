@@ -1,0 +1,52 @@
+{
+  "schemaName": "LastChange",
+  "collectionName": "LastChanges",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "kind",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "nonce",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "fromStatus",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "toStatus",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "previousBallUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "actorUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "reason",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "before",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "after",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schemaName": "Holiday",
+  "collectionName": "Holidays",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "date",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "name",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "source",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

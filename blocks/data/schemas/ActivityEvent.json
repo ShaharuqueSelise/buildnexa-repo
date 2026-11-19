@@ -1,0 +1,97 @@
+{
+  "schemaName": "ActivityEvent",
+  "collectionName": "ActivityEvents",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "recordType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "recordId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "recordNumber",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "action",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "actorUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "actorName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "at",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "fromStatus",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "toStatus",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "changedFields",
+      "type": "String",
+      "isArray": true
+    },
+    {
+      "name": "beforeJson",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "afterJson",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "summary",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "reason",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "source",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "correlationId",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

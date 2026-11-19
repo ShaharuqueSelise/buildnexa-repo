@@ -1,0 +1,52 @@
+{
+  "schemaName": "Sequence",
+  "collectionName": "Sequences",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "key",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "prefix",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "padWidth",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "targetSchema",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastValue",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "claimRef",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "claimedAt",
+      "type": "DateTime",
+      "isArray": false
+    }
+  ]
+}

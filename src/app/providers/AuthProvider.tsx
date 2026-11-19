@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { fetchSessionClaims, logout as endSession, onSessionExpired, startLogin } from "../../lib/blocks/auth";
+import { fetchSessionClaims, logout as endSession, onSessionExpired, signInWithPassword, startLogin } from "../../lib/blocks/auth";
+import type { SignInResult } from "../../lib/blocks/auth";
 
 type AuthStatus = "authenticated" | "loading" | "unauthenticated";
 
@@ -9,6 +10,7 @@ type AuthContextValue = {
   login: (returnTo?: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  signIn: (email: string, password: string) => Promise<SignInResult>;
   status: AuthStatus;
 };
 
@@ -58,6 +60,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await startLogin(returnTo);
   }, []);
 
+  // App-owned login screen: sign in, then confirm the session with IAM like every other path.
+  const signIn = useCallback(async (email: string, password: string) => {
+    const result = await signInWithPassword(email, password);
+    if (!result.ok) return result;
+    const sessionClaims = await fetchSessionClaims();
+    if (!sessionClaims) {
+      return { ok: false as const, reason: "other" as const, message: "Signed in, but the session could not be confirmed. Please try again." };
+    }
+    setClaims(sessionClaims);
+    setStatus("authenticated");
+    return result;
+  }, []);
+
   const logout = useCallback(async () => {
     await endSession();
     await refresh();
@@ -68,8 +83,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     logout,
     refresh,
+    signIn,
     status
-  }), [claims, login, logout, refresh, status]);
+  }), [claims, login, logout, refresh, signIn, status]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

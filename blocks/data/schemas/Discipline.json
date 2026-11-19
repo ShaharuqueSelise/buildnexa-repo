@@ -1,0 +1,22 @@
+{
+  "schemaName": "Discipline",
+  "collectionName": "Disciplines",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "code",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "name",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "sheetPrefix",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}
