@@ -18,8 +18,21 @@
 // - Nobody changes or deactivates themselves.
 // Never returns or logs a token.
 
+// >>> shared: functions/_shared/blocks.js (copied by tools/sync-functions.mjs, do not edit here)
+// Shared code for every Buildnexa Function. Blocks uploads only index.js + package.json per
+// Function, so `node tools/sync-functions.mjs` copies this file into each Function's index.js
+// between the "shared" markers (with `export ` removed). Edit it here, never in a Function.
+//
+// What is here:
+// - Refused: an expected refusal; handle() turns it into { ok:false, code, error }.
+// - serviceToken / client: the Buildnexa service identity (cpm-service) and its Data Gateway +
+//   IAM calls. Every read is filtered to one company, every update is matched by id AND company.
+// - caller: who is calling and which company they belong to (from THEIR token).
+// - allocateNumber: gap-free per-project numbers (RFI-001…) on the Sequence entity
+//   (docs/architecture/13 §4.1), compare-and-set as proven by spike M1b.
+// - handle: the common handler shell (errors, logging, never a token in the answer).
+
 const API = "https://blocksapi.slsblx.com";
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PROJECT_ROLES = ["project-manager", "superintendent", "document-controller", "field-user", "design-reviewer", "owner-viewer"];
 
 class Refused extends Error {
@@ -74,24 +87,118 @@ function client(ctx, token) {
     if (!r?.acknowledged) throw new Error(`insert${schema} not acknowledged`);
     return r.itemId;
   }
-  // Updates one row, matched by id AND company, so a wrong id can never touch another company.
-  async function update(schema, itemId, tenantRole, input) {
+  // Updates rows matching `where` (always AND the company); returns how many changed. Used as
+  // compare-and-set: put the expected old value in `where` and check for 1. When nothing matches,
+  // Blocks answers { acknowledged: false, totalImpactedData: 0 } (spike M1b), which is "0" here,
+  // not an error.
+  async function updateWhere(schema, where, tenantRole, input) {
     const data = await gql(
       `mutation m($where: ${schema}FilterInput, $input: ${schema}UpdateInput) { update${schema}(where: $where, input: $input) { acknowledged totalImpactedData } }`,
-      { where: { ItemId: { eq: itemId }, tenantRole: { eq: tenantRole } }, input }
+      { where: { ...where, tenantRole: { eq: tenantRole } }, input }
     );
     const r = data?.[`update${schema}`];
-    if (!r?.acknowledged) throw new Error(`update${schema} not acknowledged`);
+    if (!r) throw new Error(`update${schema} gave no answer`);
+    return r.acknowledged ? Number(r.totalImpactedData ?? 0) : 0;
   }
-  return { gql, iam, insert, list, update };
+  // Updates one row, matched by id AND company, so a wrong id can never touch another company.
+  async function update(schema, itemId, tenantRole, input) {
+    const changed = await updateWhere(schema, { ItemId: { eq: itemId } }, tenantRole, input);
+    if (changed === 0) throw new Error(`update${schema} matched no row`);
+  }
+  return { iam, gql, insert, list, update, updateWhere };
 }
 
 function caller(ctx) {
   const roles = ctx.context.roles ?? [];
   const companyRoles = roles.filter((r) => typeof r === "string" && r.startsWith("co-"));
   if (companyRoles.length !== 1) throw new Refused("NO_COMPANY", "Your account is not linked to exactly one company in this organization.");
-  if (!roles.includes("company-admin")) throw new Refused("NOT_ADMIN", "Only a company admin can manage people.");
-  return { userId: ctx.context.userId, organizationId: ctx.context.organizationId, tenantRole: companyRoles[0] };
+  return {
+    userId: ctx.context.userId,
+    organizationId: ctx.context.organizationId,
+    tenantRole: companyRoles[0],
+    isAdmin: roles.includes("company-admin"),
+    isStaff: roles.includes("staff") || roles.includes("company-admin")
+  };
+}
+
+function personName(m) {
+  return m.displayName || [m.firstName, m.lastName].filter(Boolean).join(" ") || m.email;
+}
+
+// ---------- numbering (docs/architecture/13 §4.1) ----------
+const SEQUENCES = {
+  rfi: { prefix: "RFI", targetSchema: "Rfi" },
+  submittal: { prefix: "SUB", targetSchema: "Submittal" },
+  punchItem: { prefix: "PI", targetSchema: "PunchItem" },
+  changeEvent: { prefix: "CE", targetSchema: "ChangeEvent" },
+  changeOrder: { prefix: "CO", targetSchema: "ChangeOrder" }
+};
+const formatNumber = (prefix, n, padWidth = 3) => `${prefix}-${String(n).padStart(padWidth, "0")}`;
+const SEQ_FIELDS = "ItemId projectId key prefix padWidth lastValue claimRef claimedAt";
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// A project's counter row; projects create all of them when the project is created.
+function sequenceRow(me, projectId, key) {
+  const def = SEQUENCES[key];
+  return { tenantRole: me.tenantRole, projectId, key, prefix: def.prefix, padWidth: 3, targetSchema: def.targetSchema, lastValue: 0 };
+}
+
+// Next number for `key` in one project. A project created before numbering existed gets its
+// counter on first use (two first callers at once can each create one; everyone then uses the
+// same one, sorted by id, and the others stay unused).
+// Self-heal of numbers whose record was never written comes with the first numbered record.
+async function allocateNumber(db, me, projectId, key, claimRef) {
+  const def = SEQUENCES[key];
+  if (!def) throw new Error(`unknown sequence ${key}`);
+  const ref = claimRef || crypto.randomUUID();
+  // Spike M1b: 20 callers at once on one counter gave 17 numbers in 9 s and 3 gave up after 8
+  // tries; real projects see a few creates at once, so 10 tries with a growing pause is plenty.
+  for (let attempt = 1; attempt <= 10; attempt += 1) {
+    const rows = (await db.list("Sequence", SEQ_FIELDS, me.tenantRole))
+      .filter((s) => s.projectId === projectId && s.key === key)
+      .sort((a, b) => String(a.ItemId).localeCompare(String(b.ItemId)));
+    let seq = rows[0];
+    if (!seq) {
+      await db.insert("Sequence", sequenceRow(me, projectId, key));
+      continue;
+    }
+    const last = Number(seq.lastValue ?? 0);
+    const n = last + 1;
+    const won = await db.updateWhere("Sequence", { ItemId: { eq: seq.ItemId }, lastValue: { eq: last } }, me.tenantRole, {
+      lastValue: n,
+      claimRef: ref,
+      claimedAt: new Date().toISOString()
+    });
+    if (won === 1) return { seq: n, number: formatNumber(seq.prefix || def.prefix, n, seq.padWidth || 3), claimRef: ref };
+    await pause(attempt * 40 + Math.floor(Math.random() * 80));
+  }
+  throw new Refused("SEQUENCE_CONTENDED", "Too many people are creating records right now. Please try again.");
+}
+
+// ---------- handler shell ----------
+// actions: { name: async (args, env) => result }, env = { ctx, me, db }. `db` is created only when
+// an action needs it (service token costs one IAM call).
+async function handle(input, ctx, label, actions) {
+  const args = (input && input.method ? input.body : input) ?? {};
+  try {
+    const action = actions[args.action];
+    if (!action) return { ok: false, code: "BAD_ACTION", error: "Unknown action." };
+    const me = caller(ctx);
+    const db = client(ctx, await serviceToken(ctx));
+    return await action(args, { ctx, me, db });
+  } catch (error) {
+    if (error instanceof Refused) return { ok: false, code: error.code, error: error.message };
+    ctx.log.error(`${label} failed`, { action: args.action, message: error.message });
+    return { ok: false, code: "FAILED", error: "Something went wrong. Please try again." };
+  }
+}
+// <<< shared
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function adminOnly(me) {
+  if (!me.isAdmin) throw new Refused("NOT_ADMIN", "Only a company admin can manage people.");
+  return me;
 }
 
 const MEMBER_FIELDS =
@@ -284,22 +391,12 @@ async function setActive(db, me, args, active) {
 }
 
 export default async function handler(input, ctx) {
-  const args = (input && input.method ? input.body : input) ?? {};
-  try {
-    const me = caller(ctx);
-    const db = client(ctx, await serviceToken(ctx));
-    switch (args.action) {
-      case "list": return await listPeople(ctx, db, me);
-      case "invite": return await invite(ctx, db, me, args);
-      case "setDefaultRole": return await setDefaultRole(db, me, args);
-      case "resend": return await resend(ctx, db, me, args);
-      case "deactivate": return await setActive(db, me, args, false);
-      case "reactivate": return await setActive(db, me, args, true);
-      default: return { ok: false, code: "BAD_ACTION", error: "Unknown action." };
-    }
-  } catch (error) {
-    if (error instanceof Refused) return { ok: false, code: error.code, error: error.message };
-    ctx.log.error("company-people failed", { action: args.action, message: error.message });
-    return { ok: false, code: "FAILED", error: "Something went wrong. Please try again." };
-  }
+  return handle(input, ctx, "company-people", {
+    list: (args, { ctx, db, me }) => listPeople(ctx, db, adminOnly(me)),
+    invite: (args, { ctx, db, me }) => invite(ctx, db, adminOnly(me), args),
+    setDefaultRole: (args, { db, me }) => setDefaultRole(db, adminOnly(me), args),
+    resend: (args, { ctx, db, me }) => resend(ctx, db, adminOnly(me), args),
+    deactivate: (args, { db, me }) => setActive(db, adminOnly(me), args, false),
+    reactivate: (args, { db, me }) => setActive(db, adminOnly(me), args, true)
+  });
 }

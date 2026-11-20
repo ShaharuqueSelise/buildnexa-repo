@@ -34,6 +34,7 @@ const PROJECT_ROLES: Record<string, string> = {
 
 // Function spike-onboard on the test environment (spike/test-workspace/functions/spike-onboard).
 const ONBOARD_FUNCTION_ID = "9243e546-dfb2-432f-8109-5f895aa6cfa9";
+const SEQ_SPIKE_FUNCTION_ID = "8dc3cc19-638d-4b90-a268-1913f8b9049d"; // spike-seq, test environment
 
 function orgIdOf(value: unknown): string {
   if (Array.isArray(value)) return String(value[0] ?? "");
@@ -143,6 +144,13 @@ export function SpikePage() {
       })
     );
     if (mode === "onboard") await myOrgs.refetch();
+  }
+
+  // Spike M1b (docs/spikes/M1b-numbering-and-triggers-spike.md): 20 parallel number allocations.
+  async function numberingSpike() {
+    await run("numbering spike: 20 parallel allocations", () =>
+      blocksClient.logic.functions.call(SEQ_SPIKE_FUNCTION_ID, { method: "POST", body: { mode: "seq", count: 20 } })
+    );
   }
 
   // End-to-end onboarding test: what a company admin can do from the app in their own org.
@@ -279,6 +287,9 @@ export function SpikePage() {
           <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Company name" style={{ flex: 1 }} />
           <ActionButton onClick={() => void onboard("whoami")}>Who am I (no changes)</ActionButton>
           <ActionButton onClick={() => void onboard("onboard")}>Onboard test company</ActionButton>
+        </p>
+        <p>
+          <ActionButton onClick={() => void numberingSpike()}>Numbering spike (M1b)</ActionButton>
         </p>
       </div>
 
