@@ -1,6 +1,8 @@
 // The signed-in person's notification inbox, from Blocks Notifier (blocksClient.notifier). Reading
-// and marking read need no setup; sending comes with the first module that notifies (RFIs,
-// Phase 2), through a Function with a notification configuration.
+// and marking read need blocks-logic::notifier::read and ::manage on the person's role, granted
+// INSIDE their company's organization (a grant in "default" alone still gives 403), so company
+// onboarding must grant them. Sending comes with the first module that notifies (RFIs, Phase 2),
+// through a Function with a notification configuration.
 //
 // Payload we send (and read here): denormalizedPayload = JSON
 //   { title, body?, link?, projectId?, kind? }   link = an app path, e.g. "/rfis?project=<id>"
@@ -39,7 +41,8 @@ function toNotification(n: Record<string, unknown>): AppNotification {
     at: text(n.createdTime) ?? text(n.createdDate) ?? text(n.CreatedDate),
     read: Boolean(n.isRead),
     title: text(p.title) ?? text(n.responseValue) ?? "Notification",
-    body: text(p.body),
+    // Blocks' own notifications (e.g. "New sign-in") use `description`.
+    body: text(p.body) ?? text(p.description),
     link: text(p.link)?.startsWith("/") ? text(p.link) : undefined,
     kind: text(p.kind)
   };
@@ -52,7 +55,8 @@ export function useNotifications(enabled = true) {
     enabled,
     refetchInterval: 60_000,
     queryFn: async () => {
-      const res = await blocksClient.notifier.getNotifications({ page: 1, pageSize: 8, sortBy: "createdTime", sortDescending: true });
+      // Notifier pages start at 0 (page 1 is the second page).
+      const res = await blocksClient.notifier.getNotifications({ page: 0, pageSize: 8, sortBy: "createdTime", sortDescending: true });
       return {
         items: (res?.notifications ?? []).map(toNotification).filter((n) => n.id),
         unread: Number(res?.unReadNotificationsCount ?? 0),
