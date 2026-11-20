@@ -269,6 +269,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .modal-actions { align-items: center; display: flex; gap: 8px; justify-content: flex-end; }
 .danger { background: hsl(var(--destructive)); color: hsl(var(--destructive-foreground)); }
 
+
 /* Loading + skeletons */
 .loading-screen { align-items: center; display: flex; height: 100vh; justify-content: center; }
 .spinner { animation: blocks-spin 0.7s linear infinite; border: 3px solid hsl(var(--border)); border-radius: 999px; border-top-color: hsl(var(--primary)); display: inline-block; height: 28px; width: 28px; }

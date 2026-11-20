@@ -8,9 +8,11 @@
 //      through Functions, never by granting roles themselves)
 //   2. the company's own role co-<slug>, which every one of its records carries as tenantRole
 //   3. the company's Blocks organization
-//   4. the first company admin: invited into that organization with [company-admin, co-<slug>]
-//   5. the Company row and the admin's OrgMember row, written by the platform-seed-company
-//      Function with the service identity (the Data Gateway rules let only the service write)
+//   4. people: the first company admin [company-admin, co-<slug>] and every seed.people entry
+//      [staff|external, co-<slug>], each invited into that organization (IAM emails the invite)
+//   5. records, written by the platform-seed-company Function with the service identity (the
+//      Data Gateway rules let only the service write): Company rows (self + partners), OrgMember
+//      rows, Projects and their ProjectMembers (project roles)
 // Needs multi-organization on (done on dev 19 Nov 2026) and a CLI login to the project.
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -23,6 +25,7 @@ const SHARED_ROLES = [
   { slug: "staff", name: "Staff", description: "Employee of the customer company" },
   { slug: "external", name: "External", description: "Outside party (subcontractor, designer, owner) invited by the company" }
 ];
+const PROJECT_ROLES = ["project-manager", "superintendent", "document-controller", "field-user", "design-reviewer", "owner-viewer"];
 
 const [file, ...flags] = process.argv.slice(2);
 if (!file) {
@@ -32,6 +35,18 @@ if (!file) {
 const apply = flags.includes("--yes");
 const seed = JSON.parse(readFileSync(file, "utf8"));
 if (!/^co-[a-z0-9-]{3,40}$/.test(seed.tenantRole ?? "")) throw new Error("tenantRole must look like co-<slug>");
+const partners = seed.partners ?? [];
+const projects = seed.projects ?? [];
+for (const p of seed.people ?? []) {
+  if (!["staff", "external"].includes(p.orgRole)) throw new Error(`${p.key}: orgRole must be staff or external`);
+  if (p.partner && !partners.some((x) => x.key === p.partner)) throw new Error(`${p.key}: unknown partner ${p.partner}`);
+}
+for (const pr of projects) {
+  for (const m of pr.members) {
+    if (!PROJECT_ROLES.includes(m.role)) throw new Error(`${pr.number}: unknown project role ${m.role}`);
+    if (!(seed.people ?? []).some((x) => x.key === m.person)) throw new Error(`${pr.number}: unknown person ${m.person}`);
+  }
+}
 
 function blocks(args) {
   const out = execFileSync("blocks", [...args, "--json"], { encoding: "utf8", shell: process.platform === "win32" });
@@ -62,45 +77,65 @@ if (!org && apply) {
   console.log(`         -> ${id}`);
 }
 
-// 4: first company admin
-const adminRoles = ["company-admin", seed.tenantRole];
-const found = blocks(["iam", "users", "list", "--email", seed.admin.email]).data ?? [];
-let admin = found.find((u) => (u.email ?? "").toLowerCase() === seed.admin.email.toLowerCase());
-const userId = () => admin?.itemId ?? admin?.userId ?? admin?.id;
-step(`admin ${seed.admin.email} [${adminRoles.join(", ")}]${admin ? ` ${userId()}` : ""}`, Boolean(admin));
-if (apply && org) {
-  if (!admin) {
+// 4: people
+function ensureUser(person, userRoles) {
+  const found = blocks(["iam", "users", "list", "--email", person.email]).data ?? [];
+  const user = found.find((u) => (u.email ?? "").toLowerCase() === person.email.toLowerCase());
+  const id = user?.itemId;
+  // The list has no organizations; read the user in this organization to see if they're in it.
+  let inOrg = false;
+  if (id && org) {
+    const full = blocks(["iam", "users", "get", id, "--organization-id", org.itemId]);
+    inOrg = ((full.data ?? full).organizationIds ?? []).includes(org.itemId);
+  }
+  step(`user ${person.email} [${userRoles.join(", ")}]${id ? ` ${id}` : ""}`, Boolean(id) && inOrg);
+  if (!apply || !org) return id;
+  if (!id) {
     const created = blocks([
       "iam", "users", "create",
-      "--email", seed.admin.email,
-      "--first-name", quote(seed.admin.firstName),
-      "--last-name", quote(seed.admin.lastName),
+      "--email", person.email,
+      "--first-name", quote(person.firstName),
+      "--last-name", quote(person.lastName),
       "--organization-id", org.itemId,
-      "--roles", quote(adminRoles.join(",")),
+      "--roles", quote(userRoles.join(",")),
       "--yes"
     ]);
-    admin = { itemId: created.itemId ?? created.id ?? created.userId ?? created.data?.itemId ?? created.data };
-    if (typeof userId() !== "string") throw new Error(`user id not found in ${JSON.stringify(created).slice(0, 300)}`);
-    console.log(`         -> ${userId()} (invite email sent)`);
-  } else {
-    // Existing user (e.g. from another company): add this organization with the admin roles.
-    blocks(["iam", "users", "access", "grant", userId(), "--organization-id", org.itemId, "--roles", quote(adminRoles.join(",")), "--yes"]);
-    console.log(`         -> granted [${adminRoles.join(", ")}] in ${org.itemId}`);
+    const newId = created.itemId ?? created.id ?? created.userId ?? created.data?.itemId ?? created.data;
+    if (typeof newId !== "string") throw new Error(`user id not found in ${JSON.stringify(created).slice(0, 300)}`);
+    console.log(`         -> ${newId} (invite email sent)`);
+    return newId;
   }
+  if (!inOrg) {
+    // Existing user (e.g. from another company): add this organization with these roles.
+    blocks(["iam", "users", "access", "grant", id, "--organization-id", org.itemId, "--roles", quote(userRoles.join(",")), "--yes"]);
+    console.log(`         -> granted [${userRoles.join(", ")}] in ${org.itemId}`);
+  }
+  return id;
 }
 
-// 5: Company + OrgMember rows (service identity, through the Function)
-step(`records Company (self) + OrgMember for the admin, via Function ${SEED_FUNCTION_ID.slice(0, 8)}`, false);
+const adminId = ensureUser(seed.admin, ["company-admin", seed.tenantRole]);
+const people = (seed.people ?? []).map((p) => ({ ...p, userId: ensureUser(p, [p.orgRole, seed.tenantRole]) }));
+
+// 5: records (service identity, through the Function; it skips what already exists)
+const places = projects.reduce((n, p) => n + p.members.length, 0);
+step(`records: Company self + ${partners.length} partners, ${people.length + 1} members, ${projects.length} projects, ${places} team places (Function ${SEED_FUNCTION_ID.slice(0, 8)})`, false);
+for (const pr of projects) {
+  console.log(`           ${pr.number} ${pr.name}: ${pr.members.map((m) => `${m.person}=${m.role}`).join(", ")}`);
+}
 if (apply) {
   const inputFile = join(tmpdir(), `seed-${seed.tenantRole}.json`);
   writeFileSync(inputFile, JSON.stringify({
     tenantRole: seed.tenantRole,
     company: seed.company,
-    admin: { userId: userId(), email: seed.admin.email, firstName: seed.admin.firstName, lastName: seed.admin.lastName }
+    admin: { userId: adminId, email: seed.admin.email, firstName: seed.admin.firstName, lastName: seed.admin.lastName },
+    partners,
+    people,
+    projects
   }));
   try {
     const run = blocks(["logic", "function", "test", SEED_FUNCTION_ID, "--input-file", inputFile, "--wait-timeout", "120"]);
-    console.log(`         -> run ${run.runId} ${run.status}`, run.result ?? run.errorMessage ?? "");
+    console.log(`         -> run ${run.runId} ${run.status}`);
+    console.log(JSON.stringify(run.result ?? run.errorMessage ?? "", null, 2));
   } finally {
     rmSync(inputFile, { force: true });
   }

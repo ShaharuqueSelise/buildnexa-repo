@@ -15,5 +15,54 @@
     "email": "shahrukhamin65+demoadmin@gmail.com",
     "firstName": "Demo",
     "lastName": "Admin"
-  }
+  },
+
+  "partners": [
+    { "key": "weber", "name": "Elektro Weber GmbH", "relation": "sub", "tradeCodes": ["26 - Electrical"], "city": "Potsdam" },
+    { "key": "klein", "name": "Architekturbuero Klein", "relation": "design", "tradeCodes": ["Architecture"], "city": "Berlin" },
+    { "key": "stadtwerke", "name": "Stadtwerke Musterstadt", "relation": "owner", "tradeCodes": [], "city": "Musterstadt" }
+  ],
+
+  "people": [
+    { "key": "pm", "email": "lukas.bnx@yopmail.com", "firstName": "Lukas", "lastName": "Becker", "jobTitle": "Project Manager", "orgRole": "staff", "canCreateProjects": true },
+    { "key": "super", "email": "jonas.bnx@yopmail.com", "firstName": "Jonas", "lastName": "Schmidt", "jobTitle": "Superintendent", "orgRole": "staff" },
+    { "key": "doc", "email": "anna.bnx@yopmail.com", "firstName": "Anna", "lastName": "Wolf", "jobTitle": "Document Controller", "orgRole": "staff" },
+    { "key": "foreman", "email": "mehmet.bnx@yopmail.com", "firstName": "Mehmet", "lastName": "Yilmaz", "jobTitle": "Foreman", "orgRole": "external", "partner": "weber" },
+    { "key": "designer", "email": "sophie.bnx@yopmail.com", "firstName": "Sophie", "lastName": "Klein", "jobTitle": "Architect", "orgRole": "external", "partner": "klein" },
+    { "key": "owner", "email": "thomas.bnx@yopmail.com", "firstName": "Thomas", "lastName": "Richter", "jobTitle": "Client Representative", "orgRole": "external", "partner": "stadtwerke" }
+  ],
+
+  "projects": [
+    {
+      "number": "PRJ-001",
+      "name": "Office Building Hafenstrasse",
+      "description": "Five-storey office building with underground parking (demo project)",
+      "clientName": "Stadtwerke Musterstadt",
+      "address": { "street": "Hafenstrasse 12", "postalCode": "10117", "city": "Berlin", "region": "Berlin", "country": "DE" },
+      "startDate": "2026-09-01T00:00:00Z",
+      "endDate": "2028-03-31T00:00:00Z",
+      "members": [
+        { "person": "pm", "role": "project-manager" },
+        { "person": "super", "role": "superintendent" },
+        { "person": "doc", "role": "document-controller" },
+        { "person": "foreman", "role": "field-user", "trade": "26 - Electrical" },
+        { "person": "designer", "role": "design-reviewer" },
+        { "person": "owner", "role": "owner-viewer" }
+      ]
+    },
+    {
+      "number": "PRJ-002",
+      "name": "Residential Lindenhof",
+      "description": "Three residential blocks, 48 apartments (demo project)",
+      "clientName": "Lindenhof Wohnbau GmbH",
+      "address": { "street": "Lindenallee 3", "postalCode": "14467", "city": "Potsdam", "region": "Brandenburg", "country": "DE" },
+      "startDate": "2026-11-01T00:00:00Z",
+      "endDate": "2028-06-30T00:00:00Z",
+      "members": [
+        { "person": "pm", "role": "project-manager" },
+        { "person": "super", "role": "superintendent" },
+        { "person": "foreman", "role": "field-user", "trade": "26 - Electrical" }
+      ]
+    }
+  ]
 }

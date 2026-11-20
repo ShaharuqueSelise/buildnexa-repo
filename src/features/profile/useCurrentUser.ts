@@ -12,6 +12,13 @@ export function useCurrentUser() {
   });
 }
 
+/** The signed-in user's roles in their current organization (IAM `iam.me()`). undefined while loading. */
+export function useMyRoles(): string[] | undefined {
+  const me = useCurrentUser();
+  if (me.isLoading || (!me.data && !me.error)) return undefined;
+  return me.data?.data?.roles ?? [];
+}
+
 export function userDisplayName(profile?: BlocksUser): string {
   if (!profile) return "";
   const name = [profile.firstName, profile.lastName].filter(Boolean).join(" ").trim();

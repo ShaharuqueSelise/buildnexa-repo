@@ -64,6 +64,11 @@
       "isArray": false
     },
     {
+      "name": "defaultRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
       "name": "isCompanyAdmin",
       "type": "Boolean",
       "isArray": false

@@ -6,6 +6,8 @@ import { navItems } from "./navItems";
 import { NotificationsMenu } from "./NotificationsMenu";
 import { UserMenu } from "./UserMenu";
 import { useT } from "../../lib/i18n/LocalizationProvider";
+import { useMyRoles } from "../../features/profile/useCurrentUser";
+import { ProjectSwitcher } from "../../features/projects/ProjectSwitcher";
 
 const COLLAPSED_KEY = "blocks-app:sidebar-collapsed";
 const MOBILE_QUERY = "(max-width: 880px)";
@@ -27,11 +29,13 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
   const isMobile = useIsMobile();
   const [collapsedPref, setCollapsedPref] = useState(() => localStorage.getItem(COLLAPSED_KEY) === "true");
   const { t } = useT();
+  const roles = useMyRoles() ?? [];
+  const items = navItems.filter((item) => !item.roles || item.roles.some((r) => roles.includes(r)));
   // On narrow screens the sidebar is always the icon-only rail below --
   // no separate hamburger/drawer/scrim needed, and no dead-end state where
   // nothing on screen can bring navigation back.
   const collapsed = collapsedPref || isMobile;
-  const activeItem = navItems.find((item) => item.href === activePath);
+  const activeItem = items.find((item) => item.href === activePath);
 
   useEffect(() => {
     localStorage.setItem(COLLAPSED_KEY, String(collapsedPref));
@@ -55,7 +59,7 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
           </button>
         </div>
         <nav>
-          {navItems.map((item) => (
+          {items.map((item) => (
             <a
               key={item.href}
               href={item.href}
@@ -80,6 +84,7 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
               <span>{t(activeItem.labelKey)}</span>
             </div>
           ) : null}
+          <ProjectSwitcher onNavigate={onNavigate} />
           <div className="topbar-spacer" />
           <LanguageSwitcher />
           <NotificationsMenu />

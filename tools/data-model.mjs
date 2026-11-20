@@ -79,8 +79,9 @@ const entities = {
     ...str("email", "firstName", "lastName", "displayName", "phone", "jobTitle"),
     ...id("companyId"),
     ...str("companyName", "companyRelation", "orgRole"), // orgRole: staff | external
+    ...str("defaultRole"), // project role slug used when the person is added to a project
     ...bool("isCompanyAdmin", "canCreateProjects"),
-    ...str("status"), // invited | active | removed
+    ...str("status"), // invited | active | deactivated | removed
     ...id("invitedByUserId"),
     ...date("invitedAt", "inviteExpiresAt"),
     ...str("signupLinkId"),
@@ -95,6 +96,8 @@ const entities = {
     ...str("status"), // active | onHold | completed | archived
     ...date("startDate", "endDate"),
     ...str("currency", "timezone", "locale", "defaultLanguage", "clientName"),
+    ...str("stage", "projectType"), // stage: preconstruction | construction | closeout (as on the demo app)
+    f("contractValue", "Float"),
     f("settings", "ProjectSettings"),
     f("calendar", "WorkingCalendar"),
     ...str("lastDailyLogDate"),

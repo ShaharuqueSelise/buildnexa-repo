@@ -74,6 +74,21 @@
       "isArray": false
     },
     {
+      "name": "stage",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "contractValue",
+      "type": "Float",
+      "isArray": false
+    },
+    {
       "name": "settings",
       "type": "ProjectSettings",
       "isArray": false

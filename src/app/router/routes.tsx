@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ComponentType } from "react";
 import { AppShell } from "../layout/AppShell";
 import { RedirectIfAuthenticated, RequireAuth } from "./guards";
 import { CallbackPage } from "../../features/auth/CallbackPage";
@@ -8,7 +9,10 @@ import { LoginPage } from "../../features/auth/LoginPage";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import type { TranslationKey } from "../../lib/i18n/dictionary";
 import { NotFoundPage } from "../../features/auth/NotFoundPage";
+import { CompanyAdminPage } from "../../features/company/CompanyAdminPage";
 import { ProfilePage } from "../../features/profile/ProfilePage";
+import { DirectoryPage } from "../../features/projects/DirectoryPage";
+import { ProjectsPage } from "../../features/projects/ProjectsPage";
 import { SpikePage } from "../../features/spike/SpikePage";
 
 const LOGIN_NOTICES: Record<string, TranslationKey> = {
@@ -16,8 +20,12 @@ const LOGIN_NOTICES: Record<string, TranslationKey> = {
   reset: "auth.noticeReset"
 };
 
-const protectedRoutes = {
+// Pages get the router's navigate function; pages that don't need it ignore it.
+const protectedRoutes: Record<string, ComponentType<{ onNavigate: (path: string) => void }>> = {
   "/": ProfilePage,
+  "/projects": ProjectsPage,
+  "/directory": DirectoryPage,
+  "/company": CompanyAdminPage,
   "/spike": SpikePage,
   "/error": ErrorPage
 };
@@ -68,15 +76,15 @@ export function AppRouter() {
     return <ResetPasswordPage onNavigate={navigate} />;
   }
 
-  const Page = protectedRoutes[path as keyof typeof protectedRoutes];
+  const Page = protectedRoutes[path];
   if (!Page) {
     return <NotFoundPage onNavigate={navigate} />;
   }
 
   return (
-    <RequireAuth currentPath={path} onNavigate={navigate}>
+    <RequireAuth currentPath={`${path}${search}`} onNavigate={navigate}>
       <AppShell activePath={path} onNavigate={navigate}>
-        <Page />
+        <Page onNavigate={navigate} />
       </AppShell>
     </RequireAuth>
   );
