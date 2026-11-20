@@ -14,6 +14,10 @@ import { ProfilePage } from "../../features/profile/ProfilePage";
 import { DirectoryPage } from "../../features/projects/DirectoryPage";
 import { ProjectsPage } from "../../features/projects/ProjectsPage";
 import { SpikePage } from "../../features/spike/SpikePage";
+import { ComingSoonPage } from "../../features/home/ComingSoonPage";
+import { HomePage } from "../../features/home/HomePage";
+import { setCurrentProject } from "../../features/projects/projectsApi";
+import { navItemFor } from "../layout/navItems";
 
 const LOGIN_NOTICES: Record<string, TranslationKey> = {
   activated: "auth.noticeActivated",
@@ -22,7 +26,8 @@ const LOGIN_NOTICES: Record<string, TranslationKey> = {
 
 // Pages get the router's navigate function; pages that don't need it ignore it.
 const protectedRoutes: Record<string, ComponentType<{ onNavigate: (path: string) => void }>> = {
-  "/": ProfilePage,
+  "/": HomePage,
+  "/profile": ProfilePage,
   "/projects": ProjectsPage,
   "/directory": DirectoryPage,
   "/company": CompanyAdminPage,
@@ -43,6 +48,12 @@ export function AppRouter() {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+
+  // A link with ?project=<id> (emails, notifications) makes that project the current one.
+  useEffect(() => {
+    const projectId = new URLSearchParams(search).get("project");
+    if (projectId) setCurrentProject(projectId);
+  }, [search]);
 
   function navigate(nextPath: string) {
     const [nextPathname = "/", queryString = ""] = nextPath.split("?");
@@ -76,15 +87,17 @@ export function AppRouter() {
     return <ResetPasswordPage onNavigate={navigate} />;
   }
 
+  // Modules not built yet open a page that says which phase builds them.
+  const later = navItemFor(path)?.phase;
   const Page = protectedRoutes[path];
-  if (!Page) {
+  if (!Page && !later) {
     return <NotFoundPage onNavigate={navigate} />;
   }
 
   return (
     <RequireAuth currentPath={`${path}${search}`} onNavigate={navigate}>
       <AppShell activePath={path} onNavigate={navigate}>
-        <Page onNavigate={navigate} />
+        {Page ? <Page onNavigate={navigate} /> : <ComingSoonPage path={path} />}
       </AppShell>
     </RequireAuth>
   );

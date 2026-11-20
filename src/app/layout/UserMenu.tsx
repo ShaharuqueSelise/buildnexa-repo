@@ -1,4 +1,4 @@
-import { LogOut } from "lucide-react";
+import { LogOut, UserRound } from "lucide-react";
 import { useAuth } from "../providers/AuthProvider";
 import { useCurrentUser, userDisplayName, userInitials } from "../../features/profile/useCurrentUser";
 import { useT } from "../../lib/i18n/LocalizationProvider";
@@ -39,6 +39,9 @@ export function UserMenu({ onNavigate }: { onNavigate: (path: string) => void })
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => onNavigate("/profile")}>
+          <UserRound size={18} /> {t("nav.profile")}
+        </DropdownMenuItem>
         <DropdownMenuItem destructive onSelect={handleLogout}>
           <LogOut size={18} /> {t("nav.logout")}
         </DropdownMenuItem>

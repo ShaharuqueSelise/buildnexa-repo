@@ -1,0 +1,63 @@
+/* The app shell (sidebar, top bar, content area), copied from the demo app's shell in
+   mock/src/mock/mock.css so the real app looks like the approved demo. Popovers, the project
+   switcher and icon buttons are in shared/m/m.css. */
+
+.m-root {
+  --m-sidebar: 222 47% 11%;
+  --m-sidebar-fg: 215 25% 80%;
+  --m-sidebar-active: 217 33% 20%;
+  background: hsl(var(--m-surface));
+  color: hsl(var(--foreground));
+  display: flex;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  height: 100vh;
+  overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  .m-root {
+    --m-sidebar: 222 47% 7%;
+    --m-sidebar-active: 217 33% 16%;
+  }
+}
+
+.m-side { background: hsl(var(--m-sidebar)); color: hsl(var(--m-sidebar-fg)); display: flex; flex: 0 0 248px; flex-direction: column; overflow: hidden; transition: flex-basis .2s; }
+.m-side.m-side-collapsed { flex-basis: 64px; }
+.m-side-brand { align-items: center; color: #fff; display: flex; flex-shrink: 0; font-weight: 600; gap: 10px; min-height: 60px; padding: 10px 16px; white-space: nowrap; }
+.m-side-brand .m-logo { align-items: center; background: linear-gradient(135deg, #f59e0b, #ea580c); border-radius: 8px; color: #fff; display: grid; flex: 0 0 32px; height: 32px; place-items: center; }
+.m-side-brand small { color: hsl(var(--m-sidebar-fg)); display: block; font-size: 11px; font-weight: 500; line-height: 1.3; white-space: normal; }
+.m-side nav { display: block; flex: 1; overflow-y: auto; padding: 4px 10px 16px; scrollbar-color: hsl(var(--m-sidebar-active)) transparent; }
+.m-side-group { color: hsl(215 16% 55%); font-size: 11px; font-weight: 600; letter-spacing: .06em; margin: 22px 10px 8px; text-transform: uppercase; white-space: nowrap; }
+.m-side-collapsed .m-side-group { visibility: hidden; height: 4px; margin: 8px 0; }
+.m-side a { align-items: center; border-radius: 8px; color: hsl(var(--m-sidebar-fg)); display: flex; gap: 12px; height: 40px; margin-bottom: 2px; padding: 0 12px; position: relative; text-decoration: none; white-space: nowrap; }
+.m-side a:hover { background: hsl(var(--m-sidebar-active)); color: #fff; }
+.m-side a.m-active { background: hsl(var(--m-sidebar-active)); color: #fff; font-weight: 500; }
+.m-side a.m-active::before { background: #f59e0b; border-radius: 3px; content: ""; height: 18px; left: -10px; position: absolute; width: 3px; }
+.m-side a .m-side-count { background: hsl(var(--m-sidebar-active)); border-radius: 999px; color: #fff; font-size: 11px; font-style: normal; font-weight: 600; margin-left: auto; padding: 1px 7px; }
+.m-side a.m-active .m-side-count { background: #f59e0b; color: #111; }
+/* Modules not built yet: still listed, as in the demo, but quieter. */
+.m-side a.m-side-later { opacity: .55; }
+.m-side a .m-side-phase { border: 1px solid hsl(var(--m-sidebar-active)); border-radius: 999px; font-size: 10px; font-style: normal; font-weight: 600; margin-left: auto; padding: 0 6px; }
+.m-side-collapsed a { justify-content: center; padding: 0; }
+.m-side-collapsed a span, .m-side-collapsed .m-side-count, .m-side-collapsed .m-side-phase, .m-side-collapsed .m-side-brand div { display: none; }
+.m-side-foot { border-top: 1px solid hsl(var(--m-sidebar-active)); font-size: 12px; padding: 10px 16px; }
+.m-side-collapsed .m-side-foot { display: none; }
+
+.m-main { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.m-top { align-items: center; background: hsl(var(--background)); border-bottom: 1px solid hsl(var(--border)); display: flex; flex-shrink: 0; gap: 12px; height: 64px; padding: 0 24px; }
+.m-top-spacer { flex: 1; }
+.m-top-search { max-width: 340px; width: 100%; }
+.m-content { flex: 1; overflow-y: auto; padding: 32px 40px 64px; }
+.m-content-inner { margin: 0 auto; max-width: 1360px; }
+.m-bell-dot { background: #ef4444; border: 2px solid hsl(var(--background)); border-radius: 999px; color: #fff; font-size: 10px; font-weight: 600; min-width: 18px; padding: 0 4px; position: absolute; right: -2px; top: -2px; }
+
+@media (max-width: 880px) {
+  .m-side { flex-basis: 64px; }
+  .m-side a span, .m-side .m-side-count, .m-side .m-side-phase, .m-side-brand div, .m-side-foot { display: none; }
+  .m-side a { justify-content: center; padding: 0; }
+  .m-side-group { visibility: hidden; height: 4px; margin: 8px 0; }
+  .m-top { gap: 8px; padding: 0 12px; }
+  .m-content { padding: 20px 16px 48px; }
+  .m-top-search { display: none; }
+}
