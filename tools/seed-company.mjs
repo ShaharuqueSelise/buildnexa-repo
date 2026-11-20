@@ -4,10 +4,11 @@
 //   node tools/seed-company.mjs tools/seed/demo-builder.json --yes    # apply
 //
 // Steps (each skipped when it already exists, so re-running is safe):
-//   1. shared roles company-admin, staff, external (no IAM permissions: company admins invite
+//   1. shared roles company-admin, staff, external (only the notifier permissions of step 3; admins invite
 //      through Functions, never by granting roles themselves)
 //   2. the company's own role co-<slug>, which every one of its records carries as tenantRole
-//   3. the company's Blocks organization
+//   3. the company's Blocks organization, and the notifier read/manage permissions for the three
+//      shared roles inside it (the only IAM permissions people need: the bell and inbox)
 //   4. people: the first company admin [company-admin, co-<slug>] and every seed.people entry
 //      [staff|external, co-<slug>], each invited into that organization (IAM emails the invite)
 //   5. records, written by the platform-seed-company Function with the service identity (the
@@ -75,6 +76,17 @@ if (!org && apply) {
   if (typeof id !== "string") throw new Error(`organization id not found in ${JSON.stringify(created).slice(0, 300)}`);
   org = { itemId: id, name: seed.organization.name };
   console.log(`         -> ${id}`);
+}
+
+// 3b: the bell. Reading and marking notifications needs these on the person's role INSIDE the
+// company's organization; a grant in "default" alone still gets 403 (found 21 Nov 2026).
+// Adding a permission a role already has changes nothing, so this runs every time.
+const NOTIFIER = "blocks-logic::notifier::read,blocks-logic::notifier::manage";
+for (const role of SHARED_ROLES) {
+  console.log(`${apply ? "grant  " : "would  "} notifier read+manage to ${role.slug} in the organization`);
+  if (apply && org) {
+    blocks(["iam", "roles", "assign-permissions", role.slug, "--organization-id", org.itemId, "--add-permissions", quote(NOTIFIER), "--yes"]);
+  }
 }
 
 // 4: people
