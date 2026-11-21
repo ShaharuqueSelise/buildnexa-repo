@@ -14,7 +14,7 @@ import {
 import type { ToastTone } from "../../shared/m/ui";
 import type { Release } from "../../shared/m/ui";
 import {
-  personStatus, useDeactivate, useInvitePerson, usePeople, useReactivate, useResendInvite, useSetDefaultRole
+  personStatus, useDeactivate, useInvitePerson, usePeople, useReactivate, useResendInvite, useSetAdmin, useSetDefaultRole
 } from "./peopleApi";
 import type { Company, Membership, Person, Project } from "./peopleApi";
 import "./CompanyAdmin.css";
@@ -95,6 +95,9 @@ function PeopleTab({ query }: { query: ReturnType<typeof usePeople> }) {
   const resend = useResendInvite();
   const deactivate = useDeactivate();
   const reactivate = useReactivate();
+  const setAdmin = useSetAdmin();
+  // Asked before giving or taking admin rights (stories 3.1, 3.2).
+  const [adminChange, setAdminChange] = useState<{ person: Person; makeAdmin: boolean; role?: string } | null>(null);
 
   const data = query.data;
   const people = data?.people ?? [];
@@ -120,8 +123,11 @@ function PeopleTab({ query }: { query: ReturnType<typeof usePeople> }) {
   const rows = people.filter((p) =>
     (!q || `${p.displayName} ${p.email} ${p.jobTitle ?? ""}`.toLowerCase().includes(q.toLowerCase())) &&
     (!companyFilter || p.companyId === companyFilter) &&
-    (!status || personStatus(p) === status)
+    (!status || (status === "Admins" ? Boolean(p.isCompanyAdmin) : personStatus(p) === status))
   );
+  // Only the company's own staff can be company admins, never partner companies' people.
+  const canBeAdmin = (p: Person) => p.orgRole !== "external" && (!p.companyRelation || p.companyRelation === "self");
+  const admins = people.filter((p) => p.isCompanyAdmin && personStatus(p) !== "Deactivated");
 
   const counts = {
     active: people.filter((p) => personStatus(p) === "Active").length,
@@ -158,6 +164,7 @@ function PeopleTab({ query }: { query: ReturnType<typeof usePeople> }) {
         <Kpi label={t("coadmin.status.active")} value={counts.active} tone="green" onClick={() => setStatus("Active")} />
         <Kpi label={t("coadmin.kpi.invited")} value={counts.invited} tone="amber" onClick={() => setStatus("Invited")} />
         <Kpi label={t("coadmin.status.deactivated")} value={counts.deactivated} tone="red" onClick={() => setStatus("Deactivated")} />
+        <Kpi label={t("coadmin.kpi.admins")} value={admins.length} tone={admins.length < 2 ? "amber" : undefined} onClick={() => setStatus("Admins")} />
         <Kpi label={t("coadmin.kpi.companies")} value={new Set(people.map((p) => p.companyId)).size} />
       </div>
       <div className="m-toolbar">
@@ -167,7 +174,10 @@ function PeopleTab({ query }: { query: ReturnType<typeof usePeople> }) {
           value={status}
           onChange={setStatus}
           placeholder={t("coadmin.anyStatus")}
-          options={(["Active", "Invited", "Deactivated"] as const).map((s) => ({ value: s, label: statusLabel(s) }))}
+          options={[
+            ...(["Active", "Invited", "Deactivated"] as const).map((s) => ({ value: s, label: statusLabel(s) })),
+            { value: "Admins", label: t("coadmin.filterAdmins") }
+          ]}
         />
         <span className="m-coadmin-grow" />
         <Button variant="secondary" icon={<Download size={15} />} onClick={() => {
@@ -180,6 +190,8 @@ function PeopleTab({ query }: { query: ReturnType<typeof usePeople> }) {
         }}>{t("coadmin.exportCsv")}</Button>
         <Button icon={<UserPlus size={15} />} onClick={() => setInviteOpen(true)}>{t("coadmin.invite")}</Button>
       </div>
+
+      {admins.length === 1 && admins[0] ? <Note tone="warn">{admins[0].isMe ? t("coadmin.onlyAdminYou") : fmt(t("coadmin.onlyAdmin"), { name: admins[0].displayName ?? admins[0].email })}</Note> : null}
 
       {rows.length === 0 ? (
         <div className="m-table-wrap"><Empty icon={<Users size={26} />} title={t("coadmin.emptyTitle")}>{t("coadmin.emptyText")}</Empty></div>
@@ -213,21 +225,24 @@ function PeopleTab({ query }: { query: ReturnType<typeof usePeople> }) {
                     </td>
                     <td><CompanyChip name={p.companyName ?? "—"} color={companyColor(company ?? { name: p.companyName ?? "" })} /><div className="m-small m-muted">{p.jobTitle}</div></td>
                     <td onClick={(e) => e.stopPropagation()}>
-                      {p.isMe || p.isCompanyAdmin ? (
-                        <select className="m-input m-coadmin-role" value="company-admin" disabled title={p.isMe ? t("coadmin.cantChangeOwn") : undefined}>
+                      {p.isMe ? (
+                        <select className="m-input m-coadmin-role" value="company-admin" disabled title={t("coadmin.cantChangeOwn")}>
                           <option value="company-admin">{roleLabel("company-admin")}</option>
                         </select>
                       ) : (
                         <select
                           className="m-input m-coadmin-role"
-                          value={role}
+                          value={p.isCompanyAdmin ? "company-admin" : role}
                           disabled={busy || st === "Deactivated"}
                           onChange={(e) => {
                             const r = e.target.value;
-                            void run(p, () => setRole.mutateAsync({ memberId: p.ItemId, role: r }), fmt(t("coadmin.roleChanged"), { name: p.displayName ?? p.email, role: roleLabel(r) }));
+                            if (r === "company-admin") setAdminChange({ person: p, makeAdmin: true });
+                            else if (p.isCompanyAdmin) setAdminChange({ person: p, makeAdmin: false, role: r });
+                            else void run(p, () => setRole.mutateAsync({ memberId: p.ItemId, role: r }), fmt(t("coadmin.roleChanged"), { name: p.displayName ?? p.email, role: roleLabel(r) }));
                           }}
                         >
-                          {role ? null : <option value="">{t("coadmin.chooseRole")}</option>}
+                          {role || p.isCompanyAdmin ? null : <option value="">{t("coadmin.chooseRole")}</option>}
+                          {p.isCompanyAdmin || canBeAdmin(p) ? <option value="company-admin">{roleLabel("company-admin")}</option> : null}
                           {PROJECT_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
                         </select>
                       )}
@@ -269,6 +284,40 @@ function PeopleTab({ query }: { query: ReturnType<typeof usePeople> }) {
         </div>
       )}
       <p className="m-small m-muted">{t("coadmin.deactivateNote")}</p>
+
+      {adminChange ? (
+        <Dialog
+          title={adminChange.makeAdmin ? t("coadmin.makeAdminTitle") : t("coadmin.removeAdminTitle")}
+          onClose={() => setAdminChange(null)}
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setAdminChange(null)}>{t("common.cancel")}</Button>
+              <Button
+                onClick={() => {
+                  const { person, makeAdmin, role: newRole } = adminChange;
+                  const name = person.displayName ?? person.email;
+                  setAdminChange(null);
+                  void run(
+                    person,
+                    () => setAdmin.mutateAsync({ memberId: person.ItemId, isAdmin: makeAdmin, role: newRole }),
+                    makeAdmin ? fmt(t("coadmin.madeAdmin"), { name }) : fmt(t("coadmin.removedAdmin"), { name, role: roleLabel(newRole) }),
+                    "good"
+                  );
+                }}
+              >
+                {adminChange.makeAdmin ? t("coadmin.makeAdminConfirm") : t("coadmin.removeAdminConfirm")}
+              </Button>
+            </>
+          }
+        >
+          <p>
+            {adminChange.makeAdmin
+              ? fmt(t("coadmin.makeAdminText"), { name: adminChange.person.displayName ?? adminChange.person.email })
+              : fmt(t("coadmin.removeAdminText"), { name: adminChange.person.displayName ?? adminChange.person.email, role: roleLabel(adminChange.role) })}
+          </p>
+        </Dialog>
+      ) : null}
 
       {inviteOpen ? (
         <InviteDialog

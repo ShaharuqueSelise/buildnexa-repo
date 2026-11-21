@@ -7,15 +7,18 @@
 //   { action: "resend", memberId }            -> new invitation email (people not joined yet)
 //   { action: "deactivate", memberId }        -> removes this company's access; records stay
 //   { action: "reactivate", memberId }        -> gives the access back
+//   { action: "setAdmin", memberId, isAdmin, role? } -> make a staff member a company admin, or
+//                                                 turn an admin back into staff (role = their
+//                                                 default project role from then on)
 //
 // Security (docs/architecture/01 §4.2):
 // - Company admins only. The Buildnexa service password (Blocks secret) is readable by the role
 //   company-admin only, so for anyone else Blocks stops the run before this code starts.
 // - The caller's company is taken from THEIR token: the one `co-` role they hold in their current
 //   organization. Every read is filtered to it and every write is stamped with it.
-// - The only IAM roles this Function grants are `staff`/`external` (or `company-admin` back to an
-//   admin on reactivate) plus the caller's own `co-` role.
-// - Nobody changes or deactivates themselves.
+// - The only IAM roles this Function grants are `staff`/`external`/`company-admin` plus the
+//   caller's own company tag. `company-admin` only ever goes to the company's own staff.
+// - Nobody changes or deactivates themselves, and the last company admin can't be removed.
 // Never returns or logs a token.
 
 // >>> shared: functions/_shared/blocks.js (copied by tools/sync-functions.mjs, do not edit here)
@@ -368,6 +371,35 @@ async function invite(ctx, db, me, args) {
   return { ok: true, memberId, invited };
 }
 
+// Stories 3.1 and 3.2: more than one company admin.
+async function setAdmin(db, me, args) {
+  const makeAdmin = args.isAdmin === true;
+  const members = await db.list("OrgMember", MEMBER_FIELDS, me.tenantRole);
+  const m = members.find((x) => x.ItemId === args.memberId);
+  if (!m) throw new Refused("NOT_FOUND", "This person is not in your company.");
+  notMe(me, m, makeAdmin ? "make an admin of" : "remove admin rights from");
+  if (m.status === "deactivated" || m.status === "removed") throw new Refused("NOT_ACTIVE", "Reactivate this person first.");
+
+  if (makeAdmin) {
+    if (m.isCompanyAdmin) return { ok: true };
+    // An outside company (subcontractor, designer, owner) must never run this company's account.
+    if (m.orgRole === "external" || (m.companyRelation && m.companyRelation !== "self")) {
+      throw new Refused("NOT_STAFF", "Only your own staff can be company admins, not people from partner companies.");
+    }
+    await db.iam("/iam/v4/iam/users/access", { userId: m.userId, organizationId: me.organizationId, roles: ["company-admin", me.tenantRole] });
+    await db.update("OrgMember", m.ItemId, me.tenantRole, { isCompanyAdmin: true, canCreateProjects: true });
+    return { ok: true };
+  }
+
+  if (!m.isCompanyAdmin) return { ok: true };
+  const admins = members.filter((x) => x.isCompanyAdmin && x.status !== "deactivated" && x.status !== "removed");
+  if (admins.length <= 1) throw new Refused("LAST_ADMIN", "A company needs at least one company admin.");
+  const role = PROJECT_ROLES.includes(String(args.role)) ? String(args.role) : m.defaultRole;
+  await db.iam("/iam/v4/iam/users/access", { userId: m.userId, organizationId: me.organizationId, roles: ["staff", me.tenantRole] });
+  await db.update("OrgMember", m.ItemId, me.tenantRole, { isCompanyAdmin: false, orgRole: "staff", ...(role ? { defaultRole: role } : {}) });
+  return { ok: true };
+}
+
 async function setDefaultRole(db, me, args) {
   const role = String(args.role ?? "");
   if (!PROJECT_ROLES.includes(role)) throw new Refused("BAD_ROLE", "Choose a default role.");
@@ -413,6 +445,7 @@ export default async function handler(input, ctx) {
     setDefaultRole: (args, { db, me }) => setDefaultRole(db, adminOnly(me), args),
     resend: (args, { ctx, db, me }) => resend(ctx, db, adminOnly(me), args),
     deactivate: (args, { db, me }) => setActive(db, adminOnly(me), args, false),
-    reactivate: (args, { db, me }) => setActive(db, adminOnly(me), args, true)
+    reactivate: (args, { db, me }) => setActive(db, adminOnly(me), args, true),
+    setAdmin: (args, { db, me }) => setAdmin(db, adminOnly(me), args)
   });
 }

@@ -7,6 +7,11 @@
 //           permissions for the shared roles inside it, the first company admin (IAM emails the
 //           invite) and the Company + OrgMember records. Safe to run again after a failure: each
 //           step is skipped when it is already done.
+//   { action: "addCompanyAdmin", companyId, admin: { email, firstName, lastName } }
+//        -> story 3.4: rescue a company that lost its admin (invite, or promote someone already in it)
+//   { action: "listAdmins" }                       -> story 3.5: everyone with platform-admin
+//   { action: "addAdmin", email, firstName, lastName } -> story 3.6 (invite or add to an account)
+//   { action: "removeAdmin", userId }              -> story 3.7 (not yourself, never the last)
 //
 // Security:
 // - Platform admins only: the Function's trigger allows only the role platform-admin, platformCaller
@@ -367,6 +372,143 @@ async function createCompany(ctx, db, me, args) {
   return { ok: true, company: { id: companyId, name, tag: tenantRole, organizationId: org.itemId }, steps };
 }
 
+// ---------- story 3.4: add a company admin to a customer company ----------
+
+async function addCompanyAdmin(ctx, db, me, args) {
+  const email = text(args.admin?.email).toLowerCase();
+  const firstName = text(args.admin?.firstName);
+  const lastName = text(args.admin?.lastName);
+  if (!EMAIL.test(email)) throw new Refused("BAD_EMAIL", "Enter the new company admin's email address.");
+  const company = (await db.listAll("Company", "ItemId name relation isVoided")).find((c) => c.ItemId === args.companyId && c.relation === "self" && !c.isVoided);
+  if (!company) throw new Refused("NOT_FOUND", "This company doesn't exist.");
+  const tenantRole = company.tenantRole;
+  const org = await step("organization", () => findOrganization(db, company.name));
+  if (!org) throw new Refused("NO_ORGANIZATION", `No Blocks organization is named "${company.name}". Rename one of them so they match, then try again.`);
+  const roles = ["company-admin", tenantRole];
+  const members = await db.list("OrgMember", "ItemId userId email orgRole companyRelation isCompanyAdmin status", tenantRole);
+  const already = members.find((m) => String(m.email).toLowerCase() === email && m.status !== "removed");
+
+  if (already) {
+    // Someone already in the company: only its own staff may become admins.
+    if (already.orgRole === "external" || (already.companyRelation && already.companyRelation !== "self")) {
+      throw new Refused("NOT_STAFF", "This person works for a partner company. Only the company's own staff can be company admins.");
+    }
+    if (already.isCompanyAdmin && already.status !== "deactivated") throw new Refused("ALREADY_ADMIN", "This person is already a company admin.");
+    await step("company admin rights", () => db.iam("/iam/v4/iam/users/access", { userId: already.userId, organizationId: org.itemId, roles }));
+    await db.update("OrgMember", already.ItemId, tenantRole, { isCompanyAdmin: true, canCreateProjects: true, orgRole: "staff", status: already.status === "deactivated" ? "active" : already.status });
+    ctx.log.info("company admin added", { tenantRole, by: me.userId, existingMember: true });
+    return { ok: true, invited: false };
+  }
+
+  if (!firstName || !lastName) throw new Refused("BAD_ADMIN_NAME", "Enter the new company admin's first and last name.");
+  const userId = await step("company admin account", async () => {
+    const exists = await db.iam("/iam/v4/iam/users/exists", { email });
+    let id = exists.userId || exists.data?.userId;
+    if (!id) {
+      const created = await db.iam("/iam/v4/iam/users/create", { email, firstName, lastName, organizationId: org.itemId, roles });
+      id = created.itemId ?? created.data?.itemId ?? created.userId ?? created.data;
+    } else {
+      await db.iam("/iam/v4/iam/users/access", { userId: id, organizationId: org.itemId, roles });
+    }
+    if (typeof id !== "string") throw new Error("IAM returned no user id");
+    return id;
+  });
+  await step("company records", () => db.insert("OrgMember", {
+    tenantRole,
+    userId,
+    email,
+    firstName,
+    lastName,
+    displayName: `${firstName} ${lastName}`,
+    companyId: company.ItemId,
+    companyName: company.name,
+    companyRelation: "self",
+    orgRole: "staff",
+    isCompanyAdmin: true,
+    canCreateProjects: true,
+    status: "invited",
+    invitedByUserId: me.userId,
+    invitedAt: new Date().toISOString()
+  }));
+  ctx.log.info("company admin added", { tenantRole, by: me.userId, existingMember: false });
+  return { ok: true, invited: true };
+}
+
+// ---------- stories 3.5 to 3.7: platform admins ----------
+// Platform admins belong to no company: their role sits in the "default" organization
+// (IAM shows it as roles.default). IAM can't list users by role, so all users are read and
+// filtered here; fine for hundreds of users, to revisit for many thousands.
+
+const defaultRoles = (u) => (u.roles && typeof u.roles === "object" && !Array.isArray(u.roles) ? u.roles.default ?? [] : []);
+
+async function allUsers(db) {
+  const users = [];
+  for (let page = 0; page < 50; page += 1) {
+    const res = await db.iam("/iam/v4/iam/users", { page, pageSize: 100, sort: { isDescending: false }, filter: {} });
+    const items = res.data ?? [];
+    users.push(...items);
+    if (items.length < 100) break;
+  }
+  return users;
+}
+
+async function listAdmins(db, me) {
+  const admins = (await allUsers(db))
+    .filter((u) => defaultRoles(u).includes("platform-admin"))
+    .map((u) => ({
+      userId: u.itemId,
+      name: [u.firstName, u.lastName].filter(Boolean).join(" ") || u.email,
+      email: u.email,
+      // IAM: a pending invite is accountState "PendingVerification" (active false, not verified).
+      state: u.accountState === "Active" ? "active" : u.accountState === "PendingVerification" || u.isVerified === false ? "invited" : "deactivated",
+      lastLoggedInTime: u.lastLoggedInTime && !String(u.lastLoggedInTime).startsWith("0001") ? u.lastLoggedInTime : undefined,
+      isMe: u.itemId === me.userId
+    }));
+  return { ok: true, admins: admins.sort((a, b) => a.name.localeCompare(b.name)) };
+}
+
+async function addAdmin(ctx, db, me, args) {
+  const email = text(args.email).toLowerCase();
+  const firstName = text(args.firstName);
+  const lastName = text(args.lastName);
+  if (!EMAIL.test(email)) throw new Refused("BAD_EMAIL", "Enter the new platform admin's email address.");
+  const exists = await db.iam("/iam/v4/iam/users/exists", { email });
+  const id = exists.userId || exists.data?.userId;
+  if (id) {
+    // Existing account (maybe someone in a company): add the role next to their other ones.
+    // The user list is the one IAM read whose shape is verified (roles per organization).
+    const u = (await allUsers(db)).find((x) => x.itemId === id);
+    const current = u ? defaultRoles(u) : [];
+    if (current.includes("platform-admin")) throw new Refused("ALREADY_ADMIN", "This person is already a platform admin.");
+    await step("platform admin rights", () => db.iam("/iam/v4/iam/users/access", { userId: id, roles: [...current, "platform-admin"] }));
+    ctx.log.info("platform admin added", { by: me.userId, existingAccount: true });
+    return { ok: true, invited: false };
+  }
+  if (!firstName || !lastName) throw new Refused("BAD_NAME", "Enter the new platform admin's first and last name.");
+  await step("platform admin account", () => db.iam("/iam/v4/iam/users/create", { email, firstName, lastName, roles: ["platform-admin"] }));
+  ctx.log.info("platform admin added", { by: me.userId, existingAccount: false });
+  return { ok: true, invited: true };
+}
+
+async function removeAdmin(ctx, db, me, args) {
+  const userId = text(args.userId);
+  if (userId === me.userId) throw new Refused("SELF", "You can't remove your own platform admin rights. Ask another platform admin.");
+  const admins = (await allUsers(db)).filter((u) => defaultRoles(u).includes("platform-admin"));
+  const target = admins.find((u) => u.itemId === userId);
+  if (!target) throw new Refused("NOT_FOUND", "This person is not a platform admin.");
+  if (admins.length <= 1) throw new Refused("LAST_ADMIN", "The platform needs at least one platform admin.");
+  const rest = defaultRoles(target).filter((r) => r !== "platform-admin");
+  await step("remove platform admin rights", () =>
+    rest.length
+      // IAM keeps the old list when given an empty one, so the role is replaced only when others remain...
+      ? db.iam("/iam/v4/iam/users/access", { userId, roles: rest })
+      // ...otherwise the person leaves the platform level altogether (their companies are untouched).
+      : db.iam("/iam/v4/iam/users/revoke-access", { userId })
+  );
+  ctx.log.info("platform admin removed", { by: me.userId });
+  return { ok: true };
+}
+
 export default async function handler(input, ctx) {
   return handle(
     input,
@@ -374,7 +516,11 @@ export default async function handler(input, ctx) {
     "platform",
     {
       list: (args, { db }) => listCompanies(db),
-      create: (args, { ctx, db, me }) => createCompany(ctx, db, me, args)
+      create: (args, { ctx, db, me }) => createCompany(ctx, db, me, args),
+      addCompanyAdmin: (args, { ctx, db, me }) => addCompanyAdmin(ctx, db, me, args),
+      listAdmins: (args, { db, me }) => listAdmins(db, me),
+      addAdmin: (args, { ctx, db, me }) => addAdmin(ctx, db, me, args),
+      removeAdmin: (args, { ctx, db, me }) => removeAdmin(ctx, db, me, args)
     },
     platformCaller
   );

@@ -74,3 +74,5 @@ export const useSetDefaultRole = () => useAction<{ memberId: string; role: strin
 export const useResendInvite = () => useAction<{ memberId: string }>("resend");
 export const useDeactivate = () => useAction<{ memberId: string }>("deactivate");
 export const useReactivate = () => useAction<{ memberId: string }>("reactivate");
+/** Stories 3.1/3.2: make a staff member a company admin, or turn an admin back into staff with `role`. */
+export const useSetAdmin = () => useAction<{ memberId: string; isAdmin: boolean; role?: string }>("setAdmin");
