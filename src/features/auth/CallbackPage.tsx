@@ -6,7 +6,7 @@ import { Alert } from "../../shared/ui/Alert";
 import { LoadingScreen } from "../../shared/ui/LoadingScreen";
 
 export function CallbackPage({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const { refresh } = useAuth();
+  const { refresh, returnPathFor } = useAuth();
   const { t } = useT();
   const [error, setError] = useState<string | undefined>();
   const ran = useRef(false);
@@ -17,14 +17,14 @@ export function CallbackPage({ onNavigate }: { onNavigate: (path: string) => voi
 
     completeLogin(window.location.href).then((result) => {
       if (result.ok) {
-        refresh();
-        onNavigate(result.returnTo);
+        // Confirm who signed in first: someone else than before starts on their own start page.
+        void refresh().then(() => onNavigate(returnPathFor(result.returnTo)));
         return;
       }
 
       setError(result.message);
     });
-  }, [onNavigate, refresh]);
+  }, [onNavigate, refresh, returnPathFor]);
 
   if (error) {
     return (

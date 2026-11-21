@@ -26,11 +26,11 @@ export function RequireAuth({ children, currentPath, onNavigate }: GuardProps & 
 // `to` must be an app path (starts with one slash); anything else falls back to "/".
 export function RedirectIfAuthenticated({ children, onNavigate, to: requested }: GuardProps & { to?: string }) {
   const to = requested && requested.startsWith("/") && !requested.startsWith("//") ? requested : "/";
-  const { status } = useAuth();
+  const { returnPathFor, status } = useAuth();
 
   useEffect(() => {
-    if (status === "authenticated") onNavigate(to);
-  }, [status, onNavigate, to]);
+    if (status === "authenticated") onNavigate(returnPathFor(to));
+  }, [status, onNavigate, returnPathFor, to]);
 
   if (status === "loading" || status === "authenticated") return <LoadingScreen />;
   return <>{children}</>;

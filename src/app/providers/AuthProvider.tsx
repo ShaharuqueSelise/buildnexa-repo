@@ -11,6 +11,8 @@ type AuthContextValue = {
   login: (returnTo?: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  /** The page to open after signing in: the remembered page, or the start page when someone else signed in. */
+  returnPathFor: (path: string) => string;
   signIn: (email: string, password: string) => Promise<SignInResult>;
   status: AuthStatus;
 };
@@ -28,23 +30,54 @@ function identityOf(claims?: Record<string, unknown>): string | undefined {
   return typeof id === "string" && id ? id : undefined;
 }
 
+// Who was last signed in on this tab. It outlives a sign-out and a reload on purpose: after an
+// expired session, the next sign-in can tell whether the same person came back.
+const LAST_USER_KEY = "buildnexa:last-user";
+function readLastUser(): string | undefined {
+  try {
+    return sessionStorage.getItem(LAST_USER_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+function writeLastUser(identity: string) {
+  try {
+    sessionStorage.setItem(LAST_USER_KEY, identity);
+  } catch {
+    // private window: the check falls back to this page's memory
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [claims, setClaims] = useState<Record<string, unknown> | undefined>();
   const queryClient = useQueryClient();
-  const lastIdentity = useRef<string | undefined>(undefined);
+  const lastIdentity = useRef<string | undefined>(readLastUser());
+  const signedIn = useRef(false);
+  // true when the person who signed in is not the one who was here before (set at each sign-in).
+  const personChanged = useRef(false);
 
   // Everything the app has read (my roles, company, projects, the bell…) belongs to one person.
   // When the session ends or another person signs in, drop it all, so nobody ever sees the
   // previous person's screens or data, not even for a moment.
   const adopt = useCallback((sessionClaims?: Record<string, unknown>) => {
     const identity = identityOf(sessionClaims);
-    if (!sessionClaims || (identity && lastIdentity.current && identity !== lastIdentity.current)) queryClient.clear();
-    if (identity) lastIdentity.current = identity;
-    if (!sessionClaims) lastIdentity.current = undefined;
+    const previous = readLastUser() ?? lastIdentity.current;
+    const changed = Boolean(identity && previous && identity !== previous);
+    if (sessionClaims && !signedIn.current) personChanged.current = changed;
+    if (!sessionClaims || changed) queryClient.clear();
+    if (identity) {
+      lastIdentity.current = identity;
+      writeLastUser(identity);
+    }
+    signedIn.current = Boolean(sessionClaims);
     setClaims(sessionClaims);
     setStatus(sessionClaims ? "authenticated" : "unauthenticated");
   }, [queryClient]);
+
+  // An expired session keeps the page you were on, so you come back to it after signing in.
+  // That page belongs to the person who was here: someone else starts on their own start page.
+  const returnPathFor = useCallback((path: string) => (personChanged.current ? "/" : path), []);
 
   // The session's source of truth is IAM's GET /iam/v4/auth/me
   // (blocksClient.auth.userInfo()), not a token this app can inspect --
@@ -106,9 +139,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     logout,
     refresh,
+    returnPathFor,
     signIn,
     status
-  }), [claims, login, logout, refresh, signIn, status]);
+  }), [claims, login, logout, refresh, returnPathFor, signIn, status]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
