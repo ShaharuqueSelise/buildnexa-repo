@@ -215,6 +215,17 @@ const SHARED_ROLES = ["company-admin", "staff", "external"];
 
 const text = (v) => (typeof v === "string" ? v.trim() : "");
 
+// Platform admins run onboarding, so a failed step tells them which one and why (IAM's reason);
+// everything before it stays done, and running Create again continues from there.
+async function step(label, fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof Refused) throw error;
+    throw new Refused("STEP_FAILED", `Creating the company stopped at "${label}": ${error.message}. Steps before it are done; press Create again to continue.`);
+  }
+}
+
 async function listCompanies(db) {
   const [companies, members, projects] = await Promise.all([
     db.listAll("Company", "ItemId name relation status isVoided CreatedDate"),
@@ -241,7 +252,8 @@ async function listCompanies(db) {
 }
 
 async function findRole(db, slug) {
-  const res = await db.iam("/iam/v4/iam/roles", { filter: { search: slug }, page: 0, pageSize: 50 });
+  // "search" matches role names only; "slugs" finds the exact slug.
+  const res = await db.iam("/iam/v4/iam/roles", { filter: { search: "", slugs: [slug] }, page: 0, pageSize: 10 });
   return (res.data ?? []).find((r) => r.slug === slug);
 }
 
@@ -266,59 +278,74 @@ async function createCompany(ctx, db, me, args) {
   if (!firstName || !lastName) throw new Refused("BAD_ADMIN_NAME", "Enter the first company admin's first and last name.");
 
   const tenantRole = `company-${shortName}`;
-  const companies = (await db.listAll("Company", "ItemId name relation isVoided")).filter((c) => c.relation === "self" && !c.isVoided);
-  if (companies.some((c) => c.tenantRole === tenantRole)) throw new Refused("SHORT_NAME_TAKEN", "Another company already uses this short name.");
-  if (companies.some((c) => String(c.name).toLowerCase() === name.toLowerCase())) throw new Refused("COMPANY_EXISTS", "A company with this name already exists.");
+  const [allCompanies, admins] = await Promise.all([
+    db.listAll("Company", "ItemId name relation isVoided"),
+    db.listAll("OrgMember", "ItemId isCompanyAdmin")
+  ]);
+  const companies = allCompanies.filter((c) => c.relation === "self" && !c.isVoided);
+  // A company row without an admin row is an earlier run that stopped half way: continue it.
+  const unfinished = companies.find((c) => c.tenantRole === tenantRole && !admins.some((m) => m.tenantRole === tenantRole && m.isCompanyAdmin));
+  if (!unfinished && companies.some((c) => c.tenantRole === tenantRole)) throw new Refused("SHORT_NAME_TAKEN", "Another company already uses this short name.");
+  if (companies.some((c) => c !== unfinished && String(c.name).toLowerCase() === name.toLowerCase())) throw new Refused("COMPANY_EXISTS", "A company with this name already exists.");
   const steps = {};
 
   // 1. The company's tag: a project-wide role every person and record of the company carries.
-  if (await findRole(db, tenantRole)) {
-    steps.tag = "existed";
-  } else {
+  await step("company tag", async () => {
+    if (await findRole(db, tenantRole)) {
+      steps.tag = "existed";
+      return;
+    }
     await db.iam("/iam/v4/iam/roles/create", { name: `Company ${name}`, slug: tenantRole, description: `Company tag of ${name}: every person and record of this company carries it. Not a job role.` });
     if (!(await findRole(db, tenantRole))) throw new Error(`role ${tenantRole} was not created with that exact slug`);
     steps.tag = "created";
-  }
+  });
 
   // 2. The company's Blocks organization.
-  let org = await findOrganization(db, name);
-  if (org) {
-    steps.organization = "existed";
-  } else {
+  const org = await step("organization", async () => {
+    const found = await findOrganization(db, name);
+    if (found) {
+      steps.organization = "existed";
+      return found;
+    }
     const created = await db.iam("/iam/v4/iam/organizations/create", { name, description: `Buildnexa customer company (${tenantRole})` });
     const id = created.itemId ?? created.id ?? created.organizationId ?? created.data?.itemId ?? created.data;
     if (typeof id !== "string") throw new Error("IAM returned no organization id");
-    org = { itemId: id, name };
     steps.organization = "created";
-  }
+    return { itemId: id, name };
+  });
 
   // 3. The bell: reading and marking notifications needs these permissions on the person's role
   //    INSIDE the company's organization (a grant in "default" alone gets 403).
   const notifier = String(ctx.env.NOTIFIER_PERMISSION_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   if (notifier.length !== 2) throw new Error("NOTIFIER_PERMISSION_IDS is not set");
-  for (const slug of SHARED_ROLES) {
-    await db.iam("/iam/v4/iam/roles/assign-permissions", { slug, organizationId: org.itemId, addPermissions: notifier, removePermissions: [] });
-  }
-  steps.bell = "granted";
+  await step("bell permissions", async () => {
+    for (const slug of SHARED_ROLES) {
+      await db.iam("/iam/v4/iam/roles/assign-permissions", { slug, organizationId: org.itemId, addPermissions: notifier, removePermissions: [] });
+    }
+    steps.bell = "granted";
+  });
 
   // 4. The first company admin. IAM emails the invitation to a new account.
   const roles = ["company-admin", tenantRole];
-  const exists = await db.iam("/iam/v4/iam/users/exists", { email });
-  let userId = exists.userId || exists.data?.userId;
-  if (!userId) {
-    const created = await db.iam("/iam/v4/iam/users/create", { email, firstName, lastName, organizationId: org.itemId, roles });
-    userId = created.itemId ?? created.data?.itemId ?? created.userId ?? created.data;
-    steps.admin = "invited (new account)";
-  } else {
-    await db.iam("/iam/v4/iam/users/access", { userId, organizationId: org.itemId, roles });
-    steps.admin = "existing account added";
-  }
-  if (typeof userId !== "string") throw new Error("IAM returned no user id");
+  const userId = await step("first company admin", async () => {
+    const exists = await db.iam("/iam/v4/iam/users/exists", { email });
+    let id = exists.userId || exists.data?.userId;
+    if (!id) {
+      const created = await db.iam("/iam/v4/iam/users/create", { email, firstName, lastName, organizationId: org.itemId, roles });
+      id = created.itemId ?? created.data?.itemId ?? created.userId ?? created.data;
+      steps.admin = "invited (new account)";
+    } else {
+      await db.iam("/iam/v4/iam/users/access", { userId: id, organizationId: org.itemId, roles });
+      steps.admin = "existing account added";
+    }
+    if (typeof id !== "string") throw new Error("IAM returned no user id");
+    return id;
+  });
 
   // 5. The records the company's screens read.
   const now = new Date().toISOString();
-  const companyId = await db.insert("Company", { tenantRole, name, legalName: name, relation: "self", status: "active", defaultLanguage: "en", isVoided: false });
-  await db.insert("OrgMember", {
+  const companyId = unfinished?.ItemId ?? await step("company records", () => db.insert("Company", { tenantRole, name, legalName: name, relation: "self", status: "active", defaultLanguage: "en", isVoided: false }));
+  await step("company records", () => db.insert("OrgMember", {
     tenantRole,
     userId,
     email,
@@ -334,7 +361,7 @@ async function createCompany(ctx, db, me, args) {
     status: "invited",
     invitedByUserId: me.userId,
     invitedAt: now
-  });
+  }));
   steps.records = "created";
   ctx.log.info("company created", { tenantRole, organizationId: org.itemId, steps });
   return { ok: true, company: { id: companyId, name, tag: tenantRole, organizationId: org.itemId }, steps };
