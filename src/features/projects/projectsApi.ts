@@ -194,6 +194,8 @@ export function useProjects() {
     projects,
     project,
     myRole,
+    /** The company I work for (partners: their own company), shown instead of the hidden tag. */
+    myCompanyName: myMember?.companyName ?? ws?.companies.find((c) => c.relation === "self")?.name,
     // The design lets staff with canCreateProjects create projects and a project's PM change its
     // team. On Development the service password is readable by company admins only (decision of
     // 20 Nov 2026), so for now only they can; the projects Function already checks both cases.

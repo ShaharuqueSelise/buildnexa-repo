@@ -90,7 +90,7 @@ function CompaniesTab({ rows, loading, toast }: { rows: PlatformCompany[]; loadi
         <Button
           variant="secondary"
           disabled={rows.length === 0}
-          onClick={() => downloadCsv("companies.csv", rows.map((c) => ({ company: c.name, tag: c.tag, admins: c.admins.map((a) => a.email).join(" "), projects: c.projects, people: c.people, invited: c.invited, created: c.createdAt ?? "" })))}
+          onClick={() => downloadCsv("companies.csv", rows.map((c) => ({ company: c.name, support_id: c.tag, admins: c.admins.map((a) => a.email).join(" "), projects: c.projects, people: c.people, invited: c.invited, created: c.createdAt ?? "" })))}
         >
           {t("plat.exportCsv")}
         </Button>
@@ -114,7 +114,7 @@ function CompaniesTab({ rows, loading, toast }: { rows: PlatformCompany[]; loadi
                 <td>
                   <div className="m-row">
                     <span className="m-plat-logo">{c.name.slice(0, 2).toUpperCase()}</span>
-                    <div><b>{c.name}</b><div className="m-small m-muted m-mono">{c.tag}</div></div>
+                    <b>{c.name}</b>
                   </div>
                 </td>
                 <td>
@@ -140,6 +140,7 @@ function CompaniesTab({ rows, loading, toast }: { rows: PlatformCompany[]; loadi
       {open ? (
         <CreateCompanyDialog
           taken={rows.map((c) => c.tag)}
+          names={rows.map((c) => c.name.trim().toLowerCase())}
           onClose={() => setOpen(false)}
           onCreated={(name, email) => {
             setOpen(false);
@@ -150,12 +151,12 @@ function CompaniesTab({ rows, loading, toast }: { rows: PlatformCompany[]; loadi
       {detail ? (
         <Dialog title={detail.name} onClose={() => setDetail(null)} size="md" footer={<Button variant="secondary" onClick={() => setDetail(null)}>{t("common.close")}</Button>}>
           <KeyValue items={[
-            [t("plat.tag"), <span className="m-mono">{detail.tag}</span>],
             [t("plat.col.status"), status(detail)],
             [t("plat.col.created"), detail.createdAt ? fmtDate(detail.createdAt) : "—"],
             [t("plat.col.admins"), detail.admins.map((a) => `${a.name} · ${a.email}`).join(", ") || "—"],
             [t("plat.col.projects"), detail.projects],
-            [t("plat.col.people"), fmt(t("plat.peopleInvited"), { people: detail.people, invited: detail.invited })]
+            [t("plat.col.people"), fmt(t("plat.peopleInvited"), { people: detail.people, invited: detail.invited })],
+            [t("plat.tag"), <span className="m-small m-muted m-mono" title={t("plat.tagHint")}>{detail.tag}</span>]
           ]} />
           <div className="m-plat-mt"><Note>{t("plat.detailNote")}</Note></div>
           <AddCompanyAdmin
@@ -171,20 +172,23 @@ function CompaniesTab({ rows, loading, toast }: { rows: PlatformCompany[]; loadi
   );
 }
 
-function CreateCompanyDialog({ taken, onClose, onCreated }: { taken: string[]; onClose: () => void; onCreated: (name: string, email: string) => void }) {
+function CreateCompanyDialog({ taken, names, onClose, onCreated }: { taken: string[]; names: string[]; onClose: () => void; onCreated: (name: string, email: string) => void }) {
   const { t } = useT();
   const create = useCreateCompany();
   const [name, setName] = useState("");
   const [shortName, setShortName] = useState("");
   const [edited, setEdited] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
-  const short = edited ? shortName : shortNameFrom(name);
+  // Made from the name; a number is added when another company already has it.
+  const short = edited ? shortName : freeShortName(shortNameFrom(name), taken);
   const shortOk = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(short) && !short.includes("--") && short !== "admin";
   const shortTaken = taken.includes(`company-${short}`);
   const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
-  const valid = name.trim().length >= 2 && shortOk && !shortTaken && firstName.trim() && lastName.trim() && emailOk;
+  const nameTaken = names.includes(name.trim().toLowerCase());
+  const valid = name.trim().length >= 2 && !nameTaken && shortOk && !shortTaken && firstName.trim() && lastName.trim() && emailOk;
 
   async function submit() {
     try {
@@ -208,24 +212,43 @@ function CreateCompanyDialog({ taken, onClose, onCreated }: { taken: string[]; o
       }
     >
       <div className="m-form">
-        <Field label={t("plat.f.name")}><input className="m-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Weser Bau GmbH" /></Field>
-        <Field
-          label={t("plat.f.short")}
-          hint={short && !shortOk ? t("plat.f.shortBad") : shortTaken ? t("plat.f.shortTaken") : fmt(t("plat.f.shortHint"), { tag: `company-${short || "…"}` })}
-        >
-          <input className="m-input m-mono" value={short} onChange={(e) => { setEdited(true); setShortName(e.target.value.toLowerCase()); }} placeholder="weser-bau" />
-        </Field>
+        <Field label={t("plat.f.name")} hint={nameTaken ? t("plat.f.nameTaken") : undefined} wide={!advanced}><input className="m-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Weser Bau GmbH" /></Field>
+        {advanced ? (
+          <Field
+            label={t("plat.f.short")}
+            hint={short && !shortOk ? t("plat.f.shortBad") : shortTaken ? t("plat.f.shortTaken") : t("plat.f.shortHint")}
+          >
+            <input className="m-input m-mono" value={short} onChange={(e) => { setEdited(true); setShortName(e.target.value.toLowerCase()); }} placeholder="weser-bau" />
+          </Field>
+        ) : null}
         <Field label={t("plat.f.first")}><input className="m-input" value={firstName} onChange={(e) => setFirstName(e.target.value)} /></Field>
         <Field label={t("plat.f.last")}><input className="m-input" value={lastName} onChange={(e) => setLastName(e.target.value)} /></Field>
         <Field label={t("plat.f.email")} hint={email && !emailOk ? t("plat.f.emailBad") : undefined} wide>
           <input className="m-input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@customer.example" />
         </Field>
       </div>
+      {!advanced ? (
+        <div className="m-plat-mt">
+          <button type="button" className="m-link m-small" onClick={() => setAdvanced(true)}>{t("plat.f.advanced")}</button>
+        </div>
+      ) : null}
+      {/* A name that makes no valid short name (e.g. only symbols) needs the Advanced field. */}
+      {!advanced && name.trim().length >= 2 && !shortOk ? <div className="m-plat-mt"><Note tone="warn">{t("plat.f.shortNeeded")}</Note></div> : null}
       <div className="m-plat-mt">
         {create.isError ? <Note tone="danger">{(create.error as Error).message}</Note> : <Note>{t("plat.createNote")}</Note>}
       </div>
     </Dialog>
   );
+}
+
+/** The short name, or short-2, short-3 … when another company already uses it. */
+function freeShortName(base: string, taken: string[]): string {
+  if (!base || !taken.includes(`company-${base}`)) return base;
+  for (let n = 2; n < 100; n += 1) {
+    const candidate = `${base.slice(0, 32 - String(n).length - 1).replace(/-+$/g, "")}-${n}`;
+    if (!taken.includes(`company-${candidate}`)) return candidate;
+  }
+  return base;
 }
 
 // ---------- story 3.4: add a company admin ----------

@@ -1,8 +1,10 @@
-import { Clock, Mail, RefreshCw, ShieldCheck, UserRound } from "lucide-react";
+import { Building2, Clock, Mail, RefreshCw, ShieldCheck, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAuth } from "../../app/providers/AuthProvider";
 import { blocksConfig } from "../../lib/blocks/config";
 import { useT } from "../../lib/i18n/LocalizationProvider";
+import { accountRoleLabels } from "../../lib/roles";
+import { useProjects } from "../projects/projectsApi";
 import { ActionButton } from "../../shared/ui/ActionButton";
 import { ChipList } from "../../shared/ui/Chip";
 import { JsonPanel } from "../../shared/ui/JsonPanel";
@@ -15,7 +17,9 @@ export function ProfilePage() {
   const me = useCurrentUser();
   const { claims } = useAuth();
   const { t } = useT();
+  const { myCompanyName } = useProjects();
   const profile = me.data?.data;
+  const access = accountRoleLabels(profile?.roles, t);
   const name = userDisplayName(profile);
   const issuedAt = typeof claims?.iat === "number" ? new Date((claims.iat as number) * 1000) : undefined;
   const expiresAt = typeof claims?.exp === "number" ? new Date((claims.exp as number) * 1000) : undefined;
@@ -51,18 +55,13 @@ export function ProfilePage() {
 
       <div className="grid">
         <DetailCard icon={<UserRound size={16} />} label="User ID" loading={me.isLoading} value={profile?.itemId} />
-        <DetailCard icon={<ShieldCheck size={16} />} label="Tenant id (x-blocks-key)" value={blocksConfig.xBlocksKey} />
         <DetailCard icon={<Clock size={16} />} label="Session expires" value={expiresAt?.toLocaleString()} />
       </div>
 
       <div className="panel">
-        <div className="panel-title"><ShieldCheck size={16} /><span>Roles</span></div>
-        {me.isLoading ? <Skeleton className="skeleton-line" /> : <ChipList empty="No roles assigned" items={profile?.roles} />}
-      </div>
-
-      <div className="panel">
-        <div className="panel-title"><ShieldCheck size={16} /><span>Permissions ({profile?.permissions?.length ?? 0})</span></div>
-        {me.isLoading ? <Skeleton className="skeleton-line" /> : <ChipList empty="No permissions returned" items={profile?.permissions} />}
+        <div className="panel-title"><ShieldCheck size={16} /><span>{t("profile.access")}</span></div>
+        {me.isLoading ? <Skeleton className="skeleton-line" /> : <ChipList empty={t("profile.noAccess")} items={access} />}
+        {myCompanyName ? <p className="muted"><Building2 size={14} /> {myCompanyName}</p> : null}
       </div>
 
       <div className="panel">
@@ -73,8 +72,20 @@ export function ProfilePage() {
         </div>
       </div>
 
+      {/* For support only: the technical identifiers (tenant id, Blocks roles and permissions). */}
       <details className="raw-details">
-        <summary>View raw response</summary>
+        <summary>{t("profile.tech")}</summary>
+        <div className="grid">
+          <DetailCard icon={<ShieldCheck size={16} />} label="Tenant id (x-blocks-key)" value={blocksConfig.xBlocksKey} />
+        </div>
+        <div className="panel">
+          <div className="panel-title"><ShieldCheck size={16} /><span>Blocks roles</span></div>
+          <ChipList empty="—" items={profile?.roles} />
+        </div>
+        <div className="panel">
+          <div className="panel-title"><ShieldCheck size={16} /><span>Permissions ({profile?.permissions?.length ?? 0})</span></div>
+          <ChipList empty="—" items={profile?.permissions} />
+        </div>
         <JsonPanel value={profile ?? me.error ?? me.data} />
       </details>
     </section>

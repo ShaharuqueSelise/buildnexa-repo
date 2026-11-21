@@ -2,6 +2,8 @@ import { LogOut, UserRound } from "lucide-react";
 import { useAuth } from "../providers/AuthProvider";
 import { useCurrentUser, userDisplayName, userInitials } from "../../features/profile/useCurrentUser";
 import { useT } from "../../lib/i18n/LocalizationProvider";
+import { accountRoleLabels } from "../../lib/roles";
+import { useProjects } from "../../features/projects/projectsApi";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,7 +19,9 @@ export function UserMenu({ onNavigate }: { onNavigate: (path: string) => void })
   const me = useCurrentUser();
   const profile = me.data?.data;
   const name = userDisplayName(profile) || (me.isLoading ? "Loading..." : "Guest");
-  const roles = profile?.roles ?? [];
+  const { myCompanyName } = useProjects();
+  // "Company Admin · Demo Builder GmbH": plain words, never the hidden company tag.
+  const access = [accountRoleLabels(profile?.roles, t).join(", "), myCompanyName].filter(Boolean).join(" · ");
 
   function handleLogout() {
     logout();
@@ -35,7 +39,7 @@ export function UserMenu({ onNavigate }: { onNavigate: (path: string) => void })
           <div className="grid gap-0.5 overflow-hidden">
             <strong className="truncate text-sm font-semibold">{name}</strong>
             {profile?.email ? <small className="truncate text-xs text-[hsl(var(--muted-foreground))]">{profile.email}</small> : null}
-            {roles.length > 0 ? <small className="truncate text-xs capitalize text-[hsl(var(--muted-foreground))]">{roles.join(", ")}</small> : null}
+            {access ? <small className="truncate text-xs text-[hsl(var(--muted-foreground))]">{access}</small> : null}
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />

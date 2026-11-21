@@ -32,7 +32,6 @@ export function CompanyAdminPage() {
   const { t } = useT();
   const roles = useMyRoles();
   const isAdmin = roles?.includes("company-admin") ?? false;
-  const tenant = roles?.find((r) => r.startsWith("co-"));
   const [tab, setTab] = useState<TabKey>("people");
   const people = usePeople(isAdmin);
   const own = people.data?.companies.find((c) => c.relation === "self");
@@ -56,8 +55,8 @@ export function CompanyAdminPage() {
     <div>
       <PageTitle
         title={t("coadmin.title")}
-        subtitle={<>{own?.name ?? "…"} · {t("coadmin.subtitle")}</>}
-        actions={tenant ? <Badge tone="purple"><Building2 size={12} /> {fmt(t("coadmin.tenant"), { tenant })}</Badge> : undefined}
+        subtitle={t("coadmin.subtitle")}
+        actions={own ? <Badge tone="purple"><Building2 size={12} /> {own.name}</Badge> : undefined}
       />
       <Tabs<TabKey>
         value={tab}
