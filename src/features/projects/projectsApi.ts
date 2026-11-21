@@ -101,7 +101,6 @@ async function loadWorkspace(): Promise<Workspace> {
 const KEY = ["workspace"] as const;
 
 // true while only company admins may run Functions that use the Buildnexa service password.
-const SERVICE_ROLES_ONLY_ADMIN = true;
 
 /** The demo app's stage for a project (archived wins over the stored stage). */
 export function stageOf(p: ProjectRow): Stage {
@@ -196,11 +195,10 @@ export function useProjects() {
     myRole,
     /** The company I work for (partners: their own company), shown instead of the hidden tag. */
     myCompanyName: myMember?.companyName ?? ws?.companies.find((c) => c.relation === "self")?.name,
-    // The design lets staff with canCreateProjects create projects and a project's PM change its
-    // team. On Development the service password is readable by company admins only (decision of
-    // 20 Nov 2026), so for now only they can; the projects Function already checks both cases.
-    canCreate: SERVICE_ROLES_ONLY_ADMIN ? isAdmin : isAdmin || (isStaff && Boolean(myMember?.canCreateProjects)),
-    canEditTeam: SERVICE_ROLES_ONLY_ADMIN ? isAdmin : isAdmin || myRole === "project-manager",
+    // Company admins, and staff their admin allowed, create projects; a project's team is changed by
+    // a company admin or that project's PM. The projects Function checks the same rules on the server.
+    canCreate: isAdmin || (isStaff && Boolean(myMember?.canCreateProjects)),
+    canEditTeam: isAdmin || myRole === "project-manager",
     seesCost: isStaff
   };
 }
