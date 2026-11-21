@@ -24,8 +24,10 @@ export function UserMenu({ onNavigate }: { onNavigate: (path: string) => void })
   const access = [accountRoleLabels(profile?.roles, t).join(", "), myCompanyName].filter(Boolean).join(" · ");
 
   function handleLogout() {
-    logout();
+    // Login page first, then sign out in the same click (React applies both together): no flash
+    // of the app, and no "return to this page" link, which only makes sense when a session expires.
     onNavigate("/login");
+    void logout();
   }
 
   return (

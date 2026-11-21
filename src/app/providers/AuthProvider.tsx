@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { fetchSessionClaims, logout as endSession, onSessionExpired, signInWithPassword, startLogin } from "../../lib/blocks/auth";
 import type { SignInResult } from "../../lib/blocks/auth";
@@ -21,9 +22,29 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 // e.g. after signing out in another tab or the session expiring meanwhile.
 const STATUS_POLL_MS = 5 * 60_000;
 
+/** Who the session belongs to, from IAM's auth/me claims. */
+function identityOf(claims?: Record<string, unknown>): string | undefined {
+  const id = claims?.sub ?? claims?.user_id ?? claims?.userId ?? claims?.email;
+  return typeof id === "string" && id ? id : undefined;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [claims, setClaims] = useState<Record<string, unknown> | undefined>();
+  const queryClient = useQueryClient();
+  const lastIdentity = useRef<string | undefined>(undefined);
+
+  // Everything the app has read (my roles, company, projects, the bell…) belongs to one person.
+  // When the session ends or another person signs in, drop it all, so nobody ever sees the
+  // previous person's screens or data, not even for a moment.
+  const adopt = useCallback((sessionClaims?: Record<string, unknown>) => {
+    const identity = identityOf(sessionClaims);
+    if (!sessionClaims || (identity && lastIdentity.current && identity !== lastIdentity.current)) queryClient.clear();
+    if (identity) lastIdentity.current = identity;
+    if (!sessionClaims) lastIdentity.current = undefined;
+    setClaims(sessionClaims);
+    setStatus(sessionClaims ? "authenticated" : "unauthenticated");
+  }, [queryClient]);
 
   // The session's source of truth is IAM's GET /iam/v4/auth/me
   // (blocksClient.auth.userInfo()), not a token this app can inspect --
@@ -31,10 +52,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // cookie that never reaches this app's JS, so a successful call here is
   // what "signed in" means, not the presence of a cached access token.
   const refresh = useCallback(async () => {
-    const sessionClaims = await fetchSessionClaims();
-    setClaims(sessionClaims);
-    setStatus(sessionClaims ? "authenticated" : "unauthenticated");
-  }, []);
+    adopt(await fetchSessionClaims());
+  }, [adopt]);
 
   useEffect(() => {
     void refresh();
@@ -68,15 +87,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!sessionClaims) {
       return { ok: false as const, reason: "other" as const, message: "Signed in, but the session could not be confirmed. Please try again." };
     }
-    setClaims(sessionClaims);
-    setStatus("authenticated");
+    // A fresh sign-in always starts with an empty cache, whoever was here before.
+    queryClient.clear();
+    adopt(sessionClaims);
     return result;
-  }, []);
+  }, [adopt, queryClient]);
 
   const logout = useCallback(async () => {
+    // Signed out at once: the login page shows straight away instead of bouncing back into the
+    // app (and flashing its screens) while the sign-out request is still running.
+    adopt(undefined);
     await endSession();
     await refresh();
-  }, [refresh]);
+  }, [adopt, refresh]);
 
   const value = useMemo<AuthContextValue>(() => ({
     claims,
