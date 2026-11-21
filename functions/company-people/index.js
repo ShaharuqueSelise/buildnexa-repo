@@ -75,11 +75,15 @@ function client(ctx, token) {
     if (!res.ok || body.errors?.length) throw new Error(`gateway ${res.status}: ${JSON.stringify(body.errors?.map((e) => e.message) ?? body).slice(0, 200)}`);
     return body.data;
   }
-  // The service reads every tenant; always filter to the caller's company.
-  async function list(schema, fields, tenantRole) {
+  // Every company's rows: only for platform work (counts per company), never sent to a company.
+  async function listAll(schema, fields) {
     const q = `get${schema}s`;
     const data = await gql(`query q($input: DynamicQueryInput) { ${q}(input: $input) { items { tenantRole ${fields} } } }`, { input: { pageNo: 1, pageSize: 1000 } });
-    return (data?.[q]?.items ?? []).filter((r) => r.tenantRole === tenantRole);
+    return data?.[q]?.items ?? [];
+  }
+  // The service reads every tenant; always filter to the caller's company.
+  async function list(schema, fields, tenantRole) {
+    return (await listAll(schema, fields)).filter((r) => r.tenantRole === tenantRole);
   }
   async function insert(schema, input) {
     const data = await gql(`mutation m($input: ${schema}InsertInput!) { insert${schema}(input: $input) { acknowledged itemId } }`, { input });
@@ -105,12 +109,16 @@ function client(ctx, token) {
     const changed = await updateWhere(schema, { ItemId: { eq: itemId } }, tenantRole, input);
     if (changed === 0) throw new Error(`update${schema} matched no row`);
   }
-  return { iam, gql, insert, list, update, updateWhere };
+  return { iam, gql, insert, list, listAll, update, updateWhere };
 }
+
+// A company's tag (its tenant role): "company-<short name>", or "co-<short name>" for companies
+// set up before 21 Nov 2026. "company-admin" is a job role, not a tag.
+const isCompanyTag = (r) => typeof r === "string" && (r.startsWith("co-") || (r.startsWith("company-") && r !== "company-admin"));
 
 function caller(ctx) {
   const roles = ctx.context.roles ?? [];
-  const companyRoles = roles.filter((r) => typeof r === "string" && r.startsWith("co-"));
+  const companyRoles = roles.filter(isCompanyTag);
   if (companyRoles.length !== 1) throw new Refused("NO_COMPANY", "Your account is not linked to exactly one company in this organization.");
   return {
     userId: ctx.context.userId,
@@ -178,12 +186,20 @@ async function allocateNumber(db, me, projectId, key, claimRef) {
 // ---------- handler shell ----------
 // actions: { name: async (args, env) => result }, env = { ctx, me, db }. `db` is created only when
 // an action needs it (service token costs one IAM call).
-async function handle(input, ctx, label, actions) {
+// A platform admin (Buildnexa operations). They belong to no company.
+function platformCaller(ctx) {
+  const roles = ctx.context.roles ?? [];
+  if (!roles.includes("platform-admin")) throw new Refused("NOT_PLATFORM_ADMIN", "Only a platform admin can do this.");
+  return { userId: ctx.context.userId, organizationId: ctx.context.organizationId, isPlatformAdmin: true };
+}
+
+// `who` says who may call: company people (default) or platform admins (platformCaller).
+async function handle(input, ctx, label, actions, who = caller) {
   const args = (input && input.method ? input.body : input) ?? {};
   try {
     const action = actions[args.action];
     if (!action) return { ok: false, code: "BAD_ACTION", error: "Unknown action." };
-    const me = caller(ctx);
+    const me = who(ctx);
     const db = client(ctx, await serviceToken(ctx));
     return await action(args, { ctx, me, db });
   } catch (error) {

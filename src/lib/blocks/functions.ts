@@ -4,7 +4,8 @@ import { blocksClient } from "./client";
 // Source code lives in web/functions/<name>; deploy with `blocks logic function save/deploy`.
 export const FUNCTIONS = {
   companyPeople: "effd3557-ae9d-42ca-bd5b-4f1460024bf9",
-  projects: "369dbe7b-61a5-443a-8f19-0abe7f15e0c0"
+  projects: "369dbe7b-61a5-443a-8f19-0abe7f15e0c0",
+  platform: "fcf68e44-aa63-4306-8429-551fce3d8467"
 } as const;
 
 // Every Buildnexa Function answers { ok: true, ... } or { ok: false, code, error }.
