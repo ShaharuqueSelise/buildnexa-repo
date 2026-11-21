@@ -47,6 +47,7 @@
 .m-main { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .m-top { align-items: center; background: hsl(var(--background)); border-bottom: 1px solid hsl(var(--border)); display: flex; flex-shrink: 0; gap: 12px; height: 64px; padding: 0 24px; }
 .m-top-spacer { flex: 1; }
+.m-top-area { font-size: 15px; font-weight: 600; white-space: nowrap; }
 .m-top-search { max-width: 340px; width: 100%; }
 .m-content { flex: 1; overflow-y: auto; padding: 32px 40px 64px; }
 .m-content-inner { margin: 0 auto; max-width: 1360px; }

@@ -376,5 +376,21 @@
   "home.noLog": "No log for today",
   "home.noLogPrecon": "Daily logs start when construction starts.",
   "home.activity": "Recent activity",
-  "home.noActivity": "No recent activity"
+  "home.noActivity": "No recent activity",
+  "shell.goPlatform": "Go to Platform admin",
+  "plat.subtitle": "Buildnexa operations: customer companies, usage and platform admins. Project records stay with each company.",
+  "plat.tab.companies": "Companies",
+  "plat.tab.usage": "Usage",
+  "plat.tab.admins": "Platform admins",
+  "plat.tab.flags": "Feature flags",
+  "plat.tab.support": "Support lookup",
+  "plat.tab.health": "Environment health",
+  "plat.tab.limits": "Blocks limits",
+  "plat.nextTitle": "Coming next",
+  "plat.companiesNext": "Every customer company will be listed here, and you'll create new ones: company name, short name and the first company admin, who gets an invite email.",
+  "plat.usageNext": "Projects and people per company, once the company list is in.",
+  "plat.adminsNext": "Add or remove other platform admins. Nobody can remove themselves or the last platform admin.",
+  "plat.later": "{module} comes with the admin and hardening work in Phase 5.",
+  "plat.note": "Platform admins see companies and usage only, never project records.",
+  "shell.noAccessPlatformText": "This page is for people who work in a customer company. Platform admins see companies and usage only. Access is checked on the server too."
 }

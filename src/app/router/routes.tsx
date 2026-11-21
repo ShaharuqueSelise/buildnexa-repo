@@ -16,6 +16,7 @@ import { ProjectsPage } from "../../features/projects/ProjectsPage";
 import { SpikePage } from "../../features/spike/SpikePage";
 import { ComingSoonPage } from "../../features/home/ComingSoonPage";
 import { HomePage } from "../../features/home/HomePage";
+import { PlatformAdminPage } from "../../features/platform/PlatformAdminPage";
 import { setCurrentProject } from "../../features/projects/projectsApi";
 import { navItemFor } from "../layout/navItems";
 
@@ -31,6 +32,7 @@ const protectedRoutes: Record<string, ComponentType<{ onNavigate: (path: string)
   "/projects": ProjectsPage,
   "/directory": DirectoryPage,
   "/company": CompanyAdminPage,
+  "/platform": PlatformAdminPage,
   "/spike": SpikePage,
   "/error": ErrorPage
 };

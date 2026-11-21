@@ -153,6 +153,9 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
+/** The company-level roles; anyone holding one belongs to a customer company. */
+const COMPANY_ROLES = ["company-admin", "staff", "external"];
+
 /**
  * Everything the project screens need: the projects I can see, the current project, my role in
  * it and whether I may create projects or change its team.
@@ -161,7 +164,11 @@ export function useProjects() {
   const roles = useMyRoles();
   const me = useCurrentUser();
   const myUserId = String((me.data?.data as { itemId?: string } | undefined)?.itemId ?? "");
-  const query = useQuery({ queryKey: KEY, queryFn: loadWorkspace, enabled: Boolean(roles && myUserId) });
+  // A platform admin who belongs to no company has no projects; skip the company reads.
+  const isPlatformAdmin = roles?.includes("platform-admin") ?? false;
+  const inCompany = roles?.some((r) => COMPANY_ROLES.includes(r)) ?? false;
+  const platformOnly = isPlatformAdmin && !inCompany;
+  const query = useQuery({ queryKey: KEY, queryFn: loadWorkspace, enabled: Boolean(roles && myUserId) && !platformOnly });
   const current = useSyncExternalStore(subscribe, () => memoryCurrent);
 
   const isAdmin = roles?.includes("company-admin") ?? false;
@@ -181,6 +188,8 @@ export function useProjects() {
     roles,
     myUserId,
     isAdmin,
+    isPlatformAdmin,
+    platformOnly,
     isStaff,
     projects,
     project,

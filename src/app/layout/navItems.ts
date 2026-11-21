@@ -53,7 +53,7 @@ export const navItems: readonly NavItem[] = [
   { href: "/inbox", labelKey: "nav.inbox", icon: Inbox, module: "inbox", group: "workspace", phase: 2 },
   { href: "/field", labelKey: "nav.field", icon: Smartphone, module: "field", group: "workspace", phase: 3 },
   { href: "/company", labelKey: "nav.company", icon: Building2, module: "companyAdmin", group: "administration" },
-  { href: "/platform", labelKey: "nav.platform", icon: ShieldCheck, module: "platformAdmin", group: "administration", phase: 5 }
+  { href: "/platform", labelKey: "nav.platform", icon: ShieldCheck, module: "platformAdmin", group: "administration" }
 ];
 
 const ALL_PROJECT: ModuleKey[] = ["home", "drawings", "rfis", "submittals", "logs", "punch", "photos", "documents", "directory", "inbox", "portfolio", "field"];
@@ -70,8 +70,14 @@ const ROLE_MODULES: Record<string, ModuleKey[]> = {
 const COMPANY_ADMIN: ModuleKey[] = ["portfolio", "companyAdmin", "inbox", "directory", "home"];
 const EVERYONE: ModuleKey[] = ["home", "portfolio", "inbox"];
 
-/** The modules someone may open: their role on the current project, plus Company admin's. */
-export function visibleModules({ projectRole, isAdmin, isPlatformAdmin }: { projectRole?: string; isAdmin: boolean; isPlatformAdmin?: boolean }): Set<ModuleKey> {
+const PLATFORM_ONLY: ModuleKey[] = ["platformAdmin", "inbox"];
+
+/**
+ * The modules someone may open: their role on the current project, plus Company admin's.
+ * A platform admin outside any company sees only the platform area.
+ */
+export function visibleModules({ projectRole, isAdmin, isPlatformAdmin, platformOnly }: { projectRole?: string; isAdmin: boolean; isPlatformAdmin?: boolean; platformOnly?: boolean }): Set<ModuleKey> {
+  if (platformOnly) return new Set(PLATFORM_ONLY);
   const set = new Set<ModuleKey>(EVERYONE);
   for (const m of ROLE_MODULES[projectRole ?? ""] ?? []) set.add(m);
   if (isAdmin) for (const m of COMPANY_ADMIN) set.add(m);

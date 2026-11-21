@@ -28,13 +28,19 @@ function readCollapsed(): boolean {
 export function AppShell({ activePath, children, onNavigate }: { activePath: string; children: ReactNode; onNavigate: (path: string) => void }) {
   const { t } = useT();
   const [collapsed, setCollapsed] = useState(readCollapsed);
-  const { roles, myRole, isAdmin, query } = useProjects();
+  const { roles, myRole, isAdmin, isPlatformAdmin, platformOnly, query } = useProjects();
   const unread = useNotifications().data?.unread ?? 0;
-  const visible = visibleModules({ projectRole: myRole, isAdmin, isPlatformAdmin: roles?.includes("platform-admin") });
+  const visible = visibleModules({ projectRole: myRole, isAdmin, isPlatformAdmin, platformOnly });
+  // A platform admin outside any company starts in the platform area.
+  const startPath = platformOnly ? "/platform" : "/";
   const active = navItemFor(activePath);
   // Wait for roles and projects before saying "no access", so the page does not flash it.
   const ready = Boolean(roles) && !query.isLoading;
   const allowed = !active || !ready || visible.has(active.module);
+
+  useEffect(() => {
+    if (ready && platformOnly && activePath === "/") onNavigate("/platform");
+  }, [ready, platformOnly, activePath, onNavigate]);
 
   useEffect(() => {
     try {
@@ -53,7 +59,7 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
   return (
     <div className="m-root">
       <aside className={cx("m-side", collapsed && "m-side-collapsed")}>
-        <a className="m-side-brand" href="/" onClick={(e) => { e.preventDefault(); onNavigate("/"); }} style={{ textDecoration: "none" }}>
+        <a className="m-side-brand" href={startPath} onClick={(e) => { e.preventDefault(); onNavigate(startPath); }} style={{ textDecoration: "none" }}>
           <span className="m-logo"><ClipboardList size={18} /></span>
           <div>{t("app.name")}<small>{t("app.tagline")}</small></div>
         </a>
@@ -85,31 +91,35 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
       <div className="m-main">
         <header className="m-top">
           <button className="m-icon-btn" onClick={() => setCollapsed((v) => !v)} aria-label={t("shell.toggleSidebar")}><PanelLeft size={18} /></button>
-          <ProjectSwitcher onNavigate={onNavigate} />
-          <div className="m-top-search">
-            <input className="m-input" placeholder={t("shell.search")} disabled title={t("shell.searchLater")} />
-          </div>
+          {platformOnly ? <strong className="m-top-area">{t("nav.platform")}</strong> : <ProjectSwitcher onNavigate={onNavigate} />}
+          {platformOnly ? null : (
+            <div className="m-top-search">
+              <input className="m-input" placeholder={t("shell.search")} disabled title={t("shell.searchLater")} />
+            </div>
+          )}
           <div className="m-top-spacer" />
           <LanguageSwitcher />
           <NotificationsMenu onNavigate={onNavigate} />
           <UserMenu onNavigate={onNavigate} />
         </header>
         <div className="m-content" ref={contentRef}>
-          <div className="m-content-inner">{allowed ? children : <NoAccess onNavigate={onNavigate} />}</div>
+          <div className="m-content-inner">
+            {platformOnly && activePath === "/" ? null : allowed ? children : <NoAccess home={startPath} onNavigate={onNavigate} />}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function NoAccess({ onNavigate }: { onNavigate: (path: string) => void }) {
+function NoAccess({ home, onNavigate }: { home: string; onNavigate: (path: string) => void }) {
   const { t } = useT();
   return (
     <div className="m-panel m-empty">
       <Eye size={28} />
       <strong>{t("shell.noAccess")}</strong>
-      <p>{t("shell.noAccessText")}</p>
-      <button className="m-link" onClick={() => onNavigate("/")}>{t("shell.goHome")}</button>
+      <p>{home === "/" ? t("shell.noAccessText") : t("shell.noAccessPlatformText")}</p>
+      <button className="m-link" onClick={() => onNavigate(home)}>{home === "/" ? t("shell.goHome") : t("shell.goPlatform")}</button>
     </div>
   );
 }
