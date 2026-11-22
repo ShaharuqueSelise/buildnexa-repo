@@ -141,6 +141,49 @@ const entities = {
     f("changedFields", "String", true),
     ...str("beforeJson", "afterJson", "summary", "reason", "source", "correlationId")
   ],
+  // RFIs (docs/architecture/03-rfis.md, part 1). Written only by the rfis Function, so the
+  // creator is stored in createdByUserId (Blocks' own CreatedBy is the service identity).
+  // Dates without a time (dueDate) are "yyyy-MM-dd" strings in the project's timezone.
+  Rfi: [
+    ...PROJECT,
+    ...str("number"), // RFI-007; empty while a draft (numbered on submit)
+    ...int("seq", "version"), // version: +1 on every update, the compare-and-set guard
+    ...str("clientRequestId", "subject", "question", "suggestedAnswer"),
+    ...str("status", "priority"), // status: draft | open | answered | closed | void; priority: low | normal | high
+    ...str("discipline", "location", "dueDate"),
+    ...id("managerUserId"),
+    f("assigneeUserIds", "ID", true),
+    f("distributionUserIds", "ID", true),
+    ...id("ballInCourtUserId", "ballInCourtCompanyId"),
+    ...str("ballInCourtName", "ballInCourtRole"), // role: creator | manager | assignee | none
+    ...id("createdByUserId", "createdByCompanyId"),
+    ...str("createdByName"),
+    ...date("createdAt", "openedDate", "answeredDate", "closedDate"),
+    ...id("closedByUserId", "officialResponseId"),
+    ...str("officialAnswerText"),
+    ...str("costImpact", "scheduleImpact"), // no | yes | tbd
+    f("costImpactAmount", "Float"),
+    ...int("scheduleImpactDays", "responseCount"),
+    ...str("internalNote"),
+    ...date("lastResponseAt"),
+    f("lastChange", "LastChange"),
+    ...bool("isVoided"),
+    ...str("voidReason", "searchText")
+  ],
+  RfiResponse: [
+    ...PROJECT,
+    ...id("rfiId"),
+    ...str("rfiNumber", "body"),
+    ...id("authorUserId", "authorCompanyId"),
+    ...str("authorName", "authorRole"),
+    ...date("postedAt"),
+    ...bool("isOfficial"),
+    ...id("markedOfficialByUserId"),
+    ...date("markedOfficialAt"),
+    ...str("source"), // app | email (R3)
+    ...bool("isVoided"),
+    ...str("voidReason")
+  ],
   Comment: [
     ...PROJECT,
     ...str("recordType"),
@@ -195,7 +238,10 @@ const access = {
   ProjectMember: { view: [STAFF, ADMIN, SERVICE], create: [SERVICE], edit: [SERVICE] },
   Sequence: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   ActivityEvent: { view: [SERVICE], create: [SERVICE] },
-  Comment: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] }
+  Comment: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  // Project content: only through the rfis Function, which checks the caller's project role.
+  Rfi: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  RfiResponse: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] }
 };
 
 const security = [];

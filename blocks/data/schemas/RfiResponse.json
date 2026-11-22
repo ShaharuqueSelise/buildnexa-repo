@@ -1,0 +1,87 @@
+{
+  "schemaName": "RfiResponse",
+  "collectionName": "RfiResponses",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "rfiId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "rfiNumber",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "body",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "authorUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "authorCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "authorName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "authorRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "postedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "isOfficial",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "markedOfficialByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "markedOfficialAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "source",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "voidReason",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

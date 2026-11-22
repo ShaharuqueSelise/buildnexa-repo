@@ -1,0 +1,217 @@
+{
+  "schemaName": "Rfi",
+  "collectionName": "Rfis",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "number",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "seq",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "clientRequestId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "subject",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "question",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "suggestedAnswer",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "priority",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "discipline",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "location",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "dueDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "managerUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "assigneeUserIds",
+      "type": "ID",
+      "isArray": true
+    },
+    {
+      "name": "distributionUserIds",
+      "type": "ID",
+      "isArray": true
+    },
+    {
+      "name": "ballInCourtUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "ballInCourtCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "ballInCourtName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "ballInCourtRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "createdByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "createdAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "openedDate",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "answeredDate",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "closedDate",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "closedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "officialResponseId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "officialAnswerText",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "costImpact",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "scheduleImpact",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "costImpactAmount",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "scheduleImpactDays",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "responseCount",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "internalNote",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastResponseAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "voidReason",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "searchText",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

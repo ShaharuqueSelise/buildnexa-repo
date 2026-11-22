@@ -59,7 +59,7 @@ assigned to. The module's Function checks the record as well as the key. — = n
 | rfi.view | ✓ | ✓ | ✓ | L (involved) | ✓ | ✓ |
 | rfi.create | ✓ | ✓ | ✓ | ✓ | — | — |
 | rfi.respond | ✓ | ✓ | ✓ | L (assigned) | L (assigned) | — |
-| rfi.reassign, rfi.close, rfi.void, rfi.reopen | ✓ | — | — | — | — | — |
+| rfi.edit, rfi.reassign, rfi.close, rfi.void, rfi.reopen | ✓ | — | — | — | — | — |
 | rfi.mark_official | ✓ | — | — | — | L (own answer) | — |
 | rfi.see_cost | ✓ | ✓ | ✓ | — | — | ✓ |
 | rfi.see_internal | ✓ | ✓ | ✓ | — | — | — |

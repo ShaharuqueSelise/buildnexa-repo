@@ -1,0 +1,42 @@
+/* RFIs page (from mock/src/mock/pages/RfisPage.css): status stepper, ball-in-court card, thread. */
+.m-rfis-head { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; margin-bottom: 16px; }
+.m-rfis-head h1 { font-size: 22px; margin: 4px 0 6px; }
+.m-rfis-head-meta { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.m-rfis-back { margin-bottom: 4px; }
+
+.m-rfis-stepper { display: flex; gap: 0; list-style: none; margin: 0 0 16px; overflow-x: auto; padding: 0; }
+.m-rfis-step { align-items: center; color: hsl(var(--muted-foreground)); display: flex; flex: 1 1 0; font-size: 13px; font-weight: 600; gap: 8px; min-width: 110px; position: relative; }
+.m-rfis-step::after { background: hsl(var(--border)); content: ""; flex: 1; height: 2px; margin: 0 8px; }
+.m-rfis-step:last-child { flex: 0 0 auto; }
+.m-rfis-step:last-child::after { display: none; }
+.m-rfis-step-dot { align-items: center; background: hsl(var(--secondary)); border: 2px solid hsl(var(--border)); border-radius: 999px; display: inline-flex; flex-shrink: 0; font-size: 11px; height: 24px; justify-content: center; width: 24px; }
+.m-rfis-step-done { color: hsl(var(--foreground)); }
+.m-rfis-step-done .m-rfis-step-dot { background: hsl(var(--m-green-bg)); border-color: hsl(var(--m-green-fg)); color: hsl(var(--m-green-fg)); }
+.m-rfis-step-done::after { background: hsl(var(--m-green-fg) / .6); }
+.m-rfis-step-current { color: hsl(var(--primary)); }
+.m-rfis-step-current .m-rfis-step-dot { background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground, 0 0% 100%)); box-shadow: 0 0 0 4px hsl(var(--primary) / .15); }
+.m-rfis-step-void { color: hsl(var(--m-red-fg)); }
+.m-rfis-step-void .m-rfis-step-dot { background: hsl(var(--m-red-bg)); border-color: hsl(var(--m-red-fg)); color: hsl(var(--m-red-fg)); }
+
+.m-rfis-ball { align-items: center; background: linear-gradient(135deg, hsl(var(--m-blue-bg) / .7), hsl(var(--card))); border: 1px solid hsl(var(--border)); border-radius: 12px; display: flex; gap: 12px; min-width: 260px; padding: 12px 14px; }
+.m-rfis-ball-label { color: hsl(var(--muted-foreground)); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.m-rfis-ball strong { display: block; font-size: 15px; }
+.m-rfis-ball-over { background: linear-gradient(135deg, hsl(var(--m-red-bg) / .8), hsl(var(--card))); }
+
+.m-rfis-question { font-size: 15px; line-height: 1.55; margin: 0; white-space: pre-wrap; }
+.m-rfis-suggested { border-left: 3px solid hsl(var(--m-purple-fg)); color: hsl(var(--muted-foreground)); margin: 12px 0 0; padding: 4px 0 4px 12px; }
+.m-rfis-msg-head { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; margin-bottom: 6px; }
+.m-rfis-msg-text { margin: 0; white-space: pre-wrap; }
+.m-rfis-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.m-rfis-composer { border-top: 1px solid hsl(var(--border)); display: grid; gap: 8px; margin-top: 14px; padding-top: 14px; }
+.m-rfis-subject { font-weight: 600; }
+.m-rfis-subject small { color: hsl(var(--muted-foreground)); display: block; font-weight: 400; }
+.m-rfis-bulk { align-items: center; background: hsl(var(--m-blue-bg)); border-radius: 10px; color: hsl(var(--m-blue-fg)); display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 8px 12px; }
+.m-rfis-pick { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); max-height: 180px; overflow-y: auto; }
+.m-rfis-related { background: none; border: 1px solid hsl(var(--border)); border-radius: 10px; color: inherit; display: grid; gap: 2px; padding: 8px 10px; text-align: left; width: 100%; }
+.m-rfis-related:hover { border-color: hsl(var(--primary)); }
+
+
+@media (max-width: 880px) {
+  .m-rfis-ball { min-width: 0; width: 100%; }
+}

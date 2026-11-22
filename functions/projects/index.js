@@ -87,10 +87,12 @@ function client(ctx, token) {
   // The service reads every tenant, so every read names the caller's company: the gateway filters
   // on the server (DynamicQueryInput.filter, a JSON string) and the result is checked again here.
   // `where` adds equality filters, e.g. { projectId }.
+  // The fields filtered on are always fetched too: the result is checked against them below.
   async function list(schema, fields, tenantRole, where = {}) {
     const q = `get${schema}s`;
     const filter = JSON.stringify({ ...where, tenantRole });
-    const data = await gql(`query q($input: DynamicQueryInput) { ${q}(input: $input) { items { tenantRole ${fields} } } }`, { input: { pageNo: 1, pageSize: 1000, filter } });
+    const selected = [...new Set([...fields.split(/\s+/), ...Object.keys(where)].filter(Boolean))].join(" ");
+    const data = await gql(`query q($input: DynamicQueryInput) { ${q}(input: $input) { items { tenantRole ${selected} } } }`, { input: { pageNo: 1, pageSize: 1000, filter } });
     const items = data?.[q]?.items ?? [];
     return items.filter((r) => r.tenantRole === tenantRole && Object.entries(where).every(([k, v]) => r[k] === v));
   }
@@ -107,6 +109,9 @@ function client(ctx, token) {
         actorUserId: me.userId,
         actorName: entry.actorName,
         at: new Date().toISOString(),
+        fromStatus: entry.fromStatus,
+        toStatus: entry.toStatus,
+        reason: entry.reason,
         changedFields: entry.changedFields,
         beforeJson: entry.before === undefined ? undefined : JSON.stringify(entry.before),
         afterJson: entry.after === undefined ? undefined : JSON.stringify(entry.after),
@@ -198,8 +203,7 @@ async function allocateNumber(db, me, projectId, key, claimRef) {
   // Spike M1b: 20 callers at once on one counter gave 17 numbers in 9 s and 3 gave up after 8
   // tries; real projects see a few creates at once, so 10 tries with a growing pause is plenty.
   for (let attempt = 1; attempt <= 10; attempt += 1) {
-    const rows = (await db.list("Sequence", SEQ_FIELDS, me.tenantRole))
-      .filter((s) => s.projectId === projectId && s.key === key)
+    const rows = (await db.list("Sequence", SEQ_FIELDS, me.tenantRole, { projectId, key }))
       .sort((a, b) => String(a.ItemId).localeCompare(String(b.ItemId)));
     let seq = rows[0];
     if (!seq) {
@@ -284,6 +288,7 @@ const PROJECT_PERMISSIONS = {
   "rfi.create": [PM, SUPT, DC, SUB],
   "rfi.respond": [PM, SUPT, DC],
   "rfi.respond_assigned": [SUB, DESIGN], // only when assigned or holding the ball
+  "rfi.edit": [PM], // subject, question, due date and people after submit (drafts: the creator too)
   "rfi.reassign": [PM], // the GC creator may also pass the ball on their own RFI
   "rfi.mark_official": [PM],
   "rfi.mark_official_own": [DESIGN], // their own response only

@@ -66,6 +66,37 @@ export function Avatar({ name, color, size = 28, title }: { name: string; color:
   );
 }
 
+export function PersonChip({ name, sub, color }: { name?: string; sub?: ReactNode; color?: string }) {
+  if (!name) return <span className="m-muted">—</span>;
+  return (
+    <span className="m-person">
+      <Avatar name={name} color={color ?? colorFor(name)} size={24} />
+      <span>
+        <span className="m-person-name">{name}</span>
+        {sub ? <span className="m-person-sub">{sub}</span> : null}
+      </span>
+    </span>
+  );
+}
+
+/** Timeline of events (audit, history, review chain). */
+export function Timeline({ items }: { items: { who?: string; when: string; title: ReactNode; body?: ReactNode; tone?: Tone }[] }) {
+  return (
+    <ol className="m-timeline">
+      {items.map((it, i) => (
+        <li key={i}>
+          <span className={`m-timeline-dot m-fill-${it.tone ?? "gray"}`} />
+          <div>
+            <div className="m-timeline-head">{it.who ? <PersonChip name={it.who} /> : null}<span className="m-muted">{it.when}</span></div>
+            <div className="m-timeline-title">{it.title}</div>
+            {it.body ? <div className="m-timeline-body">{it.body}</div> : null}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 export function CompanyChip({ name, color }: { name: string; color: string }) {
   return <span className="m-company"><span className="m-dot" style={{ background: color }} />{name}</span>;
 }

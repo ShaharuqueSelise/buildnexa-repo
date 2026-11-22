@@ -37,6 +37,7 @@ const PROJECT_PERMISSIONS = {
   "rfi.create": [PM, SUPT, DC, SUB],
   "rfi.respond": [PM, SUPT, DC],
   "rfi.respond_assigned": [SUB, DESIGN], // only when assigned or holding the ball
+  "rfi.edit": [PM], // subject, question, due date and people after submit (drafts: the creator too)
   "rfi.reassign": [PM], // the GC creator may also pass the ball on their own RFI
   "rfi.mark_official": [PM],
   "rfi.mark_official_own": [DESIGN], // their own response only
