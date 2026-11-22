@@ -2,9 +2,11 @@
 // the list with KPIs and filters, the New RFI form, and the RFI with its ball in court, status
 // steps, response thread, official answer and history. Every action goes through the rfis
 // Function, which decides who may do what; the buttons shown here follow its `can` answer.
-// Not real yet (later parts of the RFI work): attachments and the phone layout, bell and email
-// notifications, reminders, CSV export; and from later releases: board view, bulk reassign, PDF
-// with letterhead, linked sheets, change events, related RFIs, reply by email.
+// Files (Part 3): on the question and on every response, uploaded through the rfis Function's
+// links (features/files). Phone layout: the list becomes cards below 640 px (RfisPage.css).
+// Not real yet (later parts of the RFI work): reminders, CSV export; and from later releases:
+// board view, bulk reassign, PDF with letterhead, linked sheets, change events, related RFIs,
+// reply by email.
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -24,7 +26,10 @@ import type { Tone, ToastTone } from "../../shared/m/ui";
 import { personName, useProjects } from "../projects/projectsApi";
 import type { ProjectRow, TeamRow } from "../projects/projectsApi";
 import { fmtDate, fmtShortDate } from "../projects/ProjectsPage";
-import { useRfi, useRfiAction, useRfiList } from "./rfisApi";
+import { AttachmentList, AttachmentPicker } from "../files/Attachments";
+import type { PickedFile } from "../files/Attachments";
+import type { NewAttachment } from "../files/files";
+import { rfiUploadLinks, useRfi, useRfiAction, useRfiList } from "./rfisApi";
 import type { Impact, RfiInput, RfiRow, RfiStatus } from "./rfisApi";
 import "./RfisPage.css";
 
@@ -258,7 +263,7 @@ function RfiListView({ ctx }: { ctx: Ctx }) {
           </Empty>
         </Panel>
       ) : (
-        <div className="m-table-wrap">
+        <div className="m-table-wrap m-rfis-table">
           <table className="m-table">
             <thead>
               <tr>
@@ -276,17 +281,18 @@ function RfiListView({ ctx }: { ctx: Ctx }) {
             <tbody>
               {filtered.map((r) => (
                 <tr key={r.ItemId} className="m-clickable" onClick={() => onNavigate(`/rfis/${r.ItemId}`)}>
-                  <td className="m-mono m-strong">{r.number || <span className="m-muted">{t("rfi.status.draft")}</span>}</td>
-                  <td>
+                  <td className="m-mono m-strong m-rfis-c-num">{r.number || <span className="m-muted">{t("rfi.status.draft")}</span>}</td>
+                  <td className="m-rfis-c-subject">
                     <div className="m-rfis-subject">
                       {r.priority === "high" ? <Badge tone="red">{t("rfi.priority.high")}</Badge> : null} {r.subject}
+                      {r.attachments?.length ? <span className="m-rfis-clip" title={fmt(t("files.count"), { count: r.attachments.length })}><Paperclip size={12} />{r.attachments.length}</span> : null}
                       {r.location ? <small>{r.location}</small> : null}
                     </div>
                   </td>
-                  <td><StatusPill status={r.status} t={t} /></td>
-                  <td>{r.ballInCourtUserId && LIVE.includes(r.status) ? <PersonChip name={nameOf(r.ballInCourtUserId, r.ballInCourtName)} /> : <span className="m-muted">—</span>}</td>
+                  <td className="m-rfis-c-status"><StatusPill status={r.status} t={t} /></td>
+                  <td className="m-rfis-c-ball">{r.ballInCourtUserId && LIVE.includes(r.status) ? <PersonChip name={nameOf(r.ballInCourtUserId, r.ballInCourtName)} /> : <span className="m-muted">—</span>}</td>
                   <td className="m-hide-mobile">{r.discipline || "—"}</td>
-                  <td><DueLabel due={r.dueDate} done={r.status !== "open" && r.status !== "draft"} today={today} t={t} /></td>
+                  <td className="m-rfis-c-due"><DueLabel due={r.dueDate} done={r.status !== "open" && r.status !== "draft"} today={today} t={t} /></td>
                   <td className="m-hide-mobile">{nameOf(r.createdByUserId, r.createdByName)}</td>
                   {showCost ? (
                     <td className="m-hide-mobile">
@@ -344,6 +350,9 @@ function RfiFormDialog({ ctx, seesCost, seesInternal, initial, onClose, onDone }
     internalNote: initial?.internalNote ?? ""
   }));
   const [tried, setTried] = useState(false);
+  const [files, setFiles] = useState<PickedFile[]>(() => initial?.attachments ?? []);
+  const [uploading, setUploading] = useState(false);
+  const requestLinks = useMemo(() => rfiUploadLinks(project.ItemId, initial?.ItemId), [project.ItemId, initial?.ItemId]);
   const set = <K extends keyof RfiInput>(k: K, value: RfiInput[K]) => setV((prev) => ({ ...prev, [k]: value }));
   const toggle = (k: "assigneeUserIds" | "distributionUserIds", id: string) =>
     set(k, v[k].includes(id) ? v[k].filter((x) => x !== id) : [...v[k], id]);
@@ -360,8 +369,10 @@ function RfiFormDialog({ ctx, seesCost, seesInternal, initial, onClose, onDone }
   // Cost and internal fields go only to roles that may set them; the Function refuses them otherwise.
   const payload = (): RfiInput => {
     const { costImpact, scheduleImpact, costImpactAmount, scheduleImpactDays, internalNote, ...rest } = v;
+    const filesChanged = files.map((a) => a.fileId).join() !== (initial?.attachments ?? []).map((a) => a.fileId).join();
     return {
       ...rest,
+      ...(filesChanged ? { attachments: files } : {}),
       subject: v.subject.trim(),
       ...(seesCost ? { costImpact, scheduleImpact, costImpactAmount, scheduleImpactDays } : {}),
       ...(seesInternal ? { internalNote } : {})
@@ -369,6 +380,7 @@ function RfiFormDialog({ ctx, seesCost, seesInternal, initial, onClose, onDone }
   };
 
   async function save(submit: boolean) {
+    if (uploading) { toast(t("files.wait"), "warn"); return; }
     setTried(true);
     if ((submit || mustBeComplete) && missing.length) { toast(fmt(t("rfi.form.missing"), { fields: missing.join(", ") }), "warn"); return; }
     if (v.subject.trim().length < 3) { toast(t("rfi.form.needSubject"), "warn"); return; }
@@ -396,11 +408,11 @@ function RfiFormDialog({ ctx, seesCost, seesInternal, initial, onClose, onDone }
           {!initial ? <span className="m-muted m-small" style={{ marginRight: "auto" }}>{t("rfi.form.numberHint")}</span> : null}
           <Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button>
           {initial ? (
-            <Button onClick={() => save(false)} disabled={busy} icon={busy ? <Loader2 className="spin" size={15} /> : undefined}>{t("common.save")}</Button>
+            <Button onClick={() => save(false)} disabled={busy || uploading} icon={busy ? <Loader2 className="spin" size={15} /> : undefined}>{t("common.save")}</Button>
           ) : (
             <>
-              <Button variant="secondary" onClick={() => save(false)} disabled={busy}>{t("rfi.form.saveDraft")}</Button>
-              <Button icon={busy ? <Loader2 className="spin" size={15} /> : <Send size={15} />} onClick={() => save(true)} disabled={busy}>{t("rfi.form.submit")}</Button>
+              <Button variant="secondary" onClick={() => save(false)} disabled={busy || uploading}>{t("rfi.form.saveDraft")}</Button>
+              <Button icon={busy ? <Loader2 className="spin" size={15} /> : <Send size={15} />} onClick={() => save(true)} disabled={busy || uploading} title={uploading ? t("files.wait") : undefined}>{t("rfi.form.submit")}</Button>
             </>
           )}
         </>
@@ -459,8 +471,15 @@ function RfiFormDialog({ ctx, seesCost, seesInternal, initial, onClose, onDone }
             <textarea className="m-input" value={v.internalNote ?? ""} onChange={(e) => set("internalNote", e.target.value)} style={{ minHeight: 60 }} />
           </Field>
         ) : null}
-        <Field label={t("rfi.form.attachments")} wide hint={t("rfi.later.files")}>
-          <div><Button variant="secondary" small icon={<Paperclip size={14} />} disabled title={t("rfi.later.files")}>{t("rfi.form.addFiles")}</Button></div>
+        <Field label={t("rfi.form.attachments")} wide hint={editing && initial?.status !== "draft" ? t("files.hintLocked") : t("files.hint")}>
+          <AttachmentPicker
+            value={files}
+            onChange={setFiles}
+            requestLinks={requestLinks}
+            onBusyChange={setUploading}
+            lockedIds={editing && initial?.status !== "draft" ? (initial?.attachments ?? []).map((a) => a.fileId) : undefined}
+            toast={toast}
+          />
         </Field>
       </div>
     </Dialog>
@@ -484,6 +503,9 @@ function RfiDetailView({ ctx, rfiId }: { ctx: Ctx; rfiId: string }) {
   const action = useRfiAction(project.ItemId);
   const [tab, setTab] = useState<"responses" | "history">("responses");
   const [reply, setReply] = useState("");
+  const [replyFiles, setReplyFiles] = useState<PickedFile[]>([]);
+  const [replyUploading, setReplyUploading] = useState(false);
+  const replyLinks = useMemo(() => rfiUploadLinks(project.ItemId, rfiId), [project.ItemId, rfiId]);
   const [asOfficial, setAsOfficial] = useState(false);
   const [dialog, setDialog] = useState<DialogKind>("");
   const seesCost = projectCan(myRole, "rfi.see_cost");
@@ -519,10 +541,13 @@ function RfiDetailView({ ctx, rfiId }: { ctx: Ctx; rfiId: string }) {
 
   async function postReply() {
     const text = reply.trim();
-    if (!text) return;
-    const done = await run({ action: "respond", rfiId: rfi.ItemId, body: text, asOfficial: asOfficial || undefined }, asOfficial ? t("rfi.toast.officialPosted") : t("rfi.toast.responded"));
-    if (done) { setReply(""); setAsOfficial(false); }
+    if (!text && (asOfficial || !replyFiles.length)) return;
+    if (replyUploading) { toast(t("files.wait"), "warn"); return; }
+    const attachments = replyFiles.length ? (replyFiles as NewAttachment[]) : undefined;
+    const done = await run({ action: "respond", rfiId: rfi.ItemId, body: text, asOfficial: asOfficial || undefined, attachments }, asOfficial ? t("rfi.toast.officialPosted") : t("rfi.toast.responded"));
+    if (done) { setReply(""); setReplyFiles([]); setAsOfficial(false); }
   }
+  const canPost = !busy && !replyUploading && (asOfficial ? Boolean(reply.trim()) : Boolean(reply.trim() || replyFiles.length));
 
   const stepIndex = rfi.status === "void" ? -1 : ["draft", "open", "answered", "closed"].indexOf(rfi.status);
   const respondWhy =
@@ -595,6 +620,7 @@ function RfiDetailView({ ctx, rfiId }: { ctx: Ctx; rfiId: string }) {
           <Panel title={t("rfi.form.question")}>
             <p className="m-rfis-question">{rfi.question || <span className="m-muted">{t("rfi.noQuestion")}</span>}</p>
             {rfi.suggestedAnswer ? <p className="m-rfis-suggested"><b>{t("rfi.form.suggested")}:</b> {rfi.suggestedAnswer}</p> : null}
+            <AttachmentList items={rfi.attachments} links={detail.data.files} />
           </Panel>
 
           {rfi.officialAnswerText ? (
@@ -636,7 +662,8 @@ function RfiDetailView({ ctx, rfiId }: { ctx: Ctx; rfiId: string }) {
                             <span className="m-muted m-small">{fmtDateTime(r.postedAt)}</span>
                           </span>
                         </div>
-                        <p className="m-rfis-msg-text">{r.body}</p>
+                        {r.body ? <p className="m-rfis-msg-text">{r.body}</p> : null}
+                        <AttachmentList items={r.attachments} links={detail.data.files} />
                         {mayMark ? (
                           <div className="m-row" style={{ marginTop: 8 }}>
                             <Button small variant="secondary" icon={<Star size={13} />} disabled={busy}
@@ -653,11 +680,11 @@ function RfiDetailView({ ctx, rfiId }: { ctx: Ctx; rfiId: string }) {
                   <div className="m-rfis-composer">
                     <textarea className="m-input" value={reply} onChange={(e) => setReply(e.target.value)}
                       placeholder={rfi.ballInCourtUserId === myUserId && rfi.ballInCourtRole === "assignee" ? t("rfi.replyAnswerPh") : t("rfi.replyPh")} />
-                    <div className="m-row m-row-wrap">
+                    <AttachmentPicker value={replyFiles} onChange={setReplyFiles} requestLinks={replyLinks} onBusyChange={setReplyUploading} toast={toast} compact />
+                    <div className="m-row m-row-wrap m-rfis-composer-actions">
                       {can.markOfficial || can.markOfficialOwn ? <Checkbox checked={asOfficial} onChange={setAsOfficial} label={t("rfi.postAsOfficial")} /> : null}
-                      <Button variant="secondary" small icon={<Paperclip size={14} />} disabled title={t("rfi.later.files")}>{t("rfi.attach")}</Button>
                       <span style={{ flex: 1 }} />
-                      <Button icon={busy ? <Loader2 className="spin" size={14} /> : <Send size={14} />} onClick={postReply} disabled={!reply.trim() || busy}>{t("rfi.post")}</Button>
+                      <Button icon={busy ? <Loader2 className="spin" size={14} /> : <Send size={14} />} onClick={postReply} disabled={!canPost} title={replyUploading ? t("files.wait") : undefined}>{t("rfi.post")}</Button>
                     </div>
                   </div>
                 ) : <div style={{ marginTop: 12 }}><Note>{respondWhy}</Note></div>}
@@ -726,9 +753,8 @@ function RfiDetailView({ ctx, rfiId }: { ctx: Ctx; rfiId: string }) {
 
           <Panel title={<span className="m-row"><AlarmClock size={16} />{t("rfi.comingNext")}</span>}>
             <ul className="m-small m-muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
-              <li>{t("rfi.later.notify")}</li>
-              <li>{t("rfi.later.files")}</li>
               <li>{t("rfi.later.reminders")}</li>
+              <li>{t("rfi.later.csv")}</li>
               <li>{t("rfi.later.pdf")} <ReleaseTag release="R2" /></li>
               <li>{t("rfi.later.links")} <ReleaseTag release="R2" /></li>
             </ul>
@@ -786,7 +812,7 @@ function ReassignDialog({ t, title, options, busy, onClose, onSave }: {
       <div className="m-stack-v">
         <Field label={t("rfi.newBall")}><Select value={to} onChange={setTo} options={options} /></Field>
         <Field label={t("rfi.noteOptional")}><textarea className="m-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={t("rfi.notePh")} /></Field>
-        <Note>{t("rfi.later.notify")}</Note>
+        <Note>{t("rfi.reassignNotice")}</Note>
       </div>
     </Dialog>
   );

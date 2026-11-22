@@ -1,0 +1,18 @@
+/* Files on records: picker chips with progress, photo previews, file chips (base .m-file in m.css). */
+.m-att-picker { display: grid; gap: 8px; }
+.m-att-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.m-att-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-att-mini { border-radius: 4px; height: 22px; object-fit: cover; width: 22px; }
+.m-att-failed { background: hsl(var(--m-red-bg)); color: hsl(var(--m-red-fg)); }
+.m-att-link { color: inherit; text-decoration: none; }
+.m-att-link:hover { background: hsl(var(--accent, var(--secondary))); outline: 1px solid hsl(var(--border)); }
+.m-att-list { display: grid; gap: 8px; margin-top: 10px; }
+.m-att-photos { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); max-width: 560px; }
+.m-att-photo { aspect-ratio: 1; background: hsl(var(--secondary)); border: 1px solid hsl(var(--border)); border-radius: 10px; display: block; overflow: hidden; }
+.m-att-photo img { display: block; height: 100%; object-fit: cover; transition: transform .15s; width: 100%; }
+.m-att-photo:hover img { transform: scale(1.04); }
+
+@media (max-width: 640px) {
+  .m-att-name { max-width: 150px; }
+  .m-att-photos { grid-template-columns: repeat(3, 1fr); }
+}

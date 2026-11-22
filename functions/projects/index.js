@@ -38,6 +38,8 @@
 //   (docs/architecture/13 §4.1), compare-and-set as proven by spike M1b.
 // - handle: the common handler shell (errors, logging, never a token in the answer).
 // - client().notify / mail: the bell and email, sent only by the service identity.
+// - client().presignUpload / downloadUrls / sign + issueUploads / acceptAttachments: files on
+//   records, owned by the service identity, attached with a signed upload ticket.
 
 // - permissions.js (next to this file) is copied in after it: PROJECT_ROLES, projectCan, accountCan.
 
@@ -96,7 +98,9 @@ function client(ctx, token) {
   async function list(schema, fields, tenantRole, where = {}) {
     const q = `get${schema}s`;
     const filter = JSON.stringify({ ...where, tenantRole });
-    const selected = [...new Set([...fields.split(/\s+/), ...Object.keys(where)].filter(Boolean))].join(" ");
+    // Nested selections ("attachments { fileId … }") stay as written; only top-level names count.
+    const top = new Set(fields.replace(/\{[^{}]*\}/g, " ").split(/\s+/).filter(Boolean));
+    const selected = [fields.trim(), ...Object.keys(where).filter((k) => !top.has(k))].join(" ");
     const data = await gql(`query q($input: DynamicQueryInput) { ${q}(input: $input) { items { tenantRole ${selected} } } }`, { input: { pageNo: 1, pageSize: 1000, filter } });
     const items = data?.[q]?.items ?? [];
     return items.filter((r) => r.tenantRole === tenantRole && Object.entries(where).every(([k, v]) => r[k] === v));
@@ -190,8 +194,143 @@ function client(ctx, token) {
   }
   // Where links in emails point: the app's address in this environment.
   const appUrl = String(ctx.env.APP_URL || DEFAULT_APP_URL).replace(/\/+$/, "");
-  return { iam, gql, insert, list, listAll, update, updateWhere, audit, notify, mail, appUrl };
+
+  // ---------- files (Blocks Storage) ----------
+  // Every file belongs to the service identity: people hold no Storage permission at all (a
+  // person asking Storage directly gets 403), so a file can only be uploaded through a link a
+  // Function handed out, and only downloaded through a short-lived link a Function handed out
+  // after checking that the person may see the record it belongs to.
+  async function storage(path, body) {
+    const res = await fetch(`${API}/data/v4/files/${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.isSuccess === false) {
+      const detail = json?.errors ? JSON.stringify(json.errors).slice(0, 200) : json?.message ?? res.status;
+      throw new Error(`storage ${path} failed: ${detail}`);
+    }
+    return json;
+  }
+  // A new private file and the link the browser PUTs its bytes to (valid for 10 minutes).
+  async function presignUpload(name, props) {
+    const json = await storage("get-pre-signed-url-for-upload", { Name: name, AccessModifier: "Private", AdditionalProperties: props });
+    const d = json?.data && typeof json.data === "object" ? json.data : json;
+    const fileId = d.fileId ?? d.FileId;
+    const uploadUrl = d.uploadUrl ?? d.UploadUrl;
+    if (!fileId || !uploadUrl) throw new Error(`storage gave no upload link (answer had ${Object.keys(d).join(", ")})`);
+    return { fileId: String(fileId), uploadUrl: String(uploadUrl) };
+  }
+  // fileId -> a download link that works for a few minutes.
+  async function downloadUrls(fileIds) {
+    const ids = [...new Set(fileIds.filter(Boolean).map(String))];
+    if (!ids.length) return {};
+    const json = await storage("get-files", { FileIds: ids });
+    const d = json?.data ?? json?.files ?? json?.items ?? json;
+    const items = Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : Array.isArray(d?.files) ? d.files : [];
+    const out = {};
+    for (const it of items) {
+      const id = it?.fileId ?? it?.FileId ?? it?.itemId ?? it?.ItemId ?? it?.id;
+      const url = it?.url ?? it?.Url ?? it?.downloadUrl ?? it?.DownloadUrl ?? Object.values(it ?? {}).find((v) => typeof v === "string" && /^https:\/\//.test(v));
+      if (id && url && ids.includes(String(id))) out[String(id)] = String(url);
+    }
+    if (!Object.keys(out).length) ctx.log?.warn?.("storage get-files: no links found", { shape: JSON.stringify(json).slice(0, 300).replace(/https:\/\/[^"]+/g, "<url>") });
+    return out;
+  }
+  // A signature over an upload's facts, made with this Function's own secret: the browser hands
+  // it back when it attaches the file, so nobody can attach a file they did not upload, to a
+  // project they did not upload it for, or change its name, size or type on the way.
+  async function sign(parts) {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(`files:${ctx.env.CLIENT_SECRET ?? ""}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(parts.map(String).join("\n"))));
+    let s = "";
+    for (const b of mac) s += String.fromCharCode(b);
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  return { iam, gql, insert, list, listAll, update, updateWhere, audit, notify, mail, appUrl, presignUpload, downloadUrls, sign };
 }
+
+// ---------- attachments (docs/architecture/13 §4.6, XC-03) ----------
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_THUMB_BYTES = 1024 * 1024;
+const MAX_ATTACHMENTS = 20;
+// Files that would run or render as a page when opened: never stored.
+const BLOCKED_FILE = /\.(exe|msi|bat|cmd|com|scr|ps1|vbs|js|mjs|jar|sh|app|dll|html?|xhtml|svg|php|hta)$/i;
+const THUMB_TYPES = ["image/jpeg", "image/webp", "image/png"];
+const TICKET_HOURS = 24;
+
+// A file name people can read, safe for any storage: no folders, no control characters.
+function safeFileName(name) {
+  const base = String(name ?? "").split(/[\\/]/).pop().replace(/[\u0000-\u001f<>:"|?*]/g, "").replace(/\s+/g, " ").trim();
+  return (base || "file").slice(-120);
+}
+
+const ticketParts = (a, me, projectId) => ["v1", a.fileId, a.thumbnailFileId || "", me.userId, me.tenantRole, projectId, a.fileName, a.contentType, a.sizeBytes, a.uploadedAt];
+
+// Upload links for up to 10 files. `files`: [{ name, contentType, sizeBytes, thumbnail?: { contentType, sizeBytes } }].
+// Answers what the browser needs: where to PUT the file (and its preview), and the signed facts
+// it sends back when it attaches them.
+async function issueUploads(db, me, projectId, files, record) {
+  if (!Array.isArray(files) || !files.length) throw new Refused("NO_FILES", "Choose a file first.");
+  if (files.length > 10) throw new Refused("TOO_MANY_FILES", "Add at most 10 files at a time.");
+  const now = new Date().toISOString();
+  const props = { app: "buildnexa", tenantRole: me.tenantRole, projectId, uploadedBy: me.userId, record };
+  const out = [];
+  for (const f of files) {
+    const fileName = safeFileName(f?.name);
+    const sizeBytes = Number(f?.sizeBytes);
+    const contentType = String(f?.contentType || "application/octet-stream").slice(0, 100);
+    if (BLOCKED_FILE.test(fileName)) throw new Refused("FILE_TYPE_NOT_ALLOWED", `${fileName}: this type of file can't be attached.`);
+    if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) throw new Refused("EMPTY_FILE", `${fileName} is empty.`);
+    if (sizeBytes > MAX_FILE_BYTES) throw new Refused("FILE_TOO_LARGE", `${fileName} is ${Math.round(sizeBytes / 1048576)} MB. The limit is 50 MB per file.`);
+    // Storage wants unique names; a short tag keeps "photo.jpg" from clashing with another one.
+    const tag = crypto.randomUUID().slice(0, 8);
+    const dot = fileName.lastIndexOf(".");
+    const stored = dot > 0 ? `${fileName.slice(0, dot)}-${tag}${fileName.slice(dot)}` : `${fileName}-${tag}`;
+    const main = await db.presignUpload(stored, props);
+    let thumb;
+    const t = f.thumbnail;
+    if (t && THUMB_TYPES.includes(String(t.contentType)) && Number(t.sizeBytes) > 0 && Number(t.sizeBytes) <= MAX_THUMB_BYTES) {
+      thumb = await db.presignUpload(`preview-${tag}.${String(t.contentType).split("/")[1]}`, { ...props, previewOf: main.fileId });
+    }
+    const a = { fileId: main.fileId, thumbnailFileId: thumb?.fileId ?? "", fileName, contentType, sizeBytes, uploadedAt: now };
+    out.push({ ...a, uploadUrl: main.uploadUrl, thumbnailUploadUrl: thumb?.uploadUrl, ticket: await db.sign(ticketParts(a, me, projectId)) });
+  }
+  return out;
+}
+
+// What a record stores for each file: from the signed facts, after checking the signature.
+// `kept`: attachments the record already has (they need no new signature).
+async function acceptAttachments(db, me, projectId, list, kept = []) {
+  if (list === undefined) return undefined;
+  if (!Array.isArray(list)) throw new Refused("BAD_FILES", "The attachments could not be read. Add them again.");
+  const keptById = new Map(kept.map((a) => [a.fileId, a]));
+  const out = [];
+  for (const x of list) {
+    const id = String(x?.fileId ?? "");
+    if (out.some((a) => a.fileId === id)) continue;
+    if (keptById.has(id)) {
+      out.push(keptById.get(id));
+      continue;
+    }
+    const a = {
+      fileId: id,
+      thumbnailFileId: String(x?.thumbnailFileId ?? ""),
+      fileName: safeFileName(x?.fileName),
+      contentType: String(x?.contentType ?? ""),
+      sizeBytes: Number(x?.sizeBytes),
+      uploadedAt: String(x?.uploadedAt ?? "")
+    };
+    const age = Date.now() - Date.parse(a.uploadedAt);
+    const expected = await db.sign(ticketParts(a, me, projectId));
+    if (!id || x?.ticket !== expected || !(age >= -60_000 && age <= TICKET_HOURS * 3600_000)) {
+      throw new Refused("BAD_FILE_TICKET", `${a.fileName}: the upload could not be confirmed. Remove it and add it again.`);
+    }
+    out.push({ ...a, uploadedBy: me.userId });
+  }
+  if (out.length > MAX_ATTACHMENTS) throw new Refused("TOO_MANY_FILES", `At most ${MAX_ATTACHMENTS} files per RFI or response.`);
+  return out;
+}
+
+const fileCount = (n) => (n ? ` · ${n} file${n === 1 ? "" : "s"}` : "");
 
 // The Notifier configuration that keeps the bell inbox (user-specific, persistence on), and the
 // one email template every notice uses (`blocks mail template`, language en-US: Blocks Mail has no

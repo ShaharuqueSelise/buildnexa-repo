@@ -15,8 +15,12 @@
 //   { action: "respond", projectId, rfiId, body, asOfficial? }                 -> detail
 //   { action: "markOfficial", projectId, rfiId, responseId }                   -> detail
 //   { action: "askAgain" | "reopen" | "void", projectId, rfiId, reason, toUserId? } -> detail
-// detail = { rfi, can, responses, history }. Every change answers with the fresh detail, so the
-// screen needs no second call.
+//   { action: "uploadLinks", projectId, rfiId?, files: [{ name, contentType, sizeBytes, thumbnail? }] }
+//                                                          -> { uploads: [{ fileId, uploadUrl, …, ticket }] }
+//   { action: "fileLinks", projectId, rfiId }             -> { files: { fileId: download link } }
+// create / edit (changes.attachments) / respond take `attachments`: the uploads with their tickets.
+// detail = { rfi, can, responses, history, files }. Every change answers with the fresh detail, so
+// the screen needs no second call.
 //
 // Security:
 // - The caller must be an active member of the project (spec: membership required). Company
@@ -44,6 +48,8 @@
 //   (docs/architecture/13 §4.1), compare-and-set as proven by spike M1b.
 // - handle: the common handler shell (errors, logging, never a token in the answer).
 // - client().notify / mail: the bell and email, sent only by the service identity.
+// - client().presignUpload / downloadUrls / sign + issueUploads / acceptAttachments: files on
+//   records, owned by the service identity, attached with a signed upload ticket.
 
 // - permissions.js (next to this file) is copied in after it: PROJECT_ROLES, projectCan, accountCan.
 
@@ -102,7 +108,9 @@ function client(ctx, token) {
   async function list(schema, fields, tenantRole, where = {}) {
     const q = `get${schema}s`;
     const filter = JSON.stringify({ ...where, tenantRole });
-    const selected = [...new Set([...fields.split(/\s+/), ...Object.keys(where)].filter(Boolean))].join(" ");
+    // Nested selections ("attachments { fileId … }") stay as written; only top-level names count.
+    const top = new Set(fields.replace(/\{[^{}]*\}/g, " ").split(/\s+/).filter(Boolean));
+    const selected = [fields.trim(), ...Object.keys(where).filter((k) => !top.has(k))].join(" ");
     const data = await gql(`query q($input: DynamicQueryInput) { ${q}(input: $input) { items { tenantRole ${selected} } } }`, { input: { pageNo: 1, pageSize: 1000, filter } });
     const items = data?.[q]?.items ?? [];
     return items.filter((r) => r.tenantRole === tenantRole && Object.entries(where).every(([k, v]) => r[k] === v));
@@ -196,8 +204,143 @@ function client(ctx, token) {
   }
   // Where links in emails point: the app's address in this environment.
   const appUrl = String(ctx.env.APP_URL || DEFAULT_APP_URL).replace(/\/+$/, "");
-  return { iam, gql, insert, list, listAll, update, updateWhere, audit, notify, mail, appUrl };
+
+  // ---------- files (Blocks Storage) ----------
+  // Every file belongs to the service identity: people hold no Storage permission at all (a
+  // person asking Storage directly gets 403), so a file can only be uploaded through a link a
+  // Function handed out, and only downloaded through a short-lived link a Function handed out
+  // after checking that the person may see the record it belongs to.
+  async function storage(path, body) {
+    const res = await fetch(`${API}/data/v4/files/${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.isSuccess === false) {
+      const detail = json?.errors ? JSON.stringify(json.errors).slice(0, 200) : json?.message ?? res.status;
+      throw new Error(`storage ${path} failed: ${detail}`);
+    }
+    return json;
+  }
+  // A new private file and the link the browser PUTs its bytes to (valid for 10 minutes).
+  async function presignUpload(name, props) {
+    const json = await storage("get-pre-signed-url-for-upload", { Name: name, AccessModifier: "Private", AdditionalProperties: props });
+    const d = json?.data && typeof json.data === "object" ? json.data : json;
+    const fileId = d.fileId ?? d.FileId;
+    const uploadUrl = d.uploadUrl ?? d.UploadUrl;
+    if (!fileId || !uploadUrl) throw new Error(`storage gave no upload link (answer had ${Object.keys(d).join(", ")})`);
+    return { fileId: String(fileId), uploadUrl: String(uploadUrl) };
+  }
+  // fileId -> a download link that works for a few minutes.
+  async function downloadUrls(fileIds) {
+    const ids = [...new Set(fileIds.filter(Boolean).map(String))];
+    if (!ids.length) return {};
+    const json = await storage("get-files", { FileIds: ids });
+    const d = json?.data ?? json?.files ?? json?.items ?? json;
+    const items = Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : Array.isArray(d?.files) ? d.files : [];
+    const out = {};
+    for (const it of items) {
+      const id = it?.fileId ?? it?.FileId ?? it?.itemId ?? it?.ItemId ?? it?.id;
+      const url = it?.url ?? it?.Url ?? it?.downloadUrl ?? it?.DownloadUrl ?? Object.values(it ?? {}).find((v) => typeof v === "string" && /^https:\/\//.test(v));
+      if (id && url && ids.includes(String(id))) out[String(id)] = String(url);
+    }
+    if (!Object.keys(out).length) ctx.log?.warn?.("storage get-files: no links found", { shape: JSON.stringify(json).slice(0, 300).replace(/https:\/\/[^"]+/g, "<url>") });
+    return out;
+  }
+  // A signature over an upload's facts, made with this Function's own secret: the browser hands
+  // it back when it attaches the file, so nobody can attach a file they did not upload, to a
+  // project they did not upload it for, or change its name, size or type on the way.
+  async function sign(parts) {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(`files:${ctx.env.CLIENT_SECRET ?? ""}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(parts.map(String).join("\n"))));
+    let s = "";
+    for (const b of mac) s += String.fromCharCode(b);
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  return { iam, gql, insert, list, listAll, update, updateWhere, audit, notify, mail, appUrl, presignUpload, downloadUrls, sign };
 }
+
+// ---------- attachments (docs/architecture/13 §4.6, XC-03) ----------
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_THUMB_BYTES = 1024 * 1024;
+const MAX_ATTACHMENTS = 20;
+// Files that would run or render as a page when opened: never stored.
+const BLOCKED_FILE = /\.(exe|msi|bat|cmd|com|scr|ps1|vbs|js|mjs|jar|sh|app|dll|html?|xhtml|svg|php|hta)$/i;
+const THUMB_TYPES = ["image/jpeg", "image/webp", "image/png"];
+const TICKET_HOURS = 24;
+
+// A file name people can read, safe for any storage: no folders, no control characters.
+function safeFileName(name) {
+  const base = String(name ?? "").split(/[\\/]/).pop().replace(/[\u0000-\u001f<>:"|?*]/g, "").replace(/\s+/g, " ").trim();
+  return (base || "file").slice(-120);
+}
+
+const ticketParts = (a, me, projectId) => ["v1", a.fileId, a.thumbnailFileId || "", me.userId, me.tenantRole, projectId, a.fileName, a.contentType, a.sizeBytes, a.uploadedAt];
+
+// Upload links for up to 10 files. `files`: [{ name, contentType, sizeBytes, thumbnail?: { contentType, sizeBytes } }].
+// Answers what the browser needs: where to PUT the file (and its preview), and the signed facts
+// it sends back when it attaches them.
+async function issueUploads(db, me, projectId, files, record) {
+  if (!Array.isArray(files) || !files.length) throw new Refused("NO_FILES", "Choose a file first.");
+  if (files.length > 10) throw new Refused("TOO_MANY_FILES", "Add at most 10 files at a time.");
+  const now = new Date().toISOString();
+  const props = { app: "buildnexa", tenantRole: me.tenantRole, projectId, uploadedBy: me.userId, record };
+  const out = [];
+  for (const f of files) {
+    const fileName = safeFileName(f?.name);
+    const sizeBytes = Number(f?.sizeBytes);
+    const contentType = String(f?.contentType || "application/octet-stream").slice(0, 100);
+    if (BLOCKED_FILE.test(fileName)) throw new Refused("FILE_TYPE_NOT_ALLOWED", `${fileName}: this type of file can't be attached.`);
+    if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) throw new Refused("EMPTY_FILE", `${fileName} is empty.`);
+    if (sizeBytes > MAX_FILE_BYTES) throw new Refused("FILE_TOO_LARGE", `${fileName} is ${Math.round(sizeBytes / 1048576)} MB. The limit is 50 MB per file.`);
+    // Storage wants unique names; a short tag keeps "photo.jpg" from clashing with another one.
+    const tag = crypto.randomUUID().slice(0, 8);
+    const dot = fileName.lastIndexOf(".");
+    const stored = dot > 0 ? `${fileName.slice(0, dot)}-${tag}${fileName.slice(dot)}` : `${fileName}-${tag}`;
+    const main = await db.presignUpload(stored, props);
+    let thumb;
+    const t = f.thumbnail;
+    if (t && THUMB_TYPES.includes(String(t.contentType)) && Number(t.sizeBytes) > 0 && Number(t.sizeBytes) <= MAX_THUMB_BYTES) {
+      thumb = await db.presignUpload(`preview-${tag}.${String(t.contentType).split("/")[1]}`, { ...props, previewOf: main.fileId });
+    }
+    const a = { fileId: main.fileId, thumbnailFileId: thumb?.fileId ?? "", fileName, contentType, sizeBytes, uploadedAt: now };
+    out.push({ ...a, uploadUrl: main.uploadUrl, thumbnailUploadUrl: thumb?.uploadUrl, ticket: await db.sign(ticketParts(a, me, projectId)) });
+  }
+  return out;
+}
+
+// What a record stores for each file: from the signed facts, after checking the signature.
+// `kept`: attachments the record already has (they need no new signature).
+async function acceptAttachments(db, me, projectId, list, kept = []) {
+  if (list === undefined) return undefined;
+  if (!Array.isArray(list)) throw new Refused("BAD_FILES", "The attachments could not be read. Add them again.");
+  const keptById = new Map(kept.map((a) => [a.fileId, a]));
+  const out = [];
+  for (const x of list) {
+    const id = String(x?.fileId ?? "");
+    if (out.some((a) => a.fileId === id)) continue;
+    if (keptById.has(id)) {
+      out.push(keptById.get(id));
+      continue;
+    }
+    const a = {
+      fileId: id,
+      thumbnailFileId: String(x?.thumbnailFileId ?? ""),
+      fileName: safeFileName(x?.fileName),
+      contentType: String(x?.contentType ?? ""),
+      sizeBytes: Number(x?.sizeBytes),
+      uploadedAt: String(x?.uploadedAt ?? "")
+    };
+    const age = Date.now() - Date.parse(a.uploadedAt);
+    const expected = await db.sign(ticketParts(a, me, projectId));
+    if (!id || x?.ticket !== expected || !(age >= -60_000 && age <= TICKET_HOURS * 3600_000)) {
+      throw new Refused("BAD_FILE_TICKET", `${a.fileName}: the upload could not be confirmed. Remove it and add it again.`);
+    }
+    out.push({ ...a, uploadedBy: me.userId });
+  }
+  if (out.length > MAX_ATTACHMENTS) throw new Refused("TOO_MANY_FILES", `At most ${MAX_ATTACHMENTS} files per RFI or response.`);
+  return out;
+}
+
+const fileCount = (n) => (n ? ` · ${n} file${n === 1 ? "" : "s"}` : "");
 
 // The Notifier configuration that keeps the bell inbox (user-specific, persistence on), and the
 // one email template every notice uses (`blocks mail template`, language en-US: Blocks Mail has no
@@ -447,14 +590,15 @@ const IMPACTS = ["no", "yes", "tbd"];
 const PRIORITIES = ["low", "normal", "high"];
 const ACTIVE = ["open", "answered"];
 
+const ATTACHMENT_FIELDS = "attachments { fileId thumbnailFileId fileName contentType sizeBytes uploadedBy uploadedAt }";
 const TEAM_FIELDS = "ItemId userId displayName email companyId companyName companyRelation role status";
 const RFI_FIELDS =
   "ItemId projectId number seq version clientRequestId subject question suggestedAnswer status priority discipline location dueDate " +
   "managerUserId assigneeUserIds distributionUserIds ballInCourtUserId ballInCourtCompanyId ballInCourtName ballInCourtRole " +
   "createdByUserId createdByCompanyId createdByName createdAt openedDate answeredDate closedDate closedByUserId " +
   "officialResponseId officialAnswerText costImpact scheduleImpact costImpactAmount scheduleImpactDays internalNote " +
-  "responseCount lastResponseAt isVoided voidReason";
-const RESPONSE_FIELDS = "ItemId rfiId rfiNumber body authorUserId authorCompanyId authorName authorRole postedAt isOfficial markedOfficialByUserId markedOfficialAt isVoided";
+  "responseCount lastResponseAt isVoided voidReason " + ATTACHMENT_FIELDS;
+const RESPONSE_FIELDS = "ItemId rfiId rfiNumber body authorUserId authorCompanyId authorName authorRole postedAt isOfficial markedOfficialByUserId markedOfficialAt isVoided " + ATTACHMENT_FIELDS;
 const EVENT_FIELDS = "ItemId recordId action actorUserId actorName at summary reason fromStatus toStatus";
 
 const COST_FIELDS = ["costImpact", "scheduleImpact", "costImpactAmount", "scheduleImpactDays"];
@@ -656,15 +800,17 @@ async function loadRfi(db, c, rfiId) {
 
 async function detail(db, c, rfiOrId) {
   const r = typeof rfiOrId === "string" ? await loadRfi(db, c, rfiOrId) : rfiOrId;
-  const [responses, events] = await Promise.all([
+  const [all, events] = await Promise.all([
     db.list("RfiResponse", RESPONSE_FIELDS, c.me.tenantRole, { projectId: c.projectId, rfiId: r.ItemId }),
     db.list("ActivityEvent", EVENT_FIELDS, c.me.tenantRole, { projectId: c.projectId, recordId: r.ItemId })
   ]);
+  const responses = all.filter((x) => !x.isVoided).sort((a, b) => String(a.postedAt).localeCompare(String(b.postedAt)));
   return {
     ok: true,
     rfi: present(r, c),
     can: abilities(r, c),
-    responses: responses.filter((x) => !x.isVoided).sort((a, b) => String(a.postedAt).localeCompare(String(b.postedAt))).map(({ tenantRole: _t, ...x }) => x),
+    files: await fileLinksFor(db, r, responses),
+    responses: responses.map(({ tenantRole: _t, ...x }) => x),
     history: events
       .sort((a, b) => String(b.at).localeCompare(String(a.at)))
       .map((e) => ({ ItemId: e.ItemId, action: e.action, actorName: e.actorName, at: e.at, summary: e.summary, reason: e.reason, fromStatus: e.fromStatus, toStatus: e.toStatus }))
@@ -708,6 +854,7 @@ async function save(db, c, r, changes, kind, extra = {}) {
 }
 
 const label = (r) => r.number || "a draft RFI";
+const withFiles = (n) => (n ? ` (${n} file${n === 1 ? "" : "s"})` : "");
 const actor = (c) => c.mine.displayName || "Someone";
 
 function history(db, c, r, action, summary, extra = {}) {
@@ -749,6 +896,7 @@ function notices(c, before, r, event, extra) {
   const who = actor(c);
   const due = r.dueDate && ACTIVE.includes(r.status) ? ` · due ${shortDate(r.dueDate)}` : "";
   const why = extra.reason ? ` · “${extra.reason.slice(0, 200)}”` : "";
+  const files = fileCount(extra.files);
   const out = new Map();
   const add = (userId, kind, title, body, email) => {
     if (!userId || userId === c.me.userId || out.has(userId)) return;
@@ -759,19 +907,19 @@ function notices(c, before, r, event, extra) {
     const title = r.ballInCourtRole !== "manager" ? `${num} needs your answer`
       : r.status === "answered" ? `${num} was answered: please review and close`
       : `${num} is waiting for you`;
-    add(r.ballInCourtUserId, "turn", title, `${r.subject}${due} · from ${who}${why}`, true);
+    add(r.ballInCourtUserId, "turn", title, `${r.subject}${due} · from ${who}${why}${files}`, true);
   }
-  if (event === "answered") add(r.createdByUserId, "decided", `Your ${num} was answered`, `${r.subject} · answered by ${extra.answeredBy || who}`, true);
+  if (event === "answered") add(r.createdByUserId, "decided", `Your ${num} was answered`, `${r.subject} · answered by ${extra.answeredBy || who}${files}`, true);
   if (event === "closed") add(r.createdByUserId, "decided", `Your ${num} was closed`, `${r.subject} · closed by ${who}`, true);
   const info = { submitted: "was raised", answered: "was answered", closed: "was closed", voided: "was voided", reopened: "was reopened" }[event];
   if (info) {
     const others = [...(r.distributionUserIds ?? [])];
     if (event === "closed") others.push(...(r.assigneeUserIds ?? []));
     if (event === "voided") others.push(r.createdByUserId, before?.ballInCourtUserId, ...(r.assigneeUserIds ?? []));
-    for (const u of others) add(u, "info", `${num} ${info}`, `${r.subject} · ${who}${why}`, false);
+    for (const u of others) add(u, "info", `${num} ${info}`, `${r.subject} · ${who}${why}${files}`, false);
   }
   // A response while the ball stays put: the holder hears about it in the bell.
-  if (event === "responded" && !ballMoved) add(r.ballInCourtUserId, "info", `New response on ${num}`, `${r.subject} · ${who}`, false);
+  if (event === "responded" && !ballMoved) add(r.ballInCourtUserId, "info", `New response on ${num}`, `${r.subject} · ${who}${files}`, false);
   return out;
 }
 
@@ -836,6 +984,7 @@ async function create(db, me, args) {
 
   const submit = args.submit === true;
   const v = rfiInput(args, {}, c, { submit });
+  const attachments = (await acceptAttachments(db, me, c.projectId, args.attachments)) ?? [];
   const now = new Date().toISOString();
   const managerUserId = defaultManager(c);
   const row = {
@@ -843,6 +992,7 @@ async function create(db, me, args) {
     projectId: c.projectId,
     clientRequestId,
     ...v,
+    attachments,
     status: submit ? "open" : "draft",
     number: "",
     version: 0,
@@ -864,8 +1014,8 @@ async function create(db, me, args) {
   const rfiId = await db.insert("Rfi", row);
   const saved = { ...row, ItemId: rfiId };
   const [, notified] = await Promise.all([
-    history(db, c, saved, submit ? "submitted" : "draftCreated", submit ? `${actor(c)} raised ${row.number} and passed it to ${row.ballInCourtName || "the manager"}` : `${actor(c)} saved a draft`, { toStatus: row.status }),
-    submit ? tell(db, c, undefined, saved, "submitted") : undefined
+    history(db, c, saved, submit ? "submitted" : "draftCreated", (submit ? `${actor(c)} raised ${row.number} and passed it to ${row.ballInCourtName || "the manager"}` : `${actor(c)} saved a draft`) + withFiles(attachments.length), { toStatus: row.status }),
+    submit ? tell(db, c, undefined, saved, "submitted", { files: attachments.length }) : undefined
   ]);
   return { ...(await detail(db, c, saved)), created: true, notified };
 }
@@ -875,12 +1025,21 @@ async function edit(db, me, args) {
   const r = await loadRfi(db, c, args.rfiId);
   if (!abilities(r, c).edit) throw new Refused("NOT_ALLOWED", r.status === "draft" ? "Only the creator or the Project Manager edits a draft." : "Only the Project Manager or the RFI manager edits an RFI after it is submitted.");
   const changes = rfiInput(args.changes ?? {}, r, c, { submit: r.status !== "draft" });
+  const kept = r.attachments ?? [];
+  const attachments = await acceptAttachments(db, me, c.projectId, args.changes?.attachments, kept);
+  if (attachments) {
+    // Once submitted, an RFI's files are part of the record: more can be added, none removed.
+    if (r.status !== "draft" && kept.some((a) => !attachments.some((x) => x.fileId === a.fileId))) {
+      throw new Refused("FILES_LOCKED", "Files on a submitted RFI stay with it. You can add more, but not remove them.");
+    }
+    changes.attachments = attachments;
+  }
   // The ball holder was an assignee who is no longer one: the ball moves to the first assignee.
   if (r.ballInCourtRole === "assignee" && !changes.assigneeUserIds.includes(r.ballInCourtUserId)) Object.assign(changes, ball(c, changes.assigneeUserIds[0], "assignee"));
   const changed = Object.keys(changes).filter((k) => JSON.stringify(changes[k]) !== JSON.stringify(r[k]));
   if (!changed.length) return detail(db, c, r);
   const saved = await save(db, c, r, changes, "edited");
-  await history(db, c, saved, "edited", `${actor(c)} edited ${label(saved)} (${changed.filter((k) => !k.startsWith("ballInCourt")).join(", ")})`);
+  await history(db, c, saved, "edited", `${actor(c)} edited ${label(saved)} (${changed.filter((k) => !k.startsWith("ballInCourt")).map((k) => (k === "attachments" ? "files" : k)).join(", ")})`);
   return detail(db, c, saved);
 }
 
@@ -952,9 +1111,11 @@ async function respond(db, me, args) {
     throw new Refused("NOT_ALLOWED_TO_RESPOND", r.status === "draft" ? "Submit the draft before anyone responds." : !ACTIVE.includes(r.status) ? `This RFI is ${r.status}.` : "You can respond when the RFI is assigned to you.");
   }
   const body = String(args.body ?? "").trim();
-  if (!body) throw new Refused("BAD_BODY", "Write a response first.");
-  if (body.length > 10000) throw new Refused("TOO_LONG", "A response can be at most 10 000 characters.");
   const official = args.asOfficial === true;
+  const attachments = (await acceptAttachments(db, me, c.projectId, args.attachments)) ?? [];
+  // A photo alone is a fine reply; an official answer always needs words.
+  if (!body && (official || !attachments.length)) throw new Refused("BAD_BODY", official ? "Write the answer before marking it official." : "Write a response or add a file first.");
+  if (body.length > 10000) throw new Refused("TOO_LONG", "A response can be at most 10 000 characters.");
   if (official && !(can.markOfficial || can.markOfficialOwn)) throw new Refused("OFFICIAL_NOT_ALLOWED", "Your role can't mark an answer as official.");
   const now = new Date().toISOString();
   const responseId = await db.insert("RfiResponse", {
@@ -970,6 +1131,7 @@ async function respond(db, me, args) {
     postedAt: now,
     isOfficial: false,
     source: "app",
+    attachments,
     isVoided: false
   });
   const response = { ItemId: responseId, body, authorUserId: me.userId };
@@ -989,8 +1151,8 @@ async function respond(db, me, args) {
     }
   }
   const [, notified] = await Promise.all([
-    history(db, c, r, official ? "answeredOfficially" : "responded", official ? `${actor(c)} answered ${label(r)} and marked the answer official` : `${actor(c)} responded`, official ? { toStatus: "answered" } : {}),
-    tell(db, c, before, r, official ? "answered" : "responded")
+    history(db, c, r, official ? "answeredOfficially" : "responded", (official ? `${actor(c)} answered ${label(r)} and marked the answer official` : `${actor(c)} responded`) + withFiles(attachments.length), official ? { toStatus: "answered" } : {}),
+    tell(db, c, before, r, official ? "answered" : "responded", { files: attachments.length })
   ]);
   return { ...(await detail(db, c, r)), notified };
 }
@@ -1092,6 +1254,39 @@ async function get(db, me, args) {
   return detail(db, c, String(args.rfiId ?? ""));
 }
 
+// ---------- files (Part 3) ----------
+// Download links for the files of an RFI and its responses: { fileId: link }, valid for the
+// storage's download expiry. Only ever built after loadRfi() said the caller may see the RFI.
+// A storage hiccup leaves the links out instead of failing the page (the files show, without links).
+async function fileLinksFor(db, r, responses) {
+  const ids = [];
+  for (const a of [...(r.attachments ?? []), ...responses.flatMap((x) => x.attachments ?? [])]) ids.push(a.fileId, a.thumbnailFileId);
+  if (!ids.some(Boolean)) return {};
+  return db.downloadUrls(ids).catch(() => ({}));
+}
+
+// Upload links: for a new RFI (anyone who may raise one), or for an RFI the caller may edit or
+// answer. The files are attached when the RFI or the response is saved.
+async function uploadLinks(db, me, args) {
+  const c = await projectContext(db, me, args.projectId, { write: true });
+  if (args.rfiId) {
+    const r = await loadRfi(db, c, args.rfiId);
+    const can = abilities(r, c);
+    if (!(can.edit || can.respond)) throw new Refused("NOT_ALLOWED", "You can add files while you can edit or answer this RFI.");
+  } else if (!projectCan(c.role, "rfi.create")) {
+    throw new Refused("NOT_ALLOWED", "Your project role can't raise RFIs.");
+  }
+  return { ok: true, uploads: await issueUploads(db, me, c.projectId, args.files, "rfi") };
+}
+
+// Fresh download links (the page asks again when the ones it has are about to run out).
+async function fileLinks(db, me, args) {
+  const c = await projectContext(db, me, args.projectId);
+  const r = await loadRfi(db, c, args.rfiId);
+  const responses = (await db.list("RfiResponse", RESPONSE_FIELDS, me.tenantRole, { projectId: c.projectId, rfiId: r.ItemId })).filter((x) => !x.isVoided);
+  return { ok: true, files: await fileLinksFor(db, r, responses) };
+}
+
 export default async function handler(input, ctx) {
   return handle(input, ctx, "rfis", {
     list: (args, { db, me }) => list(db, me, args),
@@ -1105,6 +1300,8 @@ export default async function handler(input, ctx) {
     askAgain: (args, { db, me }) => askAgain(db, me, args),
     close: (args, { db, me }) => close(db, me, args),
     reopen: (args, { db, me }) => reopen(db, me, args),
-    void: (args, { db, me }) => voidRfi(db, me, args)
+    void: (args, { db, me }) => voidRfi(db, me, args),
+    uploadLinks: (args, { db, me }) => uploadLinks(db, me, args),
+    fileLinks: (args, { db, me }) => fileLinks(db, me, args)
   });
 }

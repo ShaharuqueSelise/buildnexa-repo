@@ -74,6 +74,11 @@
       "isArray": false
     },
     {
+      "name": "attachments",
+      "type": "Attachment",
+      "isArray": true
+    },
+    {
       "name": "isVoided",
       "type": "Boolean",
       "isArray": false

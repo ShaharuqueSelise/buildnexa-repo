@@ -1,7 +1,7 @@
 // The app shell, as in the demo app (mock/src/mock/MockApp.tsx): grouped sidebar filtered by the
 // person's role on the current project, top bar with the project switcher, search (R2), the bell
 // and the user menu. Hiding a menu item is never the only control: pages and Functions check too.
-import { ClipboardList, Eye, PanelLeft } from "lucide-react";
+import { ClipboardList, Eye, Menu, PanelLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { LanguageSwitcher } from "./LanguageSwitcher";
@@ -28,9 +28,33 @@ function readCollapsed(): boolean {
   }
 }
 
+// Phones: the sidebar is a menu that slides in (Shell.css, 640 px), not a rail.
+const PHONE = "(max-width: 640px)";
+function usePhone(): boolean {
+  const [phone, setPhone] = useState(() => typeof window !== "undefined" && Boolean(window.matchMedia?.(PHONE).matches));
+  useEffect(() => {
+    const mq = window.matchMedia?.(PHONE);
+    if (!mq) return;
+    const on = () => setPhone(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return phone;
+}
+
 export function AppShell({ activePath, children, onNavigate }: { activePath: string; children: ReactNode; onNavigate: (path: string) => void }) {
   const { t } = useT();
   const [collapsed, setCollapsed] = useState(readCollapsed);
+  const phone = usePhone();
+  const [menuOpen, setMenuOpen] = useState(false);
+  // The phone menu closes when a page opens, and when the screen grows past phone size.
+  useEffect(() => setMenuOpen(false), [activePath, phone]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
   const { roles, myRole, isAdmin, isPlatformAdmin, platformOnly, query, project, myUserId } = useProjects();
   const unread = useNotifications().data?.unread ?? 0;
   // RFIs waiting on me in the current project (the same list the RFI page uses, so one call).
@@ -74,7 +98,8 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
 
   return (
     <div className="m-root">
-      <aside className={cx("m-side", collapsed && "m-side-collapsed")}>
+      {phone && menuOpen ? <div className="m-side-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" /> : null}
+      <aside className={cx("m-side", !phone && collapsed && "m-side-collapsed", phone && menuOpen && "m-side-open")} aria-hidden={phone && !menuOpen ? true : undefined}>
         <a className="m-side-brand" href={startPath} onClick={(e) => { e.preventDefault(); onNavigate(startPath); }} style={{ textDecoration: "none" }}>
           <span className="m-logo"><ClipboardList size={18} /></span>
           <div>{t("app.name")}<small>{t("app.tagline")}</small></div>
@@ -92,7 +117,7 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
                     href={item.href}
                     title={item.phase ? `${t(item.labelKey)} · ${t("shell.phaseTitle").replace("{phase}", String(item.phase))}` : t(item.labelKey)}
                     className={cx(item.href === activePath && "m-active", item.phase && "m-side-later")}
-                    onClick={(e) => { e.preventDefault(); onNavigate(item.href); }}
+                    onClick={(e) => { e.preventDefault(); setMenuOpen(false); onNavigate(item.href); }}
                   >
                     <item.icon size={17} />
                     <span>{t(item.labelKey)}</span>
@@ -106,7 +131,14 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
       </aside>
       <div className="m-main">
         <header className="m-top">
-          <button className="m-icon-btn" onClick={() => setCollapsed((v) => !v)} aria-label={t("shell.toggleSidebar")}><PanelLeft size={18} /></button>
+          {phone ? (
+            <button className="m-icon-btn m-rel" onClick={() => setMenuOpen((v) => !v)} aria-label={t("shell.openMenu")} aria-expanded={menuOpen}>
+              <Menu size={20} />
+              {rfisMine ? <span className="m-menu-dot" /> : null}
+            </button>
+          ) : (
+            <button className="m-icon-btn" onClick={() => setCollapsed((v) => !v)} aria-label={t("shell.toggleSidebar")}><PanelLeft size={18} /></button>
+          )}
           {platformOnly ? <strong className="m-top-area">{t("nav.platform")}</strong> : <ProjectSwitcher onNavigate={onNavigate} />}
           {platformOnly ? null : (
             <div className="m-top-search">

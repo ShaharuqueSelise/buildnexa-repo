@@ -256,3 +256,19 @@ button.m-card:hover, a.m-card:hover { box-shadow: 0 10px 26px rgba(15,23,42,.1);
 .m-popover-title { color: hsl(var(--muted-foreground)); font-size: 11px; font-weight: 600; letter-spacing: .05em; padding: 8px 10px 4px; text-transform: uppercase; }
 .m-rel { position: relative; }
 @media (max-width: 880px) { .m-project-switch { max-width: 180px; } }
+
+/* Phones (RFI Part 3): one column, dialogs fill the screen, the status filter scrolls sideways,
+   two KPI tiles per row. The shell's phone menu is in app/layout/Shell.css. */
+@media (max-width: 640px) {
+  .m-page-title { gap: 10px; margin-bottom: 18px; }
+  .m-page-title h1 { font-size: 20px; }
+  .m-kpis { gap: 10px; grid-template-columns: 1fr 1fr; margin-bottom: 16px; }
+  .m-kpi { padding: 12px 14px; }
+  .m-toolbar { gap: 8px; margin-bottom: 12px; }
+  .m-seg { max-width: 100%; overflow-x: auto; }
+  .m-overlay:not(.m-overlay-drawer) { align-items: stretch; padding: 0; }
+  .m-dialog { border-radius: 0; height: 100dvh; max-height: 100dvh; }
+  .m-dialog-sm, .m-dialog-md, .m-dialog-lg, .m-dialog-xl { max-width: none; }
+  .m-dialog-head, .m-dialog-body, .m-dialog-foot { padding-left: 16px; padding-right: 16px; }
+  .m-dialog-foot { flex-wrap: wrap; }
+}

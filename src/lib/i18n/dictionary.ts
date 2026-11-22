@@ -821,7 +821,25 @@ export const defaultDictionary = {
   "inbox.followingTitle": "Following",
   "inbox.followingText": "You also hear about RFIs where you're on the distribution list. The RFI's creator or the Project Manager sets that list.",
   "home.activityLater": "A project activity feed comes in a later step. Each RFI has its own history today.",
-  "inbox.saving": "Saving…"
+  "inbox.saving": "Saving…",
+  "shell.openMenu": "Open the menu",
+  "files.add": "Add files",
+  "files.takePhoto": "Take photo",
+  "files.hint": "Photos, sketches, PDFs · up to 50 MB each. Photos are shrunk to 2560 px before upload.",
+  "files.hintLocked": "Files stay with a submitted RFI: you can add more, but not remove them.",
+  "files.badType": "{name}: this type of file can't be attached.",
+  "files.empty": "{name} is empty.",
+  "files.tooBig": "{name} is {size}. The limit is 50 MB per file.",
+  "files.tooMany": "At most {count} files.",
+  "files.failed": "The upload failed. Remove the file and add it again.",
+  "files.failedShort": "Failed",
+  "files.uploading": "Uploading {pct}%",
+  "files.remove": "Remove {name}",
+  "files.open": "Open {name}",
+  "files.noLink": "The file can't be opened right now. Reload the page.",
+  "files.count": "{count} files",
+  "files.wait": "Wait until the files have finished uploading.",
+  "rfi.reassignNotice": "They get a bell notice and an email (if their email is on)."
 } as const;
 
 export type TranslationKey = keyof typeof defaultDictionary;

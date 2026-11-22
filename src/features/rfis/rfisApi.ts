@@ -4,6 +4,7 @@
 // cache, so the screen updates without a second call.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FUNCTIONS, callFunction } from "../../lib/blocks/functions";
+import type { Attachment, FileLinks, NewAttachment, UploadRequest, UploadSlot } from "../files/files";
 
 export type RfiStatus = "draft" | "open" | "answered" | "closed" | "void";
 export type Impact = "no" | "yes" | "tbd";
@@ -48,6 +49,7 @@ export type RfiRow = {
   costImpactAmount?: number;
   scheduleImpactDays?: number;
   internalNote?: string;
+  attachments?: Attachment[];
 };
 
 export type RfiResponseRow = {
@@ -60,6 +62,7 @@ export type RfiResponseRow = {
   postedAt: string;
   isOfficial?: boolean;
   markedOfficialAt?: string;
+  attachments?: Attachment[];
 };
 
 export type RfiHistoryRow = {
@@ -86,7 +89,8 @@ export type RfiCan = {
   void: boolean;
 };
 
-export type RfiDetail = { rfi: RfiRow; can: RfiCan; responses: RfiResponseRow[]; history: RfiHistoryRow[] };
+/** `files`: download links for the RFI's and its responses' files (they run out after an hour). */
+export type RfiDetail = { rfi: RfiRow; can: RfiCan; responses: RfiResponseRow[]; history: RfiHistoryRow[]; files?: FileLinks };
 /** Who was told about a change (the Function sends the bell and emails itself). */
 export type RfiNotified = { bell: number; email: number; failed: string[] };
 export type RfiList = { role: string; canCreate: boolean; seesCost: boolean; seesInternal: boolean; rfis: RfiRow[] };
@@ -107,6 +111,8 @@ export type RfiInput = {
   costImpactAmount?: number | "";
   scheduleImpactDays?: number | "";
   internalNote?: string;
+  /** Files already on the RFI plus new uploads (with their signed tickets). */
+  attachments?: (Attachment | NewAttachment)[];
 };
 
 const listKey = (projectId?: string) => ["rfis", projectId ?? ""];
@@ -127,7 +133,9 @@ export function useRfi(projectId?: string, rfiId?: string) {
     queryKey: detailKey(projectId, rfiId),
     queryFn: () => call<RfiDetail>({ action: "get", projectId, rfiId }),
     enabled: Boolean(projectId && rfiId && FUNCTIONS.rfis),
-    retry: false
+    retry: false,
+    // File links last an hour (storage download expiry): read the RFI again before they run out.
+    refetchInterval: 40 * 60_000
   });
 }
 
@@ -136,7 +144,7 @@ type ActionBody =
   | { action: "edit"; rfiId: string; changes: Partial<RfiInput> }
   | { action: "submit"; rfiId: string }
   | { action: "reassign"; rfiId: string; toUserId: string; note?: string }
-  | { action: "respond"; rfiId: string; body: string; asOfficial?: boolean }
+  | { action: "respond"; rfiId: string; body: string; asOfficial?: boolean; attachments?: NewAttachment[] }
   | { action: "markOfficial"; rfiId: string; responseId: string }
   | { action: "askAgain"; rfiId: string; reason: string }
   | { action: "close"; rfiId: string }
@@ -162,6 +170,11 @@ export function useRfiAction(projectId?: string) {
       void queryClient.invalidateQueries({ queryKey: listKey(projectId) });
     }
   });
+}
+
+/** Upload links for files on a new RFI (no rfiId) or on an RFI the person may edit or answer. */
+export function rfiUploadLinks(projectId: string, rfiId?: string) {
+  return async (files: UploadRequest[]) => (await call<{ uploads: UploadSlot[] }>({ action: "uploadLinks", projectId, rfiId, files })).uploads;
 }
 
 const LIVE_STATUSES: RfiStatus[] = ["draft", "open", "answered"];

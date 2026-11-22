@@ -4,7 +4,9 @@
 .m-rfis-head-meta { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .m-rfis-back { margin-bottom: 4px; }
 
-.m-rfis-stepper { display: flex; gap: 0; list-style: none; margin: 0 0 16px; overflow-x: auto; padding: 0; }
+/* The padding (cancelled by the negative margin) leaves room for the current step's 4 px ring:
+   overflow-x: auto also clips vertically, which flattened the ring into a pill. */
+.m-rfis-stepper { display: flex; gap: 0; list-style: none; margin: -6px -6px 10px; overflow-x: auto; padding: 6px; }
 .m-rfis-step { align-items: center; color: hsl(var(--muted-foreground)); display: flex; flex: 1 1 0; font-size: 13px; font-weight: 600; gap: 8px; min-width: 110px; position: relative; }
 .m-rfis-step::after { background: hsl(var(--border)); content: ""; flex: 1; height: 2px; margin: 0 8px; }
 .m-rfis-step:last-child { flex: 0 0 auto; }
@@ -39,4 +41,29 @@
 
 @media (max-width: 880px) {
   .m-rfis-ball { min-width: 0; width: 100%; }
+}
+
+/* Files (Part 3) */
+.m-rfis-clip { align-items: center; color: hsl(var(--muted-foreground)); display: inline-flex; font-size: 12px; font-weight: 500; gap: 2px; margin-left: 6px; vertical-align: middle; }
+
+/* Phones (Part 3): the list becomes cards (number + status, subject, whose turn + due date),
+   the reply box's Post button takes the full width. */
+@media (max-width: 640px) {
+  .m-rfis-table { border: 0; background: transparent; }
+  .m-rfis-table thead { display: none; }
+  .m-rfis-table table, .m-rfis-table tbody { display: block; }
+  .m-rfis-table tr { background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 12px; display: grid; gap: 6px 10px; grid-template-areas: "num status" "subject subject" "ball due"; grid-template-columns: minmax(0, 1fr) auto; margin-bottom: 10px; padding: 12px 14px; }
+  .m-rfis-table td { border: 0; padding: 0; }
+  .m-rfis-table td.m-hide-mobile { display: none; }
+  .m-rfis-c-num { grid-area: num; }
+  .m-rfis-c-status { grid-area: status; justify-self: end; }
+  .m-rfis-c-subject { grid-area: subject; }
+  .m-rfis-c-ball { grid-area: ball; min-width: 0; }
+  .m-rfis-c-due { align-self: center; grid-area: due; justify-self: end; white-space: nowrap; }
+  .m-rfis-head h1 { font-size: 19px; }
+  .m-rfis-stepper { scrollbar-width: none; }
+  .m-rfis-step { font-size: 12px; gap: 4px; min-width: 0; }
+  .m-rfis-step::after { margin: 0 4px; min-width: 8px; }
+  .m-rfis-step-dot { height: 20px; width: 20px; }
+  .m-rfis-composer-actions .m-btn-primary { justify-content: center; width: 100%; }
 }

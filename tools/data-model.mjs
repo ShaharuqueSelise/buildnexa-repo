@@ -166,6 +166,7 @@ const entities = {
     ...int("scheduleImpactDays", "responseCount"),
     ...str("internalNote"),
     ...date("lastResponseAt"),
+    f("attachments", "Attachment", true), // files of the question (Part 3); kept once submitted
     f("lastChange", "LastChange"),
     ...bool("isVoided"),
     ...str("voidReason", "searchText")
@@ -181,6 +182,7 @@ const entities = {
     ...id("markedOfficialByUserId"),
     ...date("markedOfficialAt"),
     ...str("source"), // app | email (R3)
+    f("attachments", "Attachment", true),
     ...bool("isVoided"),
     ...str("voidReason")
   ],

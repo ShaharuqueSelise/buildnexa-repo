@@ -194,6 +194,11 @@
       "isArray": false
     },
     {
+      "name": "attachments",
+      "type": "Attachment",
+      "isArray": true
+    },
+    {
       "name": "lastChange",
       "type": "LastChange",
       "isArray": false

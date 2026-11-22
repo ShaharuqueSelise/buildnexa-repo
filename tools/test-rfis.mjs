@@ -14,6 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const store = {};
 const rows = (schema) => (store[schema] ??= []);
 const sent = [];
+const files = [];
 let failSends = 0;
 
 globalThis.fetch = async (url, init) => {
@@ -29,12 +30,31 @@ globalThis.fetch = async (url, init) => {
     else sent.push({ type: "mail", to: b.to, template: b.purpose, language: b.language, subject: b.subjectDataContext.Subject, data: b.bodyDataContext });
     return json({ isSuccess: true });
   }
+  // Storage: every file the service asks for gets an id and a fake upload link.
+  if (String(url).includes("/data/v4/files/get-pre-signed-url-for-upload")) {
+    const b = JSON.parse(init.body);
+    const fileId = `file-${randomUUID().slice(0, 8)}`;
+    files.push({ fileId, name: b.Name, props: b.AdditionalProperties, access: b.AccessModifier });
+    return json({ isSuccess: true, data: { fileId, uploadUrl: `https://blob.test/${fileId}?sig=x` } });
+  }
+  if (String(url).includes("/data/v4/files/get-files")) {
+    const b = JSON.parse(init.body);
+    return json({ isSuccess: true, data: b.FileIds.filter((id) => files.some((f) => f.fileId === id)).map((id) => ({ fileId: id, url: `https://blob.test/${id}?read=1` })) });
+  }
   const { query, variables } = JSON.parse(init.body);
   let m;
   if ((m = /\{\s*get(\w+)s\(/.exec(query))) {
     const filter = JSON.parse(variables.input.filter ?? "{}");
-    // Like the real gateway, answer only the fields the query asks for.
-    const wanted = /items\s*\{([^}]*)\}/.exec(query)[1].trim().split(/\s+/);
+    // Like the real gateway, answer only the fields the query asks for (top level; a nested
+    // selection such as attachments { … } returns the whole value).
+    const at = query.indexOf("{", query.indexOf("items"));
+    let depth = 0;
+    let end = at;
+    for (; end < query.length; end += 1) {
+      if (query[end] === "{") depth += 1;
+      if (query[end] === "}" && --depth === 0) break;
+    }
+    const wanted = query.slice(at + 1, end).replace(/\{[^{}]*\}/g, " ").trim().split(/\s+/);
     const items = rows(m[1])
       .filter((r) => Object.entries(filter).every(([k, v]) => r[k] === v))
       .map((r) => Object.fromEntries(wanted.filter((f) => f in r).map((f) => [f, structuredClone(r[f])])));
@@ -373,6 +393,86 @@ await test("a send that fails never fails the change", async () => {
   failSends = 0;
   ok(r, "create still works");
   expect(r.notified.failed.length > 0 && r.notified.bell === 0, `notified ${JSON.stringify(r.notified)}`);
+});
+
+// ---------- files (Part 3) ----------
+const photo = { name: "site photo.jpg", contentType: "image/jpeg", sizeBytes: 2_000_000, thumbnail: { contentType: "image/jpeg", sizeBytes: 40_000 } };
+const pdf = { name: "C:\\fakepath\\detail 4.pdf", contentType: "application/pdf", sizeBytes: 300_000 };
+const uploadsFor = async (user, list, extra = {}) => {
+  const r = await call(user, { action: "uploadLinks", files: list, ...extra });
+  ok(r, `${user} upload links`);
+  // What the browser sends back after the PUTs: everything but the upload links.
+  return r.uploads.map(({ uploadUrl: _u, thumbnailUploadUrl: _t, ...a }) => a);
+};
+
+await test("upload links: private files owned by the service, a preview for photos, safe names", async () => {
+  const r = await call("supt", { action: "uploadLinks", files: [photo, pdf] });
+  ok(r, "links");
+  const [p, d] = r.uploads;
+  expect(p.uploadUrl && p.thumbnailUploadUrl && p.thumbnailFileId && p.ticket, `photo: ${JSON.stringify(p)}`);
+  expect(d.fileName === "detail 4.pdf" && !d.thumbnailFileId, `pdf name: ${d.fileName}`);
+  const stored = files.find((f) => f.fileId === p.fileId);
+  expect(stored.access === "Private" && stored.props.projectId === P && stored.props.uploadedBy === "supt" && /^site photo-\w{8}\.jpg$/.test(stored.name), `stored ${JSON.stringify(stored)}`);
+});
+await test("upload links refuse: owner (can't raise), program files, over 50 MB, empty", async () => {
+  refused(await call("owner", { action: "uploadLinks", files: [pdf] }), "NOT_ALLOWED", "owner");
+  refused(await call("supt", { action: "uploadLinks", files: [{ ...pdf, name: "setup.exe" }] }), "FILE_TYPE_NOT_ALLOWED", "exe");
+  refused(await call("supt", { action: "uploadLinks", files: [{ ...pdf, name: "page.html" }] }), "FILE_TYPE_NOT_ALLOWED", "html");
+  refused(await call("supt", { action: "uploadLinks", files: [{ ...pdf, sizeBytes: 51 * 1024 * 1024 }] }), "FILE_TOO_LARGE", "big");
+  refused(await call("supt", { action: "uploadLinks", files: [{ ...pdf, sizeBytes: 0 }] }), "EMPTY_FILE", "empty");
+});
+await test("raising an RFI with files: stored, linked for download, counted in history and the bell", async () => {
+  sent.length = 0;
+  const attachments = await uploadsFor("supt", [photo, pdf]);
+  const r = await create("supt", { attachments });
+  ok(r, "create");
+  ids.withFiles = r.rfi.ItemId;
+  expect(r.rfi.attachments.length === 2 && r.rfi.attachments.every((a) => a.uploadedBy === "supt" && !a.ticket), `attachments ${JSON.stringify(r.rfi.attachments)}`);
+  const [a] = r.rfi.attachments;
+  expect(r.files[a.fileId] && r.files[a.thumbnailFileId], `links ${JSON.stringify(r.files)}`);
+  expect(r.history.some((h) => h.summary.endsWith("(2 files)")), `history ${JSON.stringify(r.history)}`);
+  expect(bellsTo("design").some((p) => p.body.endsWith("· 2 files")), `bell ${JSON.stringify(bellsTo("design"))}`);
+});
+await test("a forged or borrowed upload is refused", async () => {
+  const [a] = await uploadsFor("supt", [pdf]);
+  refused(await create("supt", { attachments: [{ ...a, sizeBytes: 1 }] }), "BAD_FILE_TICKET", "changed size");
+  refused(await create("supt", { attachments: [{ ...a, fileName: "other.pdf" }] }), "BAD_FILE_TICKET", "renamed");
+  refused(await create("pm", { attachments: [a] }), "BAD_FILE_TICKET", "someone else's upload");
+  refused(await create("supt", { attachments: [{ ...a, fileId: "file-not-mine" }] }), "BAD_FILE_TICKET", "other file id");
+  refused(await create("supt", { attachments: [{ ...a, ticket: undefined }] }), "BAD_FILE_TICKET", "no ticket");
+});
+await test("replies: a photo alone is a reply, an official answer needs words", async () => {
+  const [a] = await uploadsFor("design", [photo], { rfiId: ids.withFiles });
+  const r = await call("design", { action: "respond", rfiId: ids.withFiles, body: "", attachments: [a] });
+  ok(r, "photo-only reply");
+  const reply = r.responses.at(-1);
+  expect(reply.attachments.length === 1 && r.files[reply.attachments[0].fileId], `reply files ${JSON.stringify(reply)}`);
+  const [b] = await uploadsFor("pm", [pdf], { rfiId: ids.withFiles });
+  refused(await call("pm", { action: "respond", rfiId: ids.withFiles, body: "", asOfficial: true, attachments: [b] }), "BAD_BODY", "official without words");
+  refused(await call("pm", { action: "respond", rfiId: ids.withFiles, body: "" }), "BAD_BODY", "empty reply");
+});
+await test("submitted RFI: files can be added, not removed; a draft can drop them", async () => {
+  const r = await call("pm", { action: "get", rfiId: ids.withFiles });
+  const kept = r.rfi.attachments;
+  refused(await call("pm", { action: "edit", rfiId: ids.withFiles, changes: { attachments: kept.slice(1) } }), "FILES_LOCKED", "remove");
+  const [x] = await uploadsFor("pm", [pdf], { rfiId: ids.withFiles });
+  const added = await call("pm", { action: "edit", rfiId: ids.withFiles, changes: { attachments: [...kept, x] } });
+  ok(added, "add");
+  expect(added.rfi.attachments.length === kept.length + 1 && added.history.some((h) => h.summary.includes("(files)")), "added + history");
+  const [d] = await uploadsFor("supt", [pdf]);
+  const draft = await create("supt", { submit: false, attachments: [d] });
+  ok(draft, "draft with file");
+  const dropped = await call("supt", { action: "edit", rfiId: draft.rfi.ItemId, changes: { attachments: [] } });
+  ok(dropped, "drop from draft");
+  expect(dropped.rfi.attachments.length === 0, "draft has no files");
+});
+await test("people who can't open the RFI get no file links and no upload links", async () => {
+  refused(await call("sub2", { action: "fileLinks", rfiId: ids.withFiles }), "NOT_FOUND", "other sub: links");
+  refused(await call("sub2", { action: "uploadLinks", rfiId: ids.withFiles, files: [pdf] }), "NOT_FOUND", "other sub: upload");
+  refused(await call("owner", { action: "uploadLinks", rfiId: ids.withFiles, files: [pdf] }), "NOT_ALLOWED", "owner reads but can't add");
+  const links = await call("owner", { action: "fileLinks", rfiId: ids.withFiles });
+  ok(links, "owner on the distribution list reads the files");
+  expect(Object.keys(links.files).length >= 3, `owner links ${JSON.stringify(links.files)}`);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
