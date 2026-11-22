@@ -13,6 +13,9 @@ import { useT } from "../../lib/i18n/LocalizationProvider";
 import { ProjectSwitcher } from "../../features/projects/ProjectSwitcher";
 import { useProjects } from "../../features/projects/projectsApi";
 import { useNotifications } from "../../features/notifications/notificationsApi";
+import { rfisOnMe, useRfiList } from "../../features/rfis/rfisApi";
+import { todayIso } from "../../lib/workdays";
+import { useQueryClient } from "@tanstack/react-query";
 import { cx } from "../../shared/m/ui";
 
 const COLLAPSED_KEY = "buildnexa:sidebar-collapsed";
@@ -28,8 +31,21 @@ function readCollapsed(): boolean {
 export function AppShell({ activePath, children, onNavigate }: { activePath: string; children: ReactNode; onNavigate: (path: string) => void }) {
   const { t } = useT();
   const [collapsed, setCollapsed] = useState(readCollapsed);
-  const { roles, myRole, isAdmin, isPlatformAdmin, platformOnly, query } = useProjects();
+  const { roles, myRole, isAdmin, isPlatformAdmin, platformOnly, query, project, myUserId } = useProjects();
   const unread = useNotifications().data?.unread ?? 0;
+  // RFIs waiting on me in the current project (the same list the RFI page uses, so one call).
+  const rfiList = useRfiList(myRole ? project?.ItemId : undefined);
+  const rfisMine = rfisOnMe(rfiList.data?.rfis, myUserId, todayIso()).length;
+  // A new notification usually means an RFI moved: refresh the RFI screens and My items.
+  const queryClient = useQueryClient();
+  const lastUnread = useRef(unread);
+  useEffect(() => {
+    if (unread > lastUnread.current) {
+      void queryClient.invalidateQueries({ queryKey: ["rfis"] });
+      void queryClient.invalidateQueries({ queryKey: ["rfi"] });
+    }
+    lastUnread.current = unread;
+  }, [unread, queryClient]);
   const visible = visibleModules({ projectRole: myRole, isAdmin, isPlatformAdmin, platformOnly });
   // A platform admin outside any company starts in the platform area.
   const startPath = platformOnly ? "/platform" : "/";
@@ -54,7 +70,7 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
   useEffect(() => { contentRef.current?.scrollTo({ top: 0 }); }, [activePath]);
 
   // What needs attention, per item (more counts arrive with each module).
-  const counts: Partial<Record<string, number>> = { "/inbox": unread || undefined };
+  const counts: Partial<Record<string, number>> = { "/inbox": unread || undefined, "/rfis": rfisMine || undefined };
 
   return (
     <div className="m-root">

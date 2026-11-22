@@ -33,6 +33,7 @@
 // - allocateNumber: gap-free per-project numbers (RFI-001…) on the Sequence entity
 //   (docs/architecture/13 §4.1), compare-and-set as proven by spike M1b.
 // - handle: the common handler shell (errors, logging, never a token in the answer).
+// - client().notify / mail: the bell and email, sent only by the service identity.
 
 // - permissions.js (next to this file) is copied in after it: PROJECT_ROLES, projectCan, accountCan.
 
@@ -146,8 +147,56 @@ function client(ctx, token) {
     const changed = await updateWhere(schema, { ItemId: { eq: itemId } }, tenantRole, input);
     if (changed === 0) throw new Error(`update${schema} matched no row`);
   }
-  return { iam, gql, insert, list, listAll, update, updateWhere, audit };
+  // ---------- telling people: the bell (Notifier) and email (Mail) ----------
+  // The service identity's role holds blocks-logic::notifier::send and the mail send permission;
+  // no browser can push to someone else's bell. Both answer { isSuccess, errors } like IAM.
+  async function logic(path, body) {
+    const res = await fetch(`${API}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.isSuccess === false) {
+      const detail = json?.errors ? JSON.stringify(json.errors).slice(0, 200) : json?.message ?? res.status;
+      throw new Error(`${path} failed: ${detail}`);
+    }
+    return json;
+  }
+  // One bell notification to several people. `payload` is what the bell shows:
+  // { title, body?, link?, projectId?, kind? } (no cost figures, no internal notes).
+  async function notify(userIds, payload) {
+    if (!userIds.length) return;
+    await logic("/logic/v4/Notifier/Notify", {
+      configurationName: NOTIFIER_CONFIGURATION,
+      userIds,
+      denormalizedPayload: JSON.stringify(payload),
+      connectionId: "server",
+      responseKey: "notification",
+      responseValue: "notification"
+    });
+  }
+  // One email to one person (never a shared "to" list, so addresses stay private), through the
+  // Buildnexa template. `data` fills its {{Placeholders}}.
+  async function mail(to, subject, data) {
+    await logic("/logic/v4/Mail/Send", {
+      to: [to],
+      purpose: MAIL_TEMPLATE,
+      language: MAIL_LANGUAGE,
+      projectKey: ctx.context.tenantId,
+      subjectDataContext: { Subject: subject },
+      bodyDataContext: data
+    });
+  }
+  // Where links in emails point: the app's address in this environment.
+  const appUrl = String(ctx.env.APP_URL || DEFAULT_APP_URL).replace(/\/+$/, "");
+  return { iam, gql, insert, list, listAll, update, updateWhere, audit, notify, mail, appUrl };
 }
+
+// The Notifier configuration that keeps the bell inbox (user-specific, persistence on), and the
+// one email template every notice uses (`blocks mail template`, language en-US: Blocks Mail has no
+// language fallback, and the app is English only).
+const NOTIFIER_CONFIGURATION = "cpm-inbox";
+const MAIL_TEMPLATE = "BuildnexaNotice";
+const MAIL_LANGUAGE = "en-US";
+// Development until the app is released (then the Function variable APP_URL says where it runs).
+const DEFAULT_APP_URL = "https://dbldiu.slsblx.com:5173";
 
 // A company's tag (its tenant role): "company-<short name>", or "co-<short name>" for companies
 // set up before 21 Nov 2026. "company-admin" is a job role, not a tag.

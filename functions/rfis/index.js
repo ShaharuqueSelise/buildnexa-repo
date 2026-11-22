@@ -43,6 +43,7 @@
 // - allocateNumber: gap-free per-project numbers (RFI-001…) on the Sequence entity
 //   (docs/architecture/13 §4.1), compare-and-set as proven by spike M1b.
 // - handle: the common handler shell (errors, logging, never a token in the answer).
+// - client().notify / mail: the bell and email, sent only by the service identity.
 
 // - permissions.js (next to this file) is copied in after it: PROJECT_ROLES, projectCan, accountCan.
 
@@ -156,8 +157,56 @@ function client(ctx, token) {
     const changed = await updateWhere(schema, { ItemId: { eq: itemId } }, tenantRole, input);
     if (changed === 0) throw new Error(`update${schema} matched no row`);
   }
-  return { iam, gql, insert, list, listAll, update, updateWhere, audit };
+  // ---------- telling people: the bell (Notifier) and email (Mail) ----------
+  // The service identity's role holds blocks-logic::notifier::send and the mail send permission;
+  // no browser can push to someone else's bell. Both answer { isSuccess, errors } like IAM.
+  async function logic(path, body) {
+    const res = await fetch(`${API}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json?.isSuccess === false) {
+      const detail = json?.errors ? JSON.stringify(json.errors).slice(0, 200) : json?.message ?? res.status;
+      throw new Error(`${path} failed: ${detail}`);
+    }
+    return json;
+  }
+  // One bell notification to several people. `payload` is what the bell shows:
+  // { title, body?, link?, projectId?, kind? } (no cost figures, no internal notes).
+  async function notify(userIds, payload) {
+    if (!userIds.length) return;
+    await logic("/logic/v4/Notifier/Notify", {
+      configurationName: NOTIFIER_CONFIGURATION,
+      userIds,
+      denormalizedPayload: JSON.stringify(payload),
+      connectionId: "server",
+      responseKey: "notification",
+      responseValue: "notification"
+    });
+  }
+  // One email to one person (never a shared "to" list, so addresses stay private), through the
+  // Buildnexa template. `data` fills its {{Placeholders}}.
+  async function mail(to, subject, data) {
+    await logic("/logic/v4/Mail/Send", {
+      to: [to],
+      purpose: MAIL_TEMPLATE,
+      language: MAIL_LANGUAGE,
+      projectKey: ctx.context.tenantId,
+      subjectDataContext: { Subject: subject },
+      bodyDataContext: data
+    });
+  }
+  // Where links in emails point: the app's address in this environment.
+  const appUrl = String(ctx.env.APP_URL || DEFAULT_APP_URL).replace(/\/+$/, "");
+  return { iam, gql, insert, list, listAll, update, updateWhere, audit, notify, mail, appUrl };
 }
+
+// The Notifier configuration that keeps the bell inbox (user-specific, persistence on), and the
+// one email template every notice uses (`blocks mail template`, language en-US: Blocks Mail has no
+// language fallback, and the app is English only).
+const NOTIFIER_CONFIGURATION = "cpm-inbox";
+const MAIL_TEMPLATE = "BuildnexaNotice";
+const MAIL_LANGUAGE = "en-US";
+// Development until the app is released (then the Function variable APP_URL says where it runs).
+const DEFAULT_APP_URL = "https://dbldiu.slsblx.com:5173";
 
 // A company's tag (its tenant role): "company-<short name>", or "co-<short name>" for companies
 // set up before 21 Nov 2026. "company-admin" is a job role, not a tag.
@@ -676,6 +725,106 @@ function history(db, c, r, action, summary, extra = {}) {
   });
 }
 
+// ---------- telling people (bell + email; docs/architecture/10-notifications.md) ----------
+// After a change that moves work, the people concerned hear about it:
+// - whoever now holds the ball: bell AND email ("RFI-002 needs your answer");
+// - the creator, when their RFI is answered or closed: bell and email;
+// - the distribution list (and, on void or close, the others involved): bell only.
+// Never the person who made the change, never someone who can't open the RFI, and never cost
+// figures or internal notes. Each person gets one notice per change (the first that applies).
+// A failure here never fails the change: it is returned as `notified.failed` for support.
+const PREF_FIELDS = "ItemId userId emailEnabled";
+// Email bodies are HTML: what people typed (subjects, names) is escaped before it goes in.
+const html = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const shortDate = (iso) => {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${String(iso).slice(0, 10)}T12:00:00Z`));
+  } catch {
+    return String(iso);
+  }
+};
+
+function notices(c, before, r, event, extra) {
+  const num = r.number || "An RFI";
+  const who = actor(c);
+  const due = r.dueDate && ACTIVE.includes(r.status) ? ` · due ${shortDate(r.dueDate)}` : "";
+  const why = extra.reason ? ` · “${extra.reason.slice(0, 200)}”` : "";
+  const out = new Map();
+  const add = (userId, kind, title, body, email) => {
+    if (!userId || userId === c.me.userId || out.has(userId)) return;
+    out.set(userId, { kind, title, body, email });
+  };
+  const ballMoved = Boolean(r.ballInCourtUserId) && r.ballInCourtUserId !== (before?.ballInCourtUserId ?? "");
+  if (ballMoved) {
+    const title = r.ballInCourtRole !== "manager" ? `${num} needs your answer`
+      : r.status === "answered" ? `${num} was answered: please review and close`
+      : `${num} is waiting for you`;
+    add(r.ballInCourtUserId, "turn", title, `${r.subject}${due} · from ${who}${why}`, true);
+  }
+  if (event === "answered") add(r.createdByUserId, "decided", `Your ${num} was answered`, `${r.subject} · answered by ${extra.answeredBy || who}`, true);
+  if (event === "closed") add(r.createdByUserId, "decided", `Your ${num} was closed`, `${r.subject} · closed by ${who}`, true);
+  const info = { submitted: "was raised", answered: "was answered", closed: "was closed", voided: "was voided", reopened: "was reopened" }[event];
+  if (info) {
+    const others = [...(r.distributionUserIds ?? [])];
+    if (event === "closed") others.push(...(r.assigneeUserIds ?? []));
+    if (event === "voided") others.push(r.createdByUserId, before?.ballInCourtUserId, ...(r.assigneeUserIds ?? []));
+    for (const u of others) add(u, "info", `${num} ${info}`, `${r.subject} · ${who}${why}`, false);
+  }
+  // A response while the ball stays put: the holder hears about it in the bell.
+  if (event === "responded" && !ballMoved) add(r.ballInCourtUserId, "info", `New response on ${num}`, `${r.subject} · ${who}`, false);
+  return out;
+}
+
+async function tell(db, c, before, r, event, extra = {}) {
+  const result = { bell: 0, email: 0, failed: [] };
+  try {
+    if (r.status === "draft") return result;
+    const wanted = notices(c, before, r, event, extra);
+    // Only active team members who can open this RFI (subcontractors see only what involves them).
+    const ids = [...wanted.keys()].filter((u) => {
+      const m = memberOf(c, u);
+      return m && canSee(r, { me: { userId: u }, role: m.role, mine: m });
+    });
+    if (!ids.length) return result;
+    const link = `/rfis/${r.ItemId}?project=${c.projectId}`;
+    const prefs = await db.list("NotificationPreference", PREF_FIELDS, c.me.tenantRole).catch(() => []);
+    // One row per person; if two were ever made, the first by id counts (as in the projects Function).
+    const firstPref = new Map();
+    for (const p of [...prefs].sort((x, y) => String(x.ItemId).localeCompare(String(y.ItemId)))) if (!firstPref.has(p.userId)) firstPref.set(p.userId, p);
+    const emailOff = new Set([...firstPref.values()].filter((p) => p.emailEnabled === false).map((p) => p.userId));
+    const groups = new Map();
+    for (const u of ids) {
+      const n = wanted.get(u);
+      const key = `${n.kind}\n${n.title}\n${n.body}`;
+      if (!groups.has(key)) groups.set(key, { n, users: [] });
+      groups.get(key).users.push(u);
+    }
+    const tasks = [];
+    for (const { n, users } of groups.values()) {
+      tasks.push(db.notify(users, { title: n.title, body: n.body, link, projectId: c.projectId, kind: `rfi.${n.kind}` }).then(() => { result.bell += users.length; }));
+    }
+    for (const u of ids) {
+      const n = wanted.get(u);
+      const m = memberOf(c, u);
+      if (!n.email || emailOff.has(u) || !m.email) continue;
+      const subject = `${c.project.number ? `[${c.project.number}] ` : ""}${n.title}`;
+      tasks.push(db.mail(m.email, subject, {
+        DisplayName: html(m.displayName || ""),
+        Heading: html(n.title),
+        Text: html(n.body),
+        ProjectName: html(c.project.name || ""),
+        ButtonLabel: "Open the RFI",
+        ButtonUrl: `${db.appUrl}${link}`,
+        SettingsUrl: `${db.appUrl}/inbox?tab=settings`
+      }).then(() => { result.email += 1; }));
+    }
+    for (const x of await Promise.allSettled(tasks)) if (x.status === "rejected") result.failed.push(String(x.reason?.message ?? x.reason).slice(0, 200));
+  } catch (error) {
+    result.failed.push(String(error?.message ?? error).slice(0, 200));
+  }
+  return result;
+}
+
 async function create(db, me, args) {
   const c = await projectContext(db, me, args.projectId, { write: true });
   if (!projectCan(c.role, "rfi.create")) throw new Refused("NOT_ALLOWED", "Your project role can't raise RFIs.");
@@ -714,8 +863,11 @@ async function create(db, me, args) {
   row.lastChange = { kind: "created", nonce: crypto.randomUUID(), fromStatus: "", toStatus: row.status, previousBallUserId: "", actorUserId: me.userId, reason: "" };
   const rfiId = await db.insert("Rfi", row);
   const saved = { ...row, ItemId: rfiId };
-  await history(db, c, saved, submit ? "submitted" : "draftCreated", submit ? `${actor(c)} raised ${row.number} and passed it to ${row.ballInCourtName || "the manager"}` : `${actor(c)} saved a draft`, { toStatus: row.status });
-  return { ...(await detail(db, c, saved)), created: true };
+  const [, notified] = await Promise.all([
+    history(db, c, saved, submit ? "submitted" : "draftCreated", submit ? `${actor(c)} raised ${row.number} and passed it to ${row.ballInCourtName || "the manager"}` : `${actor(c)} saved a draft`, { toStatus: row.status }),
+    submit ? tell(db, c, undefined, saved, "submitted") : undefined
+  ]);
+  return { ...(await detail(db, c, saved)), created: true, notified };
 }
 
 async function edit(db, me, args) {
@@ -744,8 +896,11 @@ async function submit(db, me, args) {
   // If two people submit the same draft at once, the loser's number stays unused (a gap in the
   // log). Rare enough to accept; the number is claimed with this RFI's id, so it can be traced.
   const saved = await save(db, c, r, { status: "open", number: n.number, seq: n.seq, openedDate: now, managerUserId, ...openingBall(c, v, managerUserId) }, "statusChanged");
-  await history(db, c, saved, "submitted", `${actor(c)} submitted ${saved.number} to ${saved.ballInCourtName || "the manager"}`, { fromStatus: "draft", toStatus: "open" });
-  return detail(db, c, saved);
+  const [, notified] = await Promise.all([
+    history(db, c, saved, "submitted", `${actor(c)} submitted ${saved.number} to ${saved.ballInCourtName || "the manager"}`, { fromStatus: "draft", toStatus: "open" }),
+    tell(db, c, r, saved, "submitted")
+  ]);
+  return { ...(await detail(db, c, saved)), notified };
 }
 
 async function reassign(db, me, args) {
@@ -759,8 +914,11 @@ async function reassign(db, me, args) {
   if (to === r.ballInCourtUserId) return detail(db, c, r);
   const note = text(args.note, 1000);
   const saved = await save(db, c, r, ball(c, to, to === r.managerUserId ? "manager" : "assignee"), "ballChanged", { reason: note });
-  await history(db, c, saved, "ballChanged", `${actor(c)} passed the ball from ${r.ballInCourtName || "nobody"} to ${saved.ballInCourtName}`, { reason: note || undefined });
-  return detail(db, c, saved);
+  const [, notified] = await Promise.all([
+    history(db, c, saved, "ballChanged", `${actor(c)} passed the ball from ${r.ballInCourtName || "nobody"} to ${saved.ballInCourtName}`, { reason: note || undefined }),
+    tell(db, c, r, saved, "ballChanged", { reason: note })
+  ]);
+  return { ...(await detail(db, c, saved)), notified };
 }
 
 // Marks one response official (and any earlier one not), then moves the RFI to answered.
@@ -788,6 +946,7 @@ async function setOfficial(db, c, r, response, extraChanges = {}) {
 async function respond(db, me, args) {
   const c = await projectContext(db, me, args.projectId, { write: true });
   let r = await loadRfi(db, c, args.rfiId);
+  const before = r;
   const can = abilities(r, c);
   if (!can.respond) {
     throw new Refused("NOT_ALLOWED_TO_RESPOND", r.status === "draft" ? "Submit the draft before anyone responds." : !ACTIVE.includes(r.status) ? `This RFI is ${r.status}.` : "You can respond when the RFI is assigned to you.");
@@ -829,8 +988,11 @@ async function respond(db, me, args) {
       r = await loadRfi(db, c, r.ItemId);
     }
   }
-  await history(db, c, r, official ? "answeredOfficially" : "responded", official ? `${actor(c)} answered ${label(r)} and marked the answer official` : `${actor(c)} responded`, official ? { toStatus: "answered" } : {});
-  return detail(db, c, r);
+  const [, notified] = await Promise.all([
+    history(db, c, r, official ? "answeredOfficially" : "responded", official ? `${actor(c)} answered ${label(r)} and marked the answer official` : `${actor(c)} responded`, official ? { toStatus: "answered" } : {}),
+    tell(db, c, before, r, official ? "answered" : "responded")
+  ]);
+  return { ...(await detail(db, c, r)), notified };
 }
 
 async function markOfficial(db, me, args) {
@@ -846,8 +1008,11 @@ async function markOfficial(db, me, args) {
   if (r.officialResponseId === response.ItemId && r.status === "answered") return detail(db, c, r);
   const saved = await setOfficial(db, c, r, response);
   const whose = response.authorUserId === me.userId ? "their own answer" : `the answer by ${response.authorName || "someone"}`;
-  await history(db, c, saved, "officialAnswer", `${actor(c)} marked ${whose} as official`, { fromStatus: r.status, toStatus: "answered" });
-  return detail(db, c, saved);
+  const [, notified] = await Promise.all([
+    history(db, c, saved, "officialAnswer", `${actor(c)} marked ${whose} as official`, { fromStatus: r.status, toStatus: "answered" }),
+    tell(db, c, r, saved, "answered", { answeredBy: response.authorName })
+  ]);
+  return { ...(await detail(db, c, saved)), notified };
 }
 
 const requireReason = (args) => {
@@ -869,8 +1034,11 @@ async function askAgain(db, me, args) {
   if (!memberOf(c, to)) throw new Refused("ASSIGNEE_NOT_MEMBER", "Choose who should answer again.");
   const saved = await save(db, c, r, { status: "open", officialResponseId: "", officialAnswerText: "", ...ball(c, to, "assignee") }, "statusChanged", { reason });
   await clearOfficial(db, c, r);
-  await history(db, c, saved, "askedAgain", `${actor(c)} asked ${saved.ballInCourtName} again`, { reason, fromStatus: "answered", toStatus: "open" });
-  return detail(db, c, saved);
+  const [, notified] = await Promise.all([
+    history(db, c, saved, "askedAgain", `${actor(c)} asked ${saved.ballInCourtName} again`, { reason, fromStatus: "answered", toStatus: "open" }),
+    tell(db, c, r, saved, "askedAgain", { reason })
+  ]);
+  return { ...(await detail(db, c, saved)), notified };
 }
 
 async function close(db, me, args) {
@@ -882,8 +1050,11 @@ async function close(db, me, args) {
     throw new Refused(r.status === "answered" && !r.officialResponseId ? "OFFICIAL_ANSWER_REQUIRED" : "NOT_ALLOWED", r.status !== "answered" ? "Only an answered RFI can be closed." : !r.officialResponseId ? "Mark a response as the official answer first." : "Only the Project Manager or the creator closes an RFI.");
   }
   const saved = await save(db, c, r, { status: "closed", closedDate: new Date().toISOString(), closedByUserId: me.userId, ...NO_BALL }, "statusChanged");
-  await history(db, c, saved, "closed", `${actor(c)} closed ${label(saved)}`, { fromStatus: "answered", toStatus: "closed" });
-  return detail(db, c, saved);
+  const [, notified] = await Promise.all([
+    history(db, c, saved, "closed", `${actor(c)} closed ${label(saved)}`, { fromStatus: "answered", toStatus: "closed" }),
+    tell(db, c, r, saved, "closed")
+  ]);
+  return { ...(await detail(db, c, saved)), notified };
 }
 
 async function reopen(db, me, args) {
@@ -894,8 +1065,11 @@ async function reopen(db, me, args) {
   const to = String(args.toUserId ?? "") || (r.assigneeUserIds ?? []).find((u) => memberOf(c, u)) || r.managerUserId;
   const saved = await save(db, c, r, { status: "open", officialResponseId: "", officialAnswerText: "", ...ball(c, to, to === r.managerUserId ? "manager" : "assignee") }, "statusChanged", { reason });
   await clearOfficial(db, c, r);
-  await history(db, c, saved, "reopened", `${actor(c)} reopened ${label(saved)}`, { reason, fromStatus: "closed", toStatus: "open" });
-  return detail(db, c, saved);
+  const [, notified] = await Promise.all([
+    history(db, c, saved, "reopened", `${actor(c)} reopened ${label(saved)}`, { reason, fromStatus: "closed", toStatus: "open" }),
+    tell(db, c, r, saved, "reopened", { reason })
+  ]);
+  return { ...(await detail(db, c, saved)), notified };
 }
 
 async function voidRfi(db, me, args) {
@@ -906,8 +1080,11 @@ async function voidRfi(db, me, args) {
   }
   const reason = requireReason(args);
   const saved = await save(db, c, r, { status: "void", isVoided: true, voidReason: reason, ...NO_BALL }, "statusChanged", { reason });
-  await history(db, c, saved, "voided", `${actor(c)} voided ${label(saved)}`, { reason, fromStatus: r.status, toStatus: "void" });
-  return detail(db, c, saved);
+  const [, notified] = await Promise.all([
+    history(db, c, saved, "voided", `${actor(c)} voided ${label(saved)}`, { reason, fromStatus: r.status, toStatus: "void" }),
+    r.status === "draft" ? undefined : tell(db, c, r, saved, "voided", { reason })
+  ]);
+  return { ...(await detail(db, c, saved)), notified };
 }
 
 async function get(db, me, args) {

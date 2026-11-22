@@ -87,6 +87,8 @@ export type RfiCan = {
 };
 
 export type RfiDetail = { rfi: RfiRow; can: RfiCan; responses: RfiResponseRow[]; history: RfiHistoryRow[] };
+/** Who was told about a change (the Function sends the bell and emails itself). */
+export type RfiNotified = { bell: number; email: number; failed: string[] };
 export type RfiList = { role: string; canCreate: boolean; seesCost: boolean; seesInternal: boolean; rfis: RfiRow[] };
 
 /** The fields a person fills in on the New RFI and Edit forms. */
@@ -145,7 +147,7 @@ type ActionBody =
 export function useRfiAction(projectId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: ActionBody) => call<RfiDetail & { created?: boolean }>({ ...body, projectId }),
+    mutationFn: (body: ActionBody) => call<RfiDetail & { created?: boolean; notified?: RfiNotified }>({ ...body, projectId }),
     onSuccess: (detail) => {
       queryClient.setQueryData(detailKey(projectId, detail.rfi.ItemId), detail);
       queryClient.setQueryData<RfiList>(listKey(projectId), (old) => {
@@ -160,4 +162,16 @@ export function useRfiAction(projectId?: string) {
       void queryClient.invalidateQueries({ queryKey: listKey(projectId) });
     }
   });
+}
+
+const LIVE_STATUSES: RfiStatus[] = ["draft", "open", "answered"];
+
+/**
+ * "My items" for RFIs: the ones where the ball is on me (a draft is on its creator), overdue first,
+ * then by due date. `today` is YYYY-MM-DD.
+ */
+export function rfisOnMe(rfis: RfiRow[] | undefined, userId: string, today: string) {
+  const mine = (rfis ?? []).filter((r) => userId && r.ballInCourtUserId === userId && LIVE_STATUSES.includes(r.status));
+  const overdue = (r: RfiRow) => r.status === "open" && Boolean(r.dueDate) && String(r.dueDate) < today;
+  return mine.sort((a, b) => Number(overdue(b)) - Number(overdue(a)) || String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999")));
 }

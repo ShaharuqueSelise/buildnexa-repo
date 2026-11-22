@@ -1,0 +1,27 @@
+{
+  "schemaName": "NotificationPreference",
+  "collectionName": "NotificationPreferences",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "userId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "emailEnabled",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "updatedAt",
+      "type": "DateTime",
+      "isArray": false
+    }
+  ]
+}

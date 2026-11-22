@@ -18,6 +18,7 @@ import { ComingSoonPage } from "../../features/home/ComingSoonPage";
 import { HomePage } from "../../features/home/HomePage";
 import { PlatformAdminPage } from "../../features/platform/PlatformAdminPage";
 import { RfisPage } from "../../features/rfis/RfisPage";
+import { InboxPage } from "../../features/inbox/InboxPage";
 import { setCurrentProject } from "../../features/projects/projectsApi";
 import { navItemFor } from "../layout/navItems";
 
@@ -32,6 +33,7 @@ type PageProps = { onNavigate: (path: string) => void; params?: string[] };
 const protectedRoutes: Record<string, ComponentType<PageProps>> = {
   "/": HomePage,
   "/rfis": RfisPage,
+  "/inbox": InboxPage,
   "/profile": ProfilePage,
   "/projects": ProjectsPage,
   "/directory": DirectoryPage,

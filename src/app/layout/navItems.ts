@@ -50,7 +50,7 @@ export const navItems: readonly NavItem[] = [
   { href: "/audit", labelKey: "nav.audit", icon: ScrollText, module: "audit", group: "projectAdmin", phase: 2 },
   { href: "/settings", labelKey: "nav.settings", icon: Settings, module: "settings", group: "projectAdmin", phase: 5 },
   { href: "/projects", labelKey: "nav.projects", icon: LayoutGrid, module: "portfolio", group: "workspace" },
-  { href: "/inbox", labelKey: "nav.inbox", icon: Inbox, module: "inbox", group: "workspace", phase: 2 },
+  { href: "/inbox", labelKey: "nav.inbox", icon: Inbox, module: "inbox", group: "workspace" },
   { href: "/field", labelKey: "nav.field", icon: Smartphone, module: "field", group: "workspace", phase: 3 },
   { href: "/company", labelKey: "nav.company", icon: Building2, module: "companyAdmin", group: "administration" },
   { href: "/platform", labelKey: "nav.platform", icon: ShieldCheck, module: "platformAdmin", group: "administration" }

@@ -63,11 +63,11 @@ type Ctx = {
   onNavigate: (path: string) => void;
 };
 
-function StatusPill({ status, t }: { status: RfiStatus; t: T }) {
+export function StatusPill({ status, t }: { status: RfiStatus; t: T }) {
   return <Badge tone={STATUS_TONE[status] ?? "gray"}>{t(`rfi.status.${status}` as TranslationKey)}</Badge>;
 }
 
-function DueLabel({ due, done, today, t }: { due?: string; done?: boolean; today: string; t: T }) {
+export function DueLabel({ due, done, today, t }: { due?: string; done?: boolean; today: string; t: T }) {
   if (!due) return <span className="m-muted">—</span>;
   if (done) return <span className="m-muted">{fmtShortDate(due)}</span>;
   if (due < today) return <span className="m-due m-due-over">{fmtShortDate(due)} · {fmt(t("rfi.daysOverdue"), { count: workingDaysBetween(due, today) })}</span>;

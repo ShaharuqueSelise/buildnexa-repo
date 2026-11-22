@@ -184,6 +184,14 @@ const entities = {
     ...bool("isVoided"),
     ...str("voidReason")
   ],
+  // A person's notification settings in one company (docs/architecture/10 §2, simplified for the
+  // MVP: email on or off; the bell is always on). Written and read only by the Functions.
+  NotificationPreference: [
+    ...TENANT,
+    ...id("userId"),
+    ...bool("emailEnabled"),
+    ...date("updatedAt")
+  ],
   Comment: [
     ...PROJECT,
     ...str("recordType"),
@@ -241,7 +249,9 @@ const access = {
   Comment: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Project content: only through the rfis Function, which checks the caller's project role.
   Rfi: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
-  RfiResponse: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] }
+  RfiResponse: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  // Own settings, read and saved through the projects Function (the caller's id from their token).
+  NotificationPreference: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] }
 };
 
 const security = [];

@@ -3,7 +3,8 @@
 // touching any environment.   node tools/test-rfis.mjs
 //
 // The fake understands what the shared client sends: get<Schema>s with a JSON equality filter,
-// insert<Schema>, and update<Schema> with { field: { eq } } where clauses.
+// insert<Schema>, and update<Schema> with { field: { eq } } where clauses. Bell (Notifier) and
+// email (Mail) sends are recorded in `sent` instead of going anywhere.
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
@@ -12,10 +13,22 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const store = {};
 const rows = (schema) => (store[schema] ??= []);
+const sent = [];
+let failSends = 0;
 
 globalThis.fetch = async (url, init) => {
   const json = (body) => ({ ok: true, status: 200, json: async () => body });
   if (String(url).includes("/oidc/token")) return json({ access_token: "test-token" });
+  if (String(url).includes("/logic/v4/Notifier/Notify") || String(url).includes("/logic/v4/Mail/Send")) {
+    if (failSends > 0) {
+      failSends -= 1;
+      return { ok: false, status: 500, json: async () => ({ isSuccess: false, errors: { server: "down" } }) };
+    }
+    const b = JSON.parse(init.body);
+    if (String(url).includes("Notifier")) sent.push({ type: "bell", userIds: b.userIds, config: b.configurationName, payload: JSON.parse(b.denormalizedPayload) });
+    else sent.push({ type: "mail", to: b.to, template: b.purpose, language: b.language, subject: b.subjectDataContext.Subject, data: b.bodyDataContext });
+    return json({ isSuccess: true });
+  }
   const { query, variables } = JSON.parse(init.body);
   let m;
   if ((m = /\{\s*get(\w+)s\(/.exec(query))) {
@@ -60,7 +73,7 @@ const people = {
 };
 for (const [userId, p] of Object.entries(people)) {
   if (!p.role) continue;
-  rows("ProjectMember").push({ ItemId: `pm-${userId}`, tenantRole: T, projectId: P, userId, displayName: userId.toUpperCase(), companyId: p.company, companyName: p.company, role: p.role, status: "active" });
+  rows("ProjectMember").push({ ItemId: `pm-${userId}`, tenantRole: T, projectId: P, userId, displayName: userId.toUpperCase(), email: `${userId}@test.local`, companyId: p.company, companyName: p.company, role: p.role, status: "active" });
   rows("ProjectMember").push({ ItemId: `pm2-${userId}`, tenantRole: T, projectId: "p2", userId, displayName: userId.toUpperCase(), companyId: p.company, role: p.role, status: "active" });
 }
 // Someone in another company must never be visible.
@@ -280,6 +293,86 @@ await test("history records every step and shows no cost figures", async () => {
 });
 await test("an archived project is read-only", async () => {
   refused(await call("pm", { action: "create", projectId: "p2", clientRequestId: "z", submit: true, ...base }), "ARCHIVED", "create on archived");
+});
+
+// ---------- telling people (Part 2) ----------
+const bellsTo = (u) => sent.filter((x) => x.type === "bell" && x.userIds.includes(u)).map((x) => x.payload);
+const mailsTo = (u) => sent.filter((x) => x.type === "mail" && x.to.includes(`${u}@test.local`));
+const nt = {};
+await test("raising an RFI: the assignee gets bell + email, the distribution list the bell only, the raiser nothing", async () => {
+  sent.length = 0;
+  const r = await create("supt", { costImpact: "yes", costImpactAmount: 12500, internalNote: "secret margin note", distributionUserIds: ["owner", "pm"] });
+  ok(r, "create");
+  nt.id = r.rfi.ItemId;
+  const num = r.rfi.number;
+  expect(bellsTo("design").some((p) => p.title === `${num} needs your answer` && p.link === `/rfis/${nt.id}?project=${P}` && p.kind === "rfi.turn"), `design bell: ${JSON.stringify(bellsTo("design"))}`);
+  expect(mailsTo("design").length === 1 && mailsTo("design")[0].template === "BuildnexaNotice" && mailsTo("design")[0].language === "en-US", "design email");
+  expect(mailsTo("design")[0].subject === `[PRJ-001] ${num} needs your answer`, `subject ${mailsTo("design")[0].subject}`);
+  expect(mailsTo("design")[0].data.ButtonUrl.endsWith(`/rfis/${nt.id}?project=${P}`), "email link");
+  expect(bellsTo("owner").some((p) => p.title === `${num} was raised`) && mailsTo("owner").length === 0, "owner: bell only");
+  expect(bellsTo("pm").length === 1 && mailsTo("pm").length === 0, "pm on the distribution list: bell only");
+  expect(bellsTo("supt").length === 0 && mailsTo("supt").length === 0, "the raiser got a notice");
+  expect(sent.every((x) => x.type !== "bell" || x.config === "cpm-inbox"), "configuration");
+  expect(r.notified && r.notified.bell === 3 && r.notified.email === 1 && r.notified.failed.length === 0, `notified ${JSON.stringify(r.notified)}`);
+});
+await test("notices never carry cost figures or internal notes", async () => {
+  const all = JSON.stringify(sent);
+  expect(!all.includes("12500") && !all.includes("12,500") && !all.includes("secret margin note"), "cost or internal note in a notice");
+});
+await test("a draft tells nobody; voiding a draft tells nobody", async () => {
+  sent.length = 0;
+  const d = await create("dc", { submit: false });
+  ok(await call("dc", { action: "void", rfiId: d.rfi.ItemId, reason: "Mistake" }), "void draft");
+  expect(sent.length === 0, `sent ${sent.length}`);
+});
+await test("the designer answers officially: manager to review (bell + email), creator told (bell + email), list told (bell)", async () => {
+  sent.length = 0;
+  const r = await call("design", { action: "respond", rfiId: nt.id, body: "Use HEB 300.", asOfficial: true });
+  ok(r, "answer");
+  const num = r.rfi.number;
+  expect(bellsTo("pm").some((p) => p.title === `${num} was answered: please review and close`) && mailsTo("pm").length === 1, `pm: ${JSON.stringify(bellsTo("pm"))}`);
+  expect(bellsTo("supt").some((p) => p.title === `Your ${num} was answered` && p.kind === "rfi.decided") && mailsTo("supt").length === 1, "creator told");
+  expect(bellsTo("owner").some((p) => p.title === `${num} was answered`) && mailsTo("owner").length === 0, "owner bell only");
+  expect(bellsTo("design").length === 0, "the answerer got a notice");
+});
+await test("each person gets one notice per change", async () => {
+  const counts = {};
+  for (const x of sent.filter((y) => y.type === "bell")) for (const u of x.userIds) counts[u] = (counts[u] ?? 0) + 1;
+  expect(Object.values(counts).every((v) => v === 1), `counts ${JSON.stringify(counts)}`);
+});
+await test("closing: the creator is told by email; assignees and the list in the bell", async () => {
+  sent.length = 0;
+  ok(await call("pm", { action: "close", rfiId: nt.id }), "close");
+  expect(mailsTo("supt").length === 1 && bellsTo("supt").some((p) => p.title.startsWith("Your ")), "creator");
+  expect(bellsTo("design").length === 1 && mailsTo("design").length === 0, "assignee bell only");
+  expect(bellsTo("pm").length === 0, "the closer got a notice");
+});
+await test("someone who turned email off still gets the bell", async () => {
+  rows("NotificationPreference").push({ ItemId: "np-pm", tenantRole: T, userId: "pm", emailEnabled: false });
+  sent.length = 0;
+  const r = await create("dc", { distributionUserIds: [] });
+  ok(r, "create");
+  ok(await call("design", { action: "respond", rfiId: r.rfi.ItemId, body: "See detail 4." }), "design responds");
+  expect(bellsTo("pm").some((p) => p.title.endsWith("is waiting for you")), `pm bell: ${JSON.stringify(bellsTo("pm"))}`);
+  expect(mailsTo("pm").length === 0, "pm got an email although it is off");
+  rows("NotificationPreference").length = 0;
+});
+await test("passing the ball tells the new holder with the note; a response that leaves the ball tells the holder (bell)", async () => {
+  sent.length = 0;
+  const r = await create("supt", { distributionUserIds: [] });
+  ok(await call("pm", { action: "reassign", rfiId: r.rfi.ItemId, toUserId: "dc", note: "Check the spec" }), "pass");
+  expect(bellsTo("dc").some((p) => p.title.endsWith("needs your answer") && p.body.includes("Check the spec")) && mailsTo("dc").length === 1, "dc told with note");
+  sent.length = 0;
+  ok(await call("pm", { action: "respond", rfiId: r.rfi.ItemId, body: "Adding a sketch." }), "pm responds");
+  expect(bellsTo("dc").some((p) => p.title.startsWith("New response on")) && mailsTo("dc").length === 0, `dc: ${JSON.stringify(sent)}`);
+});
+await test("a send that fails never fails the change", async () => {
+  sent.length = 0;
+  failSends = 10;
+  const r = await create("supt", { distributionUserIds: ["owner"] });
+  failSends = 0;
+  ok(r, "create still works");
+  expect(r.notified.failed.length > 0 && r.notified.bell === 0, `notified ${JSON.stringify(r.notified)}`);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

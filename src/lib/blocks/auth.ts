@@ -91,6 +91,9 @@ function clearLocalTokens(): void {
 export async function getValidAccessToken(): Promise<string | undefined> {
   const current = getAccessToken();
   if (current) return current;
+  // Cookie session: nothing to send, and no renewal before every call (keepSessionAlive renews on
+  // a timer, a 401 renews through onUnauthorized).
+  if (!getRefreshToken()) return undefined;
   return forceRefreshAccessToken();
 }
 
@@ -103,7 +106,12 @@ export async function getValidAccessToken(): Promise<string | undefined> {
 // caller racing them) share one refresh call instead of firing one each.
 export async function forceRefreshAccessToken(): Promise<string | undefined> {
   const refreshToken = getRefreshToken();
-  if (!refreshToken) return undefined;
+  if (!refreshToken) {
+    // Cookie session (no token in this page): renew the cookie so the next calls work. The SDK
+    // retries only with a token, so the call that got the 401 is not repeated; queries retry.
+    await renewCookieSession();
+    return undefined;
+  }
 
   if (!refreshInFlight) {
     refreshInFlight = refreshAccessToken(refreshToken).finally(() => {
@@ -146,17 +154,83 @@ async function refreshAccessToken(refreshToken: string): Promise<string | undefi
   return accessToken;
 }
 
+// ---------- Keeping a cookie session alive ----------
+// Buildnexa's own sign-in screen uses IAM's password login, which answers with httpOnly cookies
+// and no token in the body (checked on dev 22 Nov 2026). The access cookie lasts 15 minutes
+// (auth config accessTokenValidForNumberMinutes); nothing renewed it, so everyone was sent to the
+// sign-in page 15 minutes after signing in. `POST /iam/v4/auth/refresh` with an empty body reads
+// the refresh cookie and sets a fresh access cookie (`cookie_set: true`, `expires_utc`), until the
+// refresh cookie ends (`refresh_expires_utc`: 5 hours after sign-in, absoluteRefreshTokenValid...).
+// No token ever reaches this page. Renewal runs ~2 minutes before each expiry while the tab is
+// open, when the tab comes back into view, and once when a session check fails (a reload or a
+// laptop waking up after the access cookie ran out).
+const RENEW_BEFORE_MS = 2 * 60_000;
+let cookieExpiresAt = 0;
+let renewInFlight: Promise<boolean> | undefined;
+// After "Sign out", nothing may renew the session back to life (until the next sign-in).
+let signedOutOnPurpose = false;
+let renewTimer: number | undefined;
+
+/** Renews the cookie session; true when IAM set a fresh access cookie. Concurrent callers share one call. */
+export function renewCookieSession(): Promise<boolean> {
+  if (signedOutOnPurpose) return Promise.resolve(false);
+  if (!renewInFlight) {
+    renewInFlight = (async () => {
+      try {
+        const r = (await blocksClient.auth.refresh({})) as Record<string, unknown>;
+        const expires = Date.parse(String(r?.expires_utc ?? ""));
+        const seconds = Number(r?.expires_in);
+        cookieExpiresAt = Number.isFinite(expires) ? expires : Number.isFinite(seconds) && seconds > 0 ? Date.now() + seconds * 1000 : Date.now() + 10 * 60_000;
+        return r?.cookie_set !== false;
+      } catch {
+        return false;
+      }
+    })().finally(() => {
+      renewInFlight = undefined;
+    });
+  }
+  return renewInFlight;
+}
+
+function scheduleRenewal(): void {
+  if (renewTimer !== undefined) window.clearTimeout(renewTimer);
+  const wait = Math.max(30_000, (cookieExpiresAt || Date.now()) - Date.now() - RENEW_BEFORE_MS);
+  renewTimer = window.setTimeout(async () => {
+    renewTimer = undefined;
+    if (await renewCookieSession()) scheduleRenewal();
+    else notifySessionExpired();
+  }, wait);
+}
+
+/** Starts renewing the session (call when signed in); renews now if the cookie is near its end. */
+export async function keepSessionAlive(): Promise<void> {
+  if (!cookieExpiresAt || cookieExpiresAt - Date.now() < RENEW_BEFORE_MS) await renewCookieSession();
+  scheduleRenewal();
+}
+
+export function stopKeepingSessionAlive(): void {
+  if (renewTimer !== undefined) window.clearTimeout(renewTimer);
+  renewTimer = undefined;
+  cookieExpiresAt = 0;
+}
+
 // The session's source of truth is IAM, not a token this app can inspect --
 // `GET /iam/v4/auth/me` (blocksClient.auth.userInfo()) validates the
 // httpOnly session cookie (or bearer token, if one is cached) and returns
 // its claims in one round trip. `iam.me()` is a different, heavier call --
 // the full IAM user profile with roles/permissions -- and is used
 // separately on the Profile page; it is not a substitute for this check.
+// When it fails, the access cookie may only have run out: renew once and ask again.
 export async function fetchSessionClaims(): Promise<Record<string, unknown> | undefined> {
   try {
     return await blocksClient.auth.userInfo();
   } catch {
-    return undefined;
+    if (!(await renewCookieSession())) return undefined;
+    try {
+      return await blocksClient.auth.userInfo();
+    } catch {
+      return undefined;
+    }
   }
 }
 
@@ -186,6 +260,7 @@ export async function completeLogin(callbackUrl: string): Promise<CallbackResult
   // IAM return one.
   const accessToken = data.access_token ?? data.accessToken;
   if (accessToken) persistTokens(accessToken, data.refresh_token ?? data.refreshToken);
+  signedOutOnPurpose = false;
 
   return { ok: true, returnTo };
 }
@@ -232,6 +307,7 @@ export async function signInWithPassword(email: string, password: string): Promi
 
   const accessToken = (data.access_token ?? data.accessToken) as string | undefined;
   if (accessToken) persistTokens(accessToken, (data.refresh_token ?? data.refreshToken) as string | undefined);
+  signedOutOnPurpose = false;
   return { ok: true };
 }
 
@@ -297,6 +373,8 @@ export async function logout(): Promise<void> {
   // Ask IAM to end the session (clears the httpOnly cookie server-side)
   // before dropping any locally cached bearer token; best-effort so a
   // network failure never blocks the user from leaving a protected page.
+  signedOutOnPurpose = true;
+  stopKeepingSessionAlive();
   await blocksClient.auth.logout({ refreshToken: getRefreshToken() }).catch(() => undefined);
   clearLocalTokens();
 }

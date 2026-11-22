@@ -1,13 +1,15 @@
 // The signed-in person's notification inbox, from Blocks Notifier (blocksClient.notifier). Reading
 // and marking read need blocks-logic::notifier::read and ::manage on the person's role, granted
 // INSIDE their company's organization (a grant in "default" alone still gives 403), so company
-// onboarding must grant them. Sending comes with the first module that notifies (RFIs, Phase 2),
-// through a Function with a notification configuration.
+// onboarding must grant them. Sending is server-only: the rfis Function sends through the
+// "cpm-inbox" configuration with the service identity (functions/_shared/blocks.js notify).
+// Email on/off lives in NotificationPreference, read and saved through the projects Function.
 //
 // Payload we send (and read here): denormalizedPayload = JSON
 //   { title, body?, link?, projectId?, kind? }   link = an app path, e.g. "/rfis?project=<id>"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { blocksClient } from "../../lib/blocks/client";
+import { FUNCTIONS, callFunction } from "../../lib/blocks/functions";
 
 export type AppNotification = {
   id: string;
@@ -20,6 +22,8 @@ export type AppNotification = {
 };
 
 const KEY = ["notifications"] as const;
+const INBOX_KEY = ["notifications", "inbox"] as const;
+const SETTINGS_KEY = ["notification-settings"] as const;
 
 function parsePayload(raw: unknown): Record<string, unknown> {
   if (raw && typeof raw === "object") return raw as Record<string, unknown>;
@@ -48,12 +52,12 @@ function toNotification(n: Record<string, unknown>): AppNotification {
   };
 }
 
-/** The latest notifications and the unread count; re-read every minute and when the tab is focused. */
+/** The latest notifications and the unread count; re-read every 30 s and when the tab is focused. */
 export function useNotifications(enabled = true) {
   return useQuery({
     queryKey: KEY,
     enabled,
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
     queryFn: async () => {
       // Notifier pages start at 0 (page 1 is the second page).
       const res = await blocksClient.notifier.getNotifications({ page: 0, pageSize: 8, sortBy: "createdTime", sortDescending: true });
@@ -79,5 +83,39 @@ export function useMarkAllRead() {
   return useMutation({
     mutationFn: () => blocksClient.notifier.markAllNotificationAsRead(),
     onSettled: () => queryClient.invalidateQueries({ queryKey: KEY })
+  });
+}
+
+/** The Inbox page: up to 100 of the latest notifications, optionally unread only. */
+export function useInbox(unreadOnly: boolean) {
+  return useQuery({
+    queryKey: [...INBOX_KEY, unreadOnly],
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const res = await blocksClient.notifier.getNotifications({ page: 0, pageSize: 100, isUnreadOnly: unreadOnly, sortBy: "createdTime", sortDescending: true });
+      return {
+        items: (res?.notifications ?? []).map(toNotification).filter((n) => n.id),
+        unread: Number(res?.unReadNotificationsCount ?? 0),
+        total: Number(res?.totalNotificationsCount ?? 0)
+      };
+    }
+  });
+}
+
+export type NotificationSettings = { emailEnabled: boolean };
+
+/** My notification settings (email on or off; the bell is always on). */
+export function useNotificationSettings() {
+  return useQuery({
+    queryKey: SETTINGS_KEY,
+    queryFn: () => callFunction<NotificationSettings>(FUNCTIONS.projects, { action: "notificationSettings" })
+  });
+}
+
+export function useSetNotificationSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: NotificationSettings) => callFunction<NotificationSettings>(FUNCTIONS.projects, { action: "setNotificationSettings", ...settings }),
+    onSuccess: (saved) => queryClient.setQueryData(SETTINGS_KEY, { emailEnabled: saved.emailEnabled })
   });
 }

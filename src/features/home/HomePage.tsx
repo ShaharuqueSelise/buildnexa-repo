@@ -1,16 +1,29 @@
 // Project home (PRJ-02), built from the demo app's HomePage (mock/src/mock/pages/HomePage.tsx):
 // the project header, quick actions, "My items" first, then the project's health.
-// Real now: the header (project, dates, time elapsed, contract value for cost roles) and the
-// role notes. RFIs, submittals, punch, daily logs and activity fill in as each module is built;
-// until then their panels say which phase brings them.
-import { CalendarDays, Camera, CheckCircle2, ClipboardCheck, HardHat, Lock, MapPin, Plus, Users } from "lucide-react";
+// Real now: the header (project, dates, time elapsed, contract value for cost roles), the role
+// notes, "My items" for RFIs (ball in court on me) and the RFI numbers. Submittals, punch, daily
+// logs and activity fill in as each module is built; until then their panels say which phase
+// brings them.
+import { CalendarDays, Camera, CheckCircle2, ClipboardCheck, FileQuestion, HardHat, Lock, MapPin, Plus, Users } from "lucide-react";
+import { useState } from "react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import { ROLE_LABEL, isProjectRole } from "../../lib/roles";
-import { Badge, Button, Empty, Kpi, Note, Panel, fmt } from "../../shared/m/ui";
+import { todayIso, workingDaysBetween } from "../../lib/workdays";
+import { Badge, Button, Empty, Kpi, Note, Panel, cx, fmt } from "../../shared/m/ui";
 import { useCurrentUser } from "../profile/useCurrentUser";
 import { hueOf, stageOf, timeElapsed, useProjects } from "../projects/projectsApi";
 import { fmtDate, fmtShortDate } from "../projects/ProjectsPage";
+import { rfisOnMe, useRfiList } from "../rfis/rfisApi";
+import type { RfiRow } from "../rfis/rfisApi";
+import { DueLabel, StatusPill } from "../rfis/RfisPage";
 import "./Home.css";
+
+// What the person does next on an RFI that waits on them.
+function rfiAction(r: RfiRow): "finish" | "review" | "pass" | "respond" {
+  if (r.status === "draft") return "finish";
+  if (r.ballInCourtRole === "manager") return r.status === "answered" ? "review" : "pass";
+  return "respond";
+}
 
 const DAY = 86_400_000;
 const daysBetween = (a: number, b: number) => Math.round((b - a) / DAY);
@@ -19,7 +32,9 @@ const money = (n: number) => new Intl.NumberFormat("en-GB", { style: "currency",
 export function HomePage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { t } = useT();
   const me = useCurrentUser();
-  const { project, myRole, isAdmin, seesCost, ws, query } = useProjects();
+  const { project, myRole, isAdmin, seesCost, ws, query, myUserId } = useProjects();
+  const rfiList = useRfiList(myRole ? project?.ItemId : undefined);
+  const [showAllMine, setShowAllMine] = useState(false);
 
   if (query.isLoading) return <div className="m-panel m-empty"><strong>{t("shell.loading")}</strong></div>;
   if (!project) {
@@ -56,6 +71,18 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
   const canCreateRfi = ["project-manager", "superintendent", "document-controller", "field-user"].includes(myRole ?? "");
   const canCreatePunch = myRole === "project-manager" || myRole === "superintendent";
 
+  // RFIs: what waits on me, and the project's numbers (only the RFIs my role may see).
+  const today = todayIso();
+  const rfis = rfiList.data?.rfis ?? [];
+  const mine = rfisOnMe(rfis, myUserId, today);
+  const shownMine = showAllMine ? mine : mine.slice(0, 8);
+  const overdueMine = mine.filter((r) => r.status === "open" && r.dueDate && r.dueDate < today).length;
+  const openRfis = rfis.filter((r) => r.status === "open" || r.status === "answered");
+  const answeredRfis = rfis.filter((r) => r.status === "answered").length;
+  const overdueRfis = openRfis.filter((r) => r.status === "open" && r.dueDate && r.dueDate < today);
+  const rfisLoading = rfiList.isLoading && Boolean(myRole);
+  const rfiValue = (n: number) => (rfisLoading ? "…" : rfiList.isError ? "—" : n);
+
   return (
     <div className="m-home">
       <div className="m-home-hero" style={{ background: `linear-gradient(120deg, hsl(${hue} 65% 38%), hsl(${(hue + 35) % 360} 55% 24%))` }}>
@@ -89,7 +116,7 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
 
       {!isOwner ? (
         <div className="m-home-quick">
-          {canCreateRfi ? <Button icon={<Plus size={15} />} disabled title={later(2)}>{t("home.newRfi")}</Button> : null}
+          {canCreateRfi ? <Button icon={<Plus size={15} />} onClick={() => onNavigate("/rfis")}>{t("home.newRfi")}</Button> : null}
           {canCreatePunch ? <Button variant="secondary" icon={<ClipboardCheck size={15} />} disabled title={later(3)}>{t("home.newPunch")}</Button> : null}
           {myRole && myRole !== "design-reviewer" ? <Button variant="secondary" icon={<CalendarDays size={15} />} disabled title={later(3)}>{t("home.todaysLog")}</Button> : null}
           <Button variant="secondary" icon={<Camera size={15} />} disabled title={later(2)}>{t("nav.photos")}</Button>
@@ -97,19 +124,62 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
         </div>
       ) : null}
 
-      <Panel>
-        <Empty icon={<HardHat size={28} />} title={t("home.emptyTitle")}>{t("home.emptyText")}</Empty>
-      </Panel>
+      {!rfisLoading && !rfiList.isError && rfis.length === 0 ? (
+        <Panel>
+          <Empty icon={<HardHat size={28} />} title={t("home.emptyTitle")}>{t("home.emptyText")}</Empty>
+        </Panel>
+      ) : null}
 
       <div className="m-grid m-grid-main">
         <div>
-          <Panel className="m-panel-flush" title={<>{t("home.myItems")} <Badge tone="green">0</Badge></>} actions={<span className="m-muted m-small m-hide-mobile">{t("home.myItemsHint")}</span>}>
-            <Empty icon={<CheckCircle2 size={26} />} title={t("home.nothingTitle")}>{t("home.nothingText")}</Empty>
+          <Panel
+            className="m-panel-flush"
+            title={<>{t("home.myItems")} <Badge tone={mine.length ? "blue" : "green"}>{rfisLoading ? "…" : mine.length}</Badge></>}
+            actions={<span className="m-muted m-small m-hide-mobile">{t("home.myItemsHint")}</span>}
+          >
+            {rfisLoading ? (
+              <div className="m-empty m-small">{t("shell.loading")}</div>
+            ) : rfiList.isError ? (
+              <div className="m-empty m-small">{t("home.myItemsError")}</div>
+            ) : mine.length === 0 ? (
+              <Empty icon={<CheckCircle2 size={26} />} title={t("home.nothingTitle")}>{t("home.nothingText")}</Empty>
+            ) : (
+              <div className="m-home-mine">
+                {shownMine.map((r) => {
+                  const over = r.status === "open" && Boolean(r.dueDate) && String(r.dueDate) < today;
+                  return (
+                    <button key={r.ItemId} className={cx("m-home-mine-row", over && "m-home-mine-over")} onClick={() => onNavigate(`/rfis/${r.ItemId}`)}>
+                      <span className="m-home-mine-icon"><FileQuestion size={16} /></span>
+                      <span className="m-home-mine-text">
+                        <span className="m-row" style={{ gap: 6 }}><b className="m-mono">{r.number || t("rfi.status.draft")}</b><span className="m-muted m-small">RFI</span></span>
+                        <span className="m-home-mine-title">{r.subject}</span>
+                        <span className="m-small m-muted">{t(`home.action.${rfiAction(r)}`)}</span>
+                      </span>
+                      <span className="m-home-mine-meta">
+                        <StatusPill status={r.status} t={t} />
+                        <DueLabel due={r.dueDate} today={today} t={t} />
+                      </span>
+                    </button>
+                  );
+                })}
+                {mine.length > 8 ? (
+                  <button className="m-home-mine-more m-link m-small" onClick={() => setShowAllMine(!showAllMine)}>
+                    {showAllMine ? t("home.showFewer") : fmt(t("home.showAll"), { count: mine.length, overdue: overdueMine })}
+                  </button>
+                ) : null}
+              </div>
+            )}
           </Panel>
 
           <div className="m-kpis">
-            <Kpi label={t("home.kpi.openRfis")} value="—" hint={later(2)} />
-            <Kpi label={t("home.kpi.overdueRfis")} value="—" hint={later(2)} />
+            <Kpi label={t("home.kpi.openRfis")} value={rfiValue(openRfis.length)} hint={fmt(t("home.kpi.openRfisHint"), { count: answeredRfis })} tone="blue" onClick={() => onNavigate("/rfis")} />
+            <Kpi
+              label={t("home.kpi.overdueRfis")}
+              value={rfiValue(overdueRfis.length)}
+              hint={openRfis.length ? fmt(t("home.kpi.overdueRfisHint"), { pct: Math.round((overdueRfis.length / openRfis.length) * 100), days: overdueRfis.length ? Math.max(...overdueRfis.map((r) => workingDaysBetween(String(r.dueDate), today))) : 0 }) : t("home.kpi.noneOpen")}
+              tone={overdueRfis.length ? "red" : "green"}
+              onClick={() => onNavigate("/rfis")}
+            />
             <Kpi label={t("home.kpi.overdueSubmittals")} value="—" hint={later(4)} />
             {myRole !== "design-reviewer" ? <Kpi label={isSub ? t("home.kpi.myPunch") : t("home.kpi.openPunch")} value="—" hint={later(3)} /> : null}
             {myRole !== "design-reviewer" ? <Kpi label={t("home.kpi.todaysLog")} value="—" hint={later(3)} /> : null}
@@ -123,7 +193,7 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
             <Empty title={t("home.noLog")}>{stage === "preconstruction" ? t("home.noLogPrecon") : later(3)}</Empty>
           </Panel>
           <Panel title={t("home.activity")}>
-            <Empty title={t("home.noActivity")}>{later(2)}</Empty>
+            <Empty title={t("home.noActivity")}>{t("home.activityLater")}</Empty>
           </Panel>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { fetchSessionClaims, logout as endSession, onSessionExpired, signInWithPassword, startLogin } from "../../lib/blocks/auth";
+import { fetchSessionClaims, keepSessionAlive, logout as endSession, onSessionExpired, signInWithPassword, startLogin, stopKeepingSessionAlive } from "../../lib/blocks/auth";
 import type { SignInResult } from "../../lib/blocks/auth";
 
 type AuthStatus = "authenticated" | "loading" | "unauthenticated";
@@ -102,6 +102,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [refresh]);
+
+  // While signed in, the session cookie is renewed before it runs out (lib/blocks/auth.ts), and
+  // again when the tab comes back into view (timers sleep with the laptop).
+  useEffect(() => {
+    if (status !== "authenticated") {
+      if (status === "unauthenticated") stopKeepingSessionAlive();
+      return;
+    }
+    void keepSessionAlive();
+    function onVisible() {
+      if (document.visibilityState === "visible") void keepSessionAlive();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [status]);
 
   // Fires when a reactive 401 forced a refresh and IAM rejected the refresh
   // token outright (invalid_grant) -- blocks/auth.ts already ended the
