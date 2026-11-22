@@ -35,8 +35,9 @@
 //   (docs/architecture/13 §4.1), compare-and-set as proven by spike M1b.
 // - handle: the common handler shell (errors, logging, never a token in the answer).
 
+// - permissions.js (next to this file) is copied in after it: PROJECT_ROLES, projectCan, accountCan.
+
 const API = "https://blocksapi.slsblx.com";
-const PROJECT_ROLES = ["project-manager", "superintendent", "document-controller", "field-user", "design-reviewer", "owner-viewer"];
 
 class Refused extends Error {
   constructor(code, message) {
@@ -84,9 +85,38 @@ function client(ctx, token) {
     const data = await gql(`query q($input: DynamicQueryInput) { ${q}(input: $input) { items { tenantRole ${fields} } } }`, { input: { pageNo: 1, pageSize: 1000 } });
     return data?.[q]?.items ?? [];
   }
-  // The service reads every tenant; always filter to the caller's company.
-  async function list(schema, fields, tenantRole) {
-    return (await listAll(schema, fields)).filter((r) => r.tenantRole === tenantRole);
+  // The service reads every tenant, so every read names the caller's company: the gateway filters
+  // on the server (DynamicQueryInput.filter, a JSON string) and the result is checked again here.
+  // `where` adds equality filters, e.g. { projectId }.
+  async function list(schema, fields, tenantRole, where = {}) {
+    const q = `get${schema}s`;
+    const filter = JSON.stringify({ ...where, tenantRole });
+    const data = await gql(`query q($input: DynamicQueryInput) { ${q}(input: $input) { items { tenantRole ${fields} } } }`, { input: { pageNo: 1, pageSize: 1000, filter } });
+    const items = data?.[q]?.items ?? [];
+    return items.filter((r) => r.tenantRole === tenantRole && Object.entries(where).every(([k, v]) => r[k] === v));
+  }
+  // Activity history (audit trail): who did what, when. Never blocks the action it records.
+  async function audit(me, entry) {
+    try {
+      await insert("ActivityEvent", {
+        tenantRole: me.tenantRole,
+        projectId: entry.projectId,
+        recordType: entry.recordType,
+        recordId: entry.recordId,
+        recordNumber: entry.recordNumber,
+        action: entry.action,
+        actorUserId: me.userId,
+        actorName: entry.actorName,
+        at: new Date().toISOString(),
+        changedFields: entry.changedFields,
+        beforeJson: entry.before === undefined ? undefined : JSON.stringify(entry.before),
+        afterJson: entry.after === undefined ? undefined : JSON.stringify(entry.after),
+        summary: entry.summary,
+        source: "app"
+      });
+    } catch {
+      // The change itself succeeded; a missing history line must not turn it into an error.
+    }
   }
   async function insert(schema, input) {
     const data = await gql(`mutation m($input: ${schema}InsertInput!) { insert${schema}(input: $input) { acknowledged itemId } }`, { input });
@@ -112,7 +142,7 @@ function client(ctx, token) {
     const changed = await updateWhere(schema, { ItemId: { eq: itemId } }, tenantRole, input);
     if (changed === 0) throw new Error(`update${schema} matched no row`);
   }
-  return { iam, gql, insert, list, listAll, update, updateWhere };
+  return { iam, gql, insert, list, listAll, update, updateWhere, audit };
 }
 
 // A company's tag (its tenant role): "company-<short name>", or "co-<short name>" for companies
@@ -128,7 +158,11 @@ function caller(ctx) {
     organizationId: ctx.context.organizationId,
     tenantRole: companyRoles[0],
     isAdmin: roles.includes("company-admin"),
-    isStaff: roles.includes("staff") || roles.includes("company-admin")
+    isStaff: roles.includes("staff") || roles.includes("company-admin"),
+    // A person from a partner company (subcontractor, design firm, owner): sees only their projects.
+    isPartner: roles.includes("external") && !roles.includes("staff") && !roles.includes("company-admin"),
+    // IAM account roles, for accountCan() (company and platform permissions).
+    roles
   };
 }
 
@@ -211,14 +245,160 @@ async function handle(input, ctx, label, actions, who = caller) {
     return { ok: false, code: "FAILED", error: "Something went wrong. Please try again." };
   }
 }
+
+// Who may do what: the ONE permission table for the Functions and the screens.
+// Source: the client's spec (docs/permissions/Buildnexa_RBAC_Role_and_Permission_Specification.pdf),
+// agreed adjustments in docs/permissions/PERMISSIONS.md.
+// - Functions: tools/sync-functions.mjs copies this file into every Function's shared block.
+// - Screens: src/lib/permissions.ts imports it, so a button and the server never disagree.
+//
+// Roles are bundles of permission keys. Code checks keys (`projectCan(role, "rfi.close")`), never
+// role names, so a custom role later is one more entry here.
+// Keys ending in _assigned, _own, _involved or _relevant are the spec's "Limited": the key is
+// granted, and the module's Function also checks that the record belongs to the person or their
+// company. Keys for modules not built yet are refined when the module is built.
+//
+// Company Admins and Platform Admins get NO project content from their company or platform role:
+// RFIs, documents, logs and budgets need a project role (spec §6, "Company Admin access").
+
+const PROJECT_ROLES = ["project-manager", "superintendent", "document-controller", "field-user", "design-reviewer", "owner-viewer"];
+// People from partner companies (subcontractor, design firm, owner) work in these roles only.
+const PARTNER_PROJECT_ROLES = ["field-user", "design-reviewer", "owner-viewer"];
+
+const PM = "project-manager";
+const SUPT = "superintendent";
+const DC = "document-controller";
+const SUB = "field-user";
+const DESIGN = "design-reviewer";
+const OWNER = "owner-viewer";
+const ALL = PROJECT_ROLES;
+
+// permission key -> project roles that hold it
+const PROJECT_PERMISSIONS = {
+  // Project
+  "project.view": ALL,
+  "project.update": [PM],
+  "project.manage_members": [PM],
+  // RFIs
+  "rfi.view": [PM, SUPT, DC, DESIGN, OWNER],
+  "rfi.view_involved": [SUB], // created by me or my company, or involving me
+  "rfi.create": [PM, SUPT, DC, SUB],
+  "rfi.respond": [PM, SUPT, DC],
+  "rfi.respond_assigned": [SUB, DESIGN], // only when assigned or holding the ball
+  "rfi.reassign": [PM], // the GC creator may also pass the ball on their own RFI
+  "rfi.mark_official": [PM],
+  "rfi.mark_official_own": [DESIGN], // their own response only
+  "rfi.close": [PM], // the creator may also close their own RFI (checked per record)
+  "rfi.void": [PM], // the creator may also void their own draft
+  "rfi.reopen": [PM],
+  "rfi.see_cost": [PM, SUPT, DC, OWNER],
+  "rfi.see_internal": [PM, SUPT, DC],
+  // Drawings
+  "drawing.view": [PM, SUPT, DC, DESIGN, OWNER],
+  "drawing.view_relevant": [SUB],
+  "drawing.pin": [PM, SUPT, SUB],
+  "drawing.upload": [PM, DC, DESIGN], // design: revisions of their own discipline
+  "drawing.manage_versions": [PM, DC], // supersede, void, register
+  // Documents and photos
+  "document.view": [PM, SUPT, DC, OWNER],
+  "document.view_relevant": [SUB, DESIGN],
+  "document.upload": [PM, SUPT, DC, SUB, DESIGN],
+  "document.manage": [PM, DC],
+  // Submittals
+  "submittal.view": [PM, SUPT, DC, DESIGN, OWNER],
+  "submittal.view_own": [SUB],
+  "submittal.manage": [PM, DC],
+  "submittal.upload_own": [SUB],
+  "submittal.review": [PM, DESIGN],
+  // Daily logs
+  "daily_log.view": [PM, SUPT, DC],
+  "daily_log.view_submitted": [DESIGN, OWNER],
+  "daily_log.create": [PM, SUPT],
+  "daily_log.crew_own": [SUB],
+  "daily_log.correct": [PM], // audited correction after submit
+  // Punch list
+  "punch_item.view": [PM, SUPT, DC, DESIGN, OWNER],
+  "punch_item.view_assigned": [SUB],
+  "punch_item.create": [PM, SUPT],
+  "punch_item.assign": [PM, SUPT],
+  "punch_item.close": [PM, SUPT],
+  "punch_item.update_assigned": [SUB],
+  // Budget
+  "budget.view": [PM],
+  "budget.manage": [PM],
+  "budget.view_summary": [OWNER],
+  // Change orders
+  "change_order.view": [PM, SUPT, DC, DESIGN, OWNER],
+  "change_order.create": [PM],
+  "change_order.approve": [PM], // within thresholds, never their own (comes with change orders)
+  "change_order.approve_assigned": [OWNER],
+  // Reports
+  "report.view": [PM, OWNER],
+  "report.view_relevant": [SUPT, DC, SUB, DESIGN],
+  "report.export": [PM]
+};
+
+// Company and platform permissions, from the IAM account roles.
+const ACCOUNT_PERMISSIONS = {
+  "company.manage_people": ["company-admin"],
+  "company.manage_partners": ["company-admin"],
+  "company.settings": ["company-admin"],
+  "project.create": ["company-admin"],
+  "project.create_when_allowed": ["staff"], // staff whose admin ticked "can create projects"
+  "project.list_all": ["company-admin"], // project list and teams, not their content
+  "project.manage_members_any": ["company-admin"],
+  "platform.manage_companies": ["platform-admin"],
+  "platform.manage_admins": ["platform-admin"]
+};
+
+/** Does this project role (the person's role on ONE project) hold the permission? */
+function projectCan(projectRole, key) {
+  return Boolean(projectRole) && (PROJECT_PERMISSIONS[key] ?? []).includes(projectRole);
+}
+
+/** Does any of these IAM account roles hold the company or platform permission? */
+function accountCan(accountRoles, key) {
+  const holders = ACCOUNT_PERMISSIONS[key] ?? [];
+  return (accountRoles ?? []).some((r) => holders.includes(r));
+}
+
+/** Every permission key of a project role, in table order (the Company admin › Roles tab). */
+function projectPermissionsOf(projectRole) {
+  return Object.keys(PROJECT_PERMISSIONS).filter((key) => PROJECT_PERMISSIONS[key].includes(projectRole));
+}
+
+/**
+ * May a person hold this project role? `companyRelation` is their company's relation to the
+ * customer: "self" for the customer's own staff, otherwise sub | design | owner | supplier.
+ * People from partner companies only get the partner roles (never PM, Superintendent, DC).
+ */
+function mayHoldProjectRole(companyRelation, projectRole) {
+  if (!PROJECT_ROLES.includes(projectRole)) return false;
+  const isPartner = Boolean(companyRelation) && companyRelation !== "self";
+  return !isPartner || PARTNER_PROJECT_ROLES.includes(projectRole);
+}
 // <<< shared
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function adminOnly(me) {
-  if (!me.isAdmin) throw new Refused("NOT_ADMIN", "Only a company admin can manage people.");
+  if (!accountCan(me.roles, "company.manage_people")) throw new Refused("NOT_ADMIN", "Only a company admin can manage people.");
   return me;
 }
+
+function partnersAdminOnly(me) {
+  if (!accountCan(me.roles, "company.manage_partners")) throw new Refused("NOT_ADMIN", "Only a company admin can manage partner companies.");
+  return me;
+}
+
+const roleNotForPartner = () =>
+  new Refused("PARTNER_ROLE", "People from partner companies can be Subcontractor, Designer/Consultant or Owner on a project, not Project Manager, Superintendent or Document Controller.");
+
+// The admin's own name for the activity history.
+const nameOf = (members, me) => {
+  const m = members.find((x) => x.userId === me.userId);
+  return m ? personName(m) : undefined;
+};
 
 const MEMBER_FIELDS =
   "ItemId userId email firstName lastName displayName phone jobTitle companyId companyName companyRelation orgRole defaultRole isCompanyAdmin status invitedAt joinedAt";
@@ -228,7 +408,7 @@ const strip = ({ tenantRole: _t, ...rest }) => rest;
 async function listPeople(ctx, db, me) {
   const [members, companies, projects, projectMembers] = await Promise.all([
     db.list("OrgMember", MEMBER_FIELDS, me.tenantRole),
-    db.list("Company", "ItemId name relation brandColor isVoided", me.tenantRole),
+    db.list("Company", "ItemId name relation brandColor isVoided tradeCodes address { city }", me.tenantRole),
     db.list("Project", "ItemId number name status", me.tenantRole),
     db.list("ProjectMember", "ItemId projectId userId orgMemberId role status", me.tenantRole)
   ]);
@@ -297,11 +477,12 @@ async function invite(ctx, db, me, args) {
 
   const [companies, members, projects] = await Promise.all([
     db.list("Company", "ItemId name relation isVoided", me.tenantRole),
-    db.list("OrgMember", "ItemId email userId status", me.tenantRole),
+    db.list("OrgMember", "ItemId email userId status displayName firstName lastName", me.tenantRole),
     db.list("Project", "ItemId status", me.tenantRole)
   ]);
   const company = companies.find((c) => c.ItemId === args.companyId && !c.isVoided);
   if (!company) throw new Refused("BAD_COMPANY", "Choose the company this person works for.");
+  if (!mayHoldProjectRole(company.relation, defaultRole)) throw roleNotForPartner();
   const orgRole = company.relation === "self" ? "staff" : "external";
   for (const pid of projectIds) {
     if (!projects.some((p) => p.ItemId === pid && p.status !== "archived")) throw new Refused("BAD_PROJECT", "One of the projects is not in your company.");
@@ -368,6 +549,11 @@ async function invite(ctx, db, me, args) {
     });
   }
   ctx.log.info("person invited", { memberId, orgRole, invited, projects: projectIds.length });
+  const who = nameOf(members, me);
+  await db.audit(me, { recordType: "person", recordId: userId, action: "invited", actorName: who, after: { company: company.name, defaultRole, projects: projectIds.length }, summary: `${who ?? "A company admin"} invited ${displayName} (${company.name}) as ${defaultRole}` });
+  for (const projectId of projectIds) {
+    await db.audit(me, { projectId, recordType: "projectMember", recordId: userId, action: "memberAdded", actorName: who, after: { role: defaultRole }, summary: `${who ?? "A company admin"} added ${displayName} as ${defaultRole}` });
+  }
   return { ok: true, memberId, invited };
 }
 
@@ -388,6 +574,7 @@ async function setAdmin(db, me, args) {
     }
     await db.iam("/iam/v4/iam/users/access", { userId: m.userId, organizationId: me.organizationId, roles: ["company-admin", me.tenantRole] });
     await db.update("OrgMember", m.ItemId, me.tenantRole, { isCompanyAdmin: true, canCreateProjects: true });
+    await db.audit(me, { recordType: "person", recordId: m.userId, action: "madeAdmin", actorName: nameOf(members, me), summary: `${nameOf(members, me) ?? "A company admin"} made ${personName(m)} a company admin` });
     return { ok: true };
   }
 
@@ -397,15 +584,21 @@ async function setAdmin(db, me, args) {
   const role = PROJECT_ROLES.includes(String(args.role)) ? String(args.role) : m.defaultRole;
   await db.iam("/iam/v4/iam/users/access", { userId: m.userId, organizationId: me.organizationId, roles: ["staff", me.tenantRole] });
   await db.update("OrgMember", m.ItemId, me.tenantRole, { isCompanyAdmin: false, orgRole: "staff", ...(role ? { defaultRole: role } : {}) });
+  await db.audit(me, { recordType: "person", recordId: m.userId, action: "adminRemoved", actorName: nameOf(members, me), summary: `${nameOf(members, me) ?? "A company admin"} removed company admin rights from ${personName(m)}` });
   return { ok: true };
 }
 
 async function setDefaultRole(db, me, args) {
   const role = String(args.role ?? "");
   if (!PROJECT_ROLES.includes(role)) throw new Refused("BAD_ROLE", "Choose a default role.");
-  const m = await findMember(db, me, args.memberId);
+  const members = await db.list("OrgMember", MEMBER_FIELDS, me.tenantRole);
+  const m = members.find((x) => x.ItemId === args.memberId);
+  if (!m) throw new Refused("NOT_FOUND", "This person is not in your company.");
   notMe(me, m, "change the role of");
+  if (!mayHoldProjectRole(m.companyRelation, role)) throw roleNotForPartner();
+  if (m.defaultRole === role) return { ok: true };
   await db.update("OrgMember", m.ItemId, me.tenantRole, { defaultRole: role });
+  await db.audit(me, { recordType: "person", recordId: m.userId, action: "defaultRoleChanged", actorName: nameOf(members, me), changedFields: ["defaultRole"], before: { defaultRole: m.defaultRole }, after: { defaultRole: role }, summary: `${nameOf(members, me) ?? "A company admin"} changed ${personName(m)}'s default role to ${role}` });
   return { ok: true };
 }
 
@@ -424,7 +617,9 @@ async function resend(ctx, db, me, args) {
 }
 
 async function setActive(db, me, args, active) {
-  const m = await findMember(db, me, args.memberId);
+  const members = await db.list("OrgMember", MEMBER_FIELDS, me.tenantRole);
+  const m = members.find((x) => x.ItemId === args.memberId);
+  if (!m) throw new Refused("NOT_FOUND", "This person is not in your company.");
   notMe(me, m, active ? "reactivate" : "deactivate");
   if (active) {
     const roles = m.isCompanyAdmin ? ["company-admin", me.tenantRole] : [m.orgRole === "external" ? "external" : "staff", me.tenantRole];
@@ -435,6 +630,86 @@ async function setActive(db, me, args, active) {
     await db.iam("/iam/v4/iam/users/revoke-access", { userId: m.userId, organizationId: me.organizationId });
     await db.update("OrgMember", m.ItemId, me.tenantRole, { status: "deactivated", removedAt: new Date().toISOString(), removedReason: "deactivated by company admin" });
   }
+  const who = nameOf(members, me);
+  await db.audit(me, { recordType: "person", recordId: m.userId, action: active ? "reactivated" : "deactivated", actorName: who, summary: `${who ?? "A company admin"} ${active ? "reactivated" : "deactivated"} ${personName(m)}` });
+  return { ok: true };
+}
+
+// ---------- partner companies (spec: Company Admin invites or registers external companies) ----------
+const PARTNER_RELATIONS = ["sub", "design", "owner", "supplier"];
+const COMPANY_NAME = (v) => String(v ?? "").trim().replace(/\s+/g, " ");
+
+function companyInput(args) {
+  const name = COMPANY_NAME(args.name);
+  if (name.length < 2 || name.length > 120) throw new Refused("BAD_NAME", "Enter the company name (2 to 120 characters).");
+  const tradeCodes = Array.isArray(args.tradeCodes) ? [...new Set(args.tradeCodes.map((t) => String(t).trim()).filter(Boolean))].slice(0, 20) : [];
+  const city = String(args.city ?? "").trim().slice(0, 80) || undefined;
+  return { name, tradeCodes, city };
+}
+
+async function addCompany(db, me, args) {
+  const relation = String(args.relation ?? "");
+  if (!PARTNER_RELATIONS.includes(relation)) throw new Refused("BAD_RELATION", "Choose what the company is: subcontractor, design firm, owner or supplier.");
+  const input = companyInput(args);
+  const [companies, members] = await Promise.all([
+    db.list("Company", "ItemId name isVoided", me.tenantRole),
+    db.list("OrgMember", "ItemId userId displayName firstName lastName email", me.tenantRole)
+  ]);
+  if (companies.some((c) => !c.isVoided && c.name.toLowerCase() === input.name.toLowerCase())) {
+    throw new Refused("COMPANY_EXISTS", "A company with this name is already in your list.");
+  }
+  const companyId = await db.insert("Company", {
+    tenantRole: me.tenantRole,
+    name: input.name,
+    relation,
+    tradeCodes: input.tradeCodes,
+    address: input.city ? { city: input.city } : undefined,
+    status: "active",
+    isVoided: false
+  });
+  const who = nameOf(members, me);
+  await db.audit(me, { recordType: "company", recordId: companyId, action: "companyAdded", actorName: who, after: { name: input.name, relation }, summary: `${who ?? "A company admin"} added ${input.name} (${relation})` });
+  return { ok: true, companyId };
+}
+
+// Name, trades and city. What a company IS (sub, design, owner) stays: its people's roles depend on it.
+async function updateCompany(db, me, args) {
+  const input = companyInput(args);
+  const [companies, members] = await Promise.all([
+    db.list("Company", "ItemId name relation isVoided tradeCodes address { city }", me.tenantRole),
+    db.list("OrgMember", "ItemId userId displayName firstName lastName email companyId", me.tenantRole)
+  ]);
+  const c = companies.find((x) => x.ItemId === args.companyId && !x.isVoided);
+  if (!c) throw new Refused("NOT_FOUND", "This company is not in your list.");
+  if (c.relation === "self") throw new Refused("OWN_COMPANY", "Your own company's details are changed under Branding (coming later).");
+  if (companies.some((x) => x.ItemId !== c.ItemId && !x.isVoided && x.name.toLowerCase() === input.name.toLowerCase())) {
+    throw new Refused("COMPANY_EXISTS", "A company with this name is already in your list.");
+  }
+  await db.update("Company", c.ItemId, me.tenantRole, { name: input.name, tradeCodes: input.tradeCodes, address: input.city ? { city: input.city } : null });
+  // People and team rows carry the company name for lists; keep them in step.
+  if (c.name !== input.name) {
+    await db.updateWhere("OrgMember", { companyId: { eq: c.ItemId } }, me.tenantRole, { companyName: input.name });
+    await db.updateWhere("ProjectMember", { companyId: { eq: c.ItemId } }, me.tenantRole, { companyName: input.name });
+  }
+  const who = nameOf(members, me);
+  await db.audit(me, { recordType: "company", recordId: c.ItemId, action: "companyChanged", actorName: who, before: { name: c.name, tradeCodes: c.tradeCodes, city: c.address?.city }, after: input, summary: `${who ?? "A company admin"} changed ${input.name}` });
+  return { ok: true };
+}
+
+// Removing a partner company keeps its history; it is refused while people still work for it.
+async function removeCompany(db, me, args) {
+  const [companies, members] = await Promise.all([
+    db.list("Company", "ItemId name relation isVoided", me.tenantRole),
+    db.list("OrgMember", "ItemId userId displayName firstName lastName email companyId status", me.tenantRole)
+  ]);
+  const c = companies.find((x) => x.ItemId === args.companyId && !x.isVoided);
+  if (!c) throw new Refused("NOT_FOUND", "This company is not in your list.");
+  if (c.relation === "self") throw new Refused("OWN_COMPANY", "You can't remove your own company.");
+  const people = members.filter((m) => m.companyId === c.ItemId && m.status !== "deactivated" && m.status !== "removed");
+  if (people.length) throw new Refused("HAS_PEOPLE", `${people.length} ${people.length === 1 ? "person still works" : "people still work"} for this company. Deactivate them first.`);
+  await db.update("Company", c.ItemId, me.tenantRole, { isVoided: true, status: "inactive" });
+  const who = nameOf(members, me);
+  await db.audit(me, { recordType: "company", recordId: c.ItemId, action: "companyRemoved", actorName: who, summary: `${who ?? "A company admin"} removed ${c.name}` });
   return { ok: true };
 }
 
@@ -446,6 +721,9 @@ export default async function handler(input, ctx) {
     resend: (args, { ctx, db, me }) => resend(ctx, db, adminOnly(me), args),
     deactivate: (args, { db, me }) => setActive(db, adminOnly(me), args, false),
     reactivate: (args, { db, me }) => setActive(db, adminOnly(me), args, true),
-    setAdmin: (args, { db, me }) => setAdmin(db, adminOnly(me), args)
+    setAdmin: (args, { db, me }) => setAdmin(db, adminOnly(me), args),
+    addCompany: (args, { db, me }) => addCompany(db, partnersAdminOnly(me), args),
+    updateCompany: (args, { db, me }) => updateCompany(db, partnersAdminOnly(me), args),
+    removeCompany: (args, { db, me }) => removeCompany(db, partnersAdminOnly(me), args)
   });
 }

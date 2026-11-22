@@ -7,7 +7,7 @@ import { useState } from "react";
 import { Archive, ArrowRight, Building2, CheckCircle2, Copy, FolderTree, LayoutGrid, List, Loader2, Lock, MapPin, Plus, Trash2, UserPlus } from "lucide-react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import type { TranslationKey } from "../../lib/i18n/dictionary";
-import { PROJECT_ROLES, ROLE_LABEL } from "../../lib/roles";
+import { PROJECT_ROLES, ROLE_LABEL, rolesFor } from "../../lib/roles";
 import { FunctionRefused } from "../../lib/blocks/functions";
 import {
   Badge, Button, Dialog, Empty, Field, Kpi, Note, PageTitle, Panel, ProgressBar, ReleaseTag, SearchInput, Segmented, Select,
@@ -361,7 +361,7 @@ function CreateProjectWizard({ projects, people, onClose, onOpen, toast }: {
             return (
               <div key={i} className="m-portfolio-invite">
                 <input className="m-input" list="prj-people" placeholder={t("prj.team.placeholder")} value={inv.email} onChange={(e) => setInvites(invites.map((x, j) => (j === i ? { ...x, email: e.target.value } : x)))} title={match ? `${personName(match)} · ${match.companyName ?? ""}` : undefined} />
-                <Select value={inv.role} onChange={(v) => setInvites(invites.map((x, j) => (j === i ? { ...x, role: v } : x)))} options={PROJECT_ROLES.map((r) => ({ value: r, label: roleLabel(r) }))} />
+                <Select value={inv.role} onChange={(v) => setInvites(invites.map((x, j) => (j === i ? { ...x, role: v } : x)))} options={(match ? rolesFor(match.companyRelation) : PROJECT_ROLES).map((r) => ({ value: r, label: roleLabel(r) }))} />
                 <button className="m-icon-btn" aria-label={t("prj.team.remove")} onClick={() => setInvites(invites.filter((_, j) => j !== i))}><Trash2 size={15} /></button>
               </div>
             );

@@ -1,16 +1,16 @@
-// Projects and teams, read straight from the Data Gateway with the signed-in user's token
-// (Project, ProjectMember, OrgMember and Company are readable by everyone in the company
-// organization). Writes go through the `projects` Function.
+// Projects and teams. Company staff and admins read them straight from the Data Gateway (the
+// rules allow the company's own staff only); people from partner companies get only their own
+// projects, teams and the companies on them from the projects Function (`workspace`), as the
+// permission spec requires (docs/permissions/PERMISSIONS.md). Writes go through the Function.
 //
-// Who sees which project (docs/architecture/01 §3): company admins see every project, everyone
-// else only projects where they have an active ProjectMember row. The server would return other
-// projects of the same company to someone calling the API directly; that is the accepted
-// trade-off of v0.2.
+// Who sees which project: company admins see every project (the list and teams, not their
+// content); everyone else only projects where they have an active ProjectMember row.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
 import { blocksClient } from "../../lib/blocks/client";
 import { FUNCTIONS, callFunction } from "../../lib/blocks/functions";
 import { useCurrentUser, useMyRoles } from "../profile/useCurrentUser";
+import { accountCan, projectCan } from "../../lib/permissions";
 
 export type Stage = "preconstruction" | "construction" | "closeout" | "archived";
 
@@ -87,7 +87,11 @@ type GqlResponse = {
   errors?: { message?: string }[];
 };
 
-async function loadWorkspace(): Promise<Workspace> {
+async function loadWorkspace(partner: boolean): Promise<Workspace> {
+  if (partner) {
+    const ws = await callFunction<Workspace>(FUNCTIONS.projects, { action: "workspace" });
+    return { projects: ws.projects ?? [], team: ws.team ?? [], people: ws.people ?? [], companies: (ws.companies ?? []).filter((c) => !c.isVoided) };
+  }
   const res = (await blocksClient.data.graphql({ operationName: "workspace", query: QUERY, variables: { input: { pageNo: 1, pageSize: 1000 } } })) as GqlResponse;
   if (res.errors?.length) throw new Error(res.errors.map((e) => e.message).join("; "));
   return {
@@ -99,8 +103,6 @@ async function loadWorkspace(): Promise<Workspace> {
 }
 
 const KEY = ["workspace"] as const;
-
-// true while only company admins may run Functions that use the Buildnexa service password.
 
 /** The demo app's stage for a project (archived wins over the stored stage). */
 export function stageOf(p: ProjectRow): Stage {
@@ -167,7 +169,9 @@ export function useProjects() {
   const isPlatformAdmin = roles?.includes("platform-admin") ?? false;
   const inCompany = roles?.some((r) => COMPANY_ROLES.includes(r)) ?? false;
   const platformOnly = isPlatformAdmin && !inCompany;
-  const query = useQuery({ queryKey: KEY, queryFn: loadWorkspace, enabled: Boolean(roles && myUserId) && !platformOnly });
+  // A person from a partner company (subcontractor, design firm, owner): their projects only.
+  const isPartner = Boolean(roles?.includes("external")) && !roles?.some((r) => r === "staff" || r === "company-admin");
+  const query = useQuery({ queryKey: KEY, queryFn: () => loadWorkspace(isPartner), enabled: Boolean(roles && myUserId) && !platformOnly });
   const current = useSyncExternalStore(subscribe, () => memoryCurrent);
 
   const isAdmin = roles?.includes("company-admin") ?? false;
@@ -175,7 +179,7 @@ export function useProjects() {
   const ws = query.data;
   const myRows = (ws?.team ?? []).filter((r) => r.userId === myUserId && r.status === "active");
   const projects = (ws?.projects ?? [])
-    .filter((p) => isAdmin || myRows.some((r) => r.projectId === p.ItemId))
+    .filter((p) => accountCan(roles, "project.list_all") || myRows.some((r) => r.projectId === p.ItemId))
     .sort((a, b) => a.number.localeCompare(b.number));
   const project = projects.find((p) => p.ItemId === current) ?? projects.find((p) => stageOf(p) !== "archived") ?? projects[0];
   const myMember = ws?.people.find((m) => m.userId === myUserId);
@@ -190,6 +194,7 @@ export function useProjects() {
     isPlatformAdmin,
     platformOnly,
     isStaff,
+    isPartner,
     projects,
     project,
     myRole,
@@ -197,8 +202,8 @@ export function useProjects() {
     myCompanyName: myMember?.companyName ?? ws?.companies.find((c) => c.relation === "self")?.name,
     // Company admins, and staff their admin allowed, create projects; a project's team is changed by
     // a company admin or that project's PM. The projects Function checks the same rules on the server.
-    canCreate: isAdmin || (isStaff && Boolean(myMember?.canCreateProjects)),
-    canEditTeam: isAdmin || myRole === "project-manager",
+    canCreate: accountCan(roles, "project.create") || (accountCan(roles, "project.create_when_allowed") && Boolean(myMember?.canCreateProjects)),
+    canEditTeam: accountCan(roles, "project.manage_members_any") || projectCan(myRole, "project.manage_members"),
     seesCost: isStaff
   };
 }

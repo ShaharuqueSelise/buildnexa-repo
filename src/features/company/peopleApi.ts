@@ -29,7 +29,16 @@ export type Person = {
   isMe?: boolean;
 };
 
-export type Company = { ItemId: string; name: string; relation: Relation; brandColor?: string };
+export type Company = {
+  ItemId: string;
+  name: string;
+  relation: Relation;
+  brandColor?: string;
+  tradeCodes?: string[];
+  address?: { city?: string } | null;
+};
+export type PartnerRelation = Exclude<Relation, "self">;
+export type CompanyInput = { name: string; tradeCodes: string[]; city: string };
 export type Project = { ItemId: string; number: string; name: string; status?: string };
 export type Membership = { ItemId: string; projectId: string; userId: string; orgMemberId?: string; role: string };
 
@@ -76,3 +85,8 @@ export const useDeactivate = () => useAction<{ memberId: string }>("deactivate")
 export const useReactivate = () => useAction<{ memberId: string }>("reactivate");
 /** Stories 3.1/3.2: make a staff member a company admin, or turn an admin back into staff with `role`. */
 export const useSetAdmin = () => useAction<{ memberId: string; isAdmin: boolean; role?: string }>("setAdmin");
+
+// Partner companies (spec: the company admin registers the outside companies its people come from).
+export const useAddCompany = () => useAction<CompanyInput & { relation: PartnerRelation }>("addCompany");
+export const useUpdateCompany = () => useAction<CompanyInput & { companyId: string }>("updateCompany");
+export const useRemoveCompany = () => useAction<{ companyId: string }>("removeCompany");

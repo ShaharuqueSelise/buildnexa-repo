@@ -10,10 +10,14 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..", "functions");
 const START = "// >>> shared: functions/_shared/blocks.js (copied by tools/sync-functions.mjs, do not edit here)";
 const END = "// <<< shared";
 
-const shared = readFileSync(join(root, "_shared", "blocks.js"), "utf8")
-  .replace(/\r\n/g, "\n")
-  .replace(/^export (?=(async function|function|const|class) )/gm, "")
-  .trimEnd();
+// blocks.js (service identity, data access, handler) + permissions.js (the permission table, also
+// imported by the screens), with `export ` removed.
+const read = (file) =>
+  readFileSync(join(root, "_shared", file), "utf8")
+    .replace(/\r\n/g, "\n")
+    .replace(/^export (?=(async function|function|const|class) )/gm, "")
+    .trimEnd();
+const shared = `${read("blocks.js")}\n\n${read("permissions.js")}`;
 const block = `${START}\n${shared}\n${END}`;
 
 const check = process.argv.includes("--check");

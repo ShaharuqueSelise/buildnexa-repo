@@ -8,6 +8,11 @@
 // - Every operation is Custom. A rule set for people always starts with
 //   `tenantRole In Auth.roles`; the service identity (role `cpm-service`) has its own rule set.
 // - Delete is Custom with no rule set: nobody deletes (records are voided).
+// - `blocks data rules deploy` matches live policies by schema + policy NAME and never deletes a
+//   live policy that is not in rules.json. When a policy is dropped or renamed here, delete the old
+//   one by id (`blocks data rules policy get <schema>` → `blocks data rules policy delete <id>`),
+//   then deploy again, and compare with `blocks data rules pull` (it overwrites rules.json, so
+//   regenerate after). Seen 2026-11-22: old "company-member" reads and the Company admin edit stayed live.
 // - Blocks has no Enum or "required" in the schema file: enums are Strings (values listed in the
 //   docs, checked in Functions); required fields are enforced by the Functions that write them.
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -169,19 +174,28 @@ const policy = (schemaName, operation, policyName, rules) => ({
   isAllowPolicy: true
 });
 
-// Rule sets per schema and operation. "member" = anyone in this company organization.
+// Rule sets per schema and operation (docs/permissions/PERMISSIONS.md).
+// - The company's own staff and admins read the company's projects, teams, people and partner
+//   companies directly. Partners (role `external`) do NOT: they see only their own projects,
+//   through the projects Function's `workspace` action (spec: subcontractors never see unrelated
+//   project information).
+// - Project content (activity history, comments, and every module after them) is read through
+//   Functions that check the person's role on that project, so nobody reads it directly.
+// - Every write goes through a Function (the service identity). Company admins have no direct edit
+//   on Company: the rule only looked at the stored row, so it let them rewrite the company tag
+//   (isolation finding F1).
 const SERVICE = ["service", [hasRole("cpm-service")]];
-const MEMBER = ["company-member", [inTenant]];
+const STAFF = ["company-staff", [inTenant, hasRole("staff")]];
 const ADMIN = ["company-admin", [inTenant, hasRole("company-admin")]];
 
 const access = {
-  Company: { view: [MEMBER, SERVICE], create: [SERVICE], edit: [ADMIN, SERVICE] },
-  OrgMember: { view: [MEMBER, SERVICE], create: [SERVICE], edit: [SERVICE] },
-  Project: { view: [MEMBER, SERVICE], create: [SERVICE], edit: [SERVICE] },
-  ProjectMember: { view: [MEMBER, SERVICE], create: [SERVICE], edit: [SERVICE] },
+  Company: { view: [STAFF, ADMIN, SERVICE], create: [SERVICE], edit: [SERVICE] },
+  OrgMember: { view: [STAFF, ADMIN, SERVICE], create: [SERVICE], edit: [SERVICE] },
+  Project: { view: [STAFF, ADMIN, SERVICE], create: [SERVICE], edit: [SERVICE] },
+  ProjectMember: { view: [STAFF, ADMIN, SERVICE], create: [SERVICE], edit: [SERVICE] },
   Sequence: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
-  ActivityEvent: { view: [MEMBER, SERVICE], create: [SERVICE] },
-  Comment: { view: [MEMBER, SERVICE], create: [SERVICE], edit: [SERVICE] }
+  ActivityEvent: { view: [SERVICE], create: [SERVICE] },
+  Comment: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] }
 };
 
 const security = [];

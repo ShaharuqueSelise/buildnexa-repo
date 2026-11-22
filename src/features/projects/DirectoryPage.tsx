@@ -8,7 +8,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Building2, Download, Loader2, RefreshCw, Trash2, UserMinus, UserPlus, Users } from "lucide-react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
-import { PROJECT_ROLES, ROLE_LABEL } from "../../lib/roles";
+import { PROJECT_ROLES, ROLE_LABEL, defaultRoleFor, rolesFor } from "../../lib/roles";
 import { FunctionRefused } from "../../lib/blocks/functions";
 import {
   Avatar, Badge, Button, CompanyChip, Dialog, Empty, Field, Kpi, Note, PageTitle, Panel, SearchInput, Select, StatusBadge, Tabs,
@@ -174,7 +174,7 @@ export function DirectoryPage({ onNavigate }: Nav) {
                         <td onClick={(e) => e.stopPropagation()}>
                           {editable ? (
                             <div className="m-dir-role">
-                              <Select value={p.role} disabled={rowBusy} onChange={(v) => void run(p.ItemId, () => setRole.mutateAsync({ projectId: project.ItemId, projectMemberId: p.ItemId, role: v }), fmt(t("dir.roleChanged"), { name: p.name, role: roleLabel(v) }))} options={PROJECT_ROLES.map((r) => ({ value: r, label: roleLabel(r) }))} />
+                              <Select value={p.role} disabled={rowBusy} onChange={(v) => void run(p.ItemId, () => setRole.mutateAsync({ projectId: project.ItemId, projectMemberId: p.ItemId, role: v }), fmt(t("dir.roleChanged"), { name: p.name, role: roleLabel(v) }))} options={rolesFor(p.companyRelation).map((r) => ({ value: r, label: roleLabel(r) }))} />
                               <span className="m-mono m-muted m-small">{p.role}</span>
                             </div>
                           ) : (
@@ -190,7 +190,7 @@ export function DirectoryPage({ onNavigate }: Nav) {
                         <td onClick={(e) => e.stopPropagation()} className="m-right">
                           <span className="m-row" style={{ justifyContent: "flex-end" }}>
                             {rowBusy ? <Loader2 className="spin" size={15} /> : null}
-                            {p.status === "Invited" && p.member ? <Button small variant="secondary" icon={<RefreshCw size={13} />} disabled={!isAdmin || isMe || rowBusy} title={isAdmin ? undefined : t("dir.adminOnly")} onClick={() => void run(p.ItemId, () => resend.mutateAsync({ memberId: p.member!.ItemId }), fmt(t("coadmin.resent"), { email: p.email ?? "" }))}>{t("coadmin.resend")}</Button> : null}
+                            {p.status === "Invited" && p.member && isAdmin ? <Button small variant="secondary" icon={<RefreshCw size={13} />} disabled={isMe || rowBusy} onClick={() => void run(p.ItemId, () => resend.mutateAsync({ memberId: p.member!.ItemId }), fmt(t("coadmin.resent"), { email: p.email ?? "" }))}>{t("coadmin.resend")}</Button> : null}
                             {p.status === "Deactivated" && p.member ? (
                               <Button small variant="ghost" disabled={!isAdmin || isMe || rowBusy} onClick={() => void run(p.ItemId, () => reactivate.mutateAsync({ memberId: p.member!.ItemId }), fmt(t("coadmin.reactivated"), { name: p.name }))}>{t("coadmin.reactivate")}</Button>
                             ) : p.status === "Active" && isAdmin && p.member ? (
@@ -310,6 +310,8 @@ function AddPeopleDialog({ candidates, companies, isAdmin, projectId, onClose, o
   const roleLabel = (r: string) => (r in ROLE_LABEL ? t(ROLE_LABEL[r as keyof typeof ROLE_LABEL].label) : r);
   const company = companies.find((c) => c.ItemId === member?.companyId);
   const relation = company?.relation;
+  // People from partner companies only get the partner roles (the server checks the same).
+  const allowed = rolesFor(member?.companyRelation ?? relation);
   const mismatch = (relation === "sub" && role !== "field-user") || (relation === "design" && role !== "design-reviewer") || (relation === "owner" && role !== "owner-viewer");
 
   async function send() {
@@ -334,10 +336,10 @@ function AddPeopleDialog({ candidates, companies, isAdmin, projectId, onClose, o
     >
       <div className="m-form">
         <Field label={t("dir.f.person")} wide hint={candidates.length ? undefined : t("dir.everyoneOn")}>
-          <Select value={memberId} placeholder={t("dir.choosePerson")} onChange={(v) => { setMemberId(v); const m = candidates.find((x) => x.ItemId === v); if (m?.defaultRole) setRole(m.defaultRole); }} options={candidates.map((m) => ({ value: m.ItemId, label: `${personName(m)} · ${m.companyName ?? ""}` }))} />
+          <Select value={memberId} placeholder={t("dir.choosePerson")} onChange={(v) => { setMemberId(v); const m = candidates.find((x) => x.ItemId === v); const ok = rolesFor(m?.companyRelation); setRole(m?.defaultRole && ok.includes(m.defaultRole as (typeof ok)[number]) ? m.defaultRole : defaultRoleFor(m?.companyRelation)); }} options={candidates.map((m) => ({ value: m.ItemId, label: `${personName(m)} · ${m.companyName ?? ""}` }))} />
         </Field>
         <Field label={t("coadmin.col.company")}><span className="m-small" style={{ paddingTop: 8 }}>{company?.name ?? "—"}</span></Field>
-        <Field label={t("dir.col.role")}><Select value={role} onChange={setRole} options={PROJECT_ROLES.map((r) => ({ value: r, label: `${roleLabel(r)} (${r})` }))} /></Field>
+        <Field label={t("dir.col.role")}><Select value={role} onChange={setRole} options={allowed.map((r) => ({ value: r, label: `${roleLabel(r)} (${r})` }))} /></Field>
         <div className="m-field-wide m-stack-v">
           {mismatch && company ? <Note tone="warn">{fmt(t("dir.mismatch"), { company: company.name, role: roleLabel(role) })}</Note> : null}
           {error ? <Note tone="danger">{error}</Note> : null}

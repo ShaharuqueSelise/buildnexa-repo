@@ -1,12 +1,13 @@
 // Company admin (ADM-01), built from the demo app's Company admin page (mock/src/mock/pages/
 // CompanyAdminPage.tsx): same layout, columns, buttons and dialogs, with real data from the
-// company-people Function. Only the People tab is built so far; the other tabs say when they come.
+// company-people Function. Built: People, Companies (partner companies; not in the demo app) and
+// Roles (read from the shared permission table). The other tabs say when they come.
 import { useMemo, useState } from "react";
 import { Building2, Download, Loader2, Mail, RotateCcw, UserMinus, UserPlus, Users } from "lucide-react";
 import { useMyRoles } from "../profile/useCurrentUser";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import type { TranslationKey } from "../../lib/i18n/dictionary";
-import { PROJECT_ROLES, ROLE_LABEL, isProjectRole } from "../../lib/roles";
+import { ROLE_LABEL, defaultRoleFor, isProjectRole, rolesFor } from "../../lib/roles";
 import {
   Avatar, Badge, Button, CompanyChip, Dialog, Empty, Field, KeyValue, Kpi, Note, PageTitle, ReleaseTag, SearchInput, Select,
   StatusBadge, Tabs, Toasts, colorFor, downloadCsv, fmt, useToasts
@@ -17,9 +18,11 @@ import {
   personStatus, useDeactivate, useInvitePerson, usePeople, useReactivate, useResendInvite, useSetAdmin, useSetDefaultRole
 } from "./peopleApi";
 import type { Company, Membership, Person, Project } from "./peopleApi";
+import { CompaniesTab } from "./CompaniesTab";
+import { RolesTab } from "./RolesTab";
 import "./CompanyAdmin.css";
 
-type TabKey = "people" | "roles" | "reference" | "branding" | "languages" | "security" | "billing" | "templates";
+type TabKey = "people" | "companies" | "roles" | "reference" | "branding" | "languages" | "security" | "billing" | "templates";
 
 
 const shortDate = (iso?: string) =>
@@ -63,6 +66,7 @@ export function CompanyAdminPage() {
         onChange={setTab}
         tabs={[
           { key: "people", label: tabLabel("coadmin.tab.people") },
+          { key: "companies", label: tabLabel("coadmin.tab.companies") },
           { key: "roles", label: tabLabel("coadmin.tab.roles") },
           { key: "reference", label: tabLabel("coadmin.tab.reference") },
           { key: "branding", label: tabLabel("coadmin.tab.branding") },
@@ -73,7 +77,9 @@ export function CompanyAdminPage() {
         ]}
       />
       {tab === "people" ? <PeopleTab query={people} /> : null}
-      {tab === "roles" || tab === "reference" || tab === "branding" || tab === "languages" ? later("coadmin.whenPhase5") : null}
+      {tab === "companies" ? (people.data ? <CompaniesTab data={people.data} /> : people.error ? <Note tone="danger">{(people.error as Error).message}</Note> : <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>) : null}
+      {tab === "roles" ? <RolesTab /> : null}
+      {tab === "reference" || tab === "branding" || tab === "languages" ? later("coadmin.whenPhase5") : null}
       {tab === "security" || tab === "billing" || tab === "templates" ? later("coadmin.whenR2") : null}
     </div>
   );
@@ -242,7 +248,7 @@ function PeopleTab({ query }: { query: ReturnType<typeof usePeople> }) {
                         >
                           {role || p.isCompanyAdmin ? null : <option value="">{t("coadmin.chooseRole")}</option>}
                           {p.isCompanyAdmin || canBeAdmin(p) ? <option value="company-admin">{roleLabel("company-admin")}</option> : null}
-                          {PROJECT_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+                          {rolesFor(p.companyRelation).map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
                         </select>
                       )}
                     </td>
@@ -418,8 +424,19 @@ function InviteDialog({ companies, projects, taken, onClose, onInvited }: {
           <input className="m-input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.example" inputMode="email" />
         </Field>
         <Field label={t("coadmin.jobTitle")}><input className="m-input" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder={t("coadmin.jobTitlePlaceholder")} /></Field>
-        <Field label={t("coadmin.col.company")}><Select value={companyId} onChange={setCompanyId} options={companies.map((c) => ({ value: c.ItemId, label: c.name }))} /></Field>
-        <Field label={t("coadmin.col.defaultRole")}><Select value={role} onChange={setRole} options={PROJECT_ROLES.map((r) => ({ value: r, label: t(ROLE_LABEL[r].label) }))} /></Field>
+        <Field label={t("coadmin.col.company")}>
+          <Select
+            value={companyId}
+            onChange={(v) => {
+              setCompanyId(v);
+              // Partner companies' people only get the partner roles; pick the one that fits.
+              const ok = rolesFor(companies.find((c) => c.ItemId === v)?.relation);
+              if (!ok.includes(role as (typeof ok)[number])) setRole(defaultRoleFor(companies.find((c) => c.ItemId === v)?.relation));
+            }}
+            options={companies.map((c) => ({ value: c.ItemId, label: c.name }))}
+          />
+        </Field>
+        <Field label={t("coadmin.col.defaultRole")}><Select value={role} onChange={setRole} options={rolesFor(companies.find((c) => c.ItemId === companyId)?.relation).map((r) => ({ value: r, label: t(ROLE_LABEL[r].label) }))} /></Field>
         <Field label={t("coadmin.addToProjects")} wide>
           <div className="m-coadmin-checks">
             {projects.length === 0 ? <span className="m-muted m-small">{t("coadmin.noProjectsYet")}</span> : projects.map((p) => (

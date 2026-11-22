@@ -1,15 +1,9 @@
 // Project roles, as in the demo app (mock/src/mock/data.ts ROLES), keyed by the system slug that
 // ProjectMember.role and OrgMember.defaultRole store. Labels are translation keys.
 import type { TranslationKey } from "./i18n/dictionary";
+import { PROJECT_ROLES, mayHoldProjectRole } from "./permissions";
 
-export const PROJECT_ROLES = [
-  "project-manager",
-  "superintendent",
-  "document-controller",
-  "field-user",
-  "design-reviewer",
-  "owner-viewer"
-] as const;
+export { PROJECT_ROLES };
 
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
@@ -45,3 +39,15 @@ export function isProjectRole(value: unknown): value is ProjectRole {
   return typeof value === "string" && (PROJECT_ROLES as readonly string[]).includes(value);
 }
 
+/** The project roles a person may hold, by their company's relation (partners: partner roles only). */
+export function rolesFor(companyRelation: string | undefined): ProjectRole[] {
+  return PROJECT_ROLES.filter((r) => mayHoldProjectRole(companyRelation, r));
+}
+
+/** The usual project role for someone from a company of this kind (the demo app's defaults). */
+export function defaultRoleFor(companyRelation: string | undefined): ProjectRole {
+  if (companyRelation === "design") return "design-reviewer";
+  if (companyRelation === "owner") return "owner-viewer";
+  if (companyRelation === "sub" || companyRelation === "supplier") return "field-user";
+  return "superintendent";
+}

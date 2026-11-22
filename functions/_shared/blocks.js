@@ -11,8 +11,9 @@
 //   (docs/architecture/13 §4.1), compare-and-set as proven by spike M1b.
 // - handle: the common handler shell (errors, logging, never a token in the answer).
 
+// - permissions.js (next to this file) is copied in after it: PROJECT_ROLES, projectCan, accountCan.
+
 export const API = "https://blocksapi.slsblx.com";
-export const PROJECT_ROLES = ["project-manager", "superintendent", "document-controller", "field-user", "design-reviewer", "owner-viewer"];
 
 export class Refused extends Error {
   constructor(code, message) {
@@ -60,9 +61,38 @@ export function client(ctx, token) {
     const data = await gql(`query q($input: DynamicQueryInput) { ${q}(input: $input) { items { tenantRole ${fields} } } }`, { input: { pageNo: 1, pageSize: 1000 } });
     return data?.[q]?.items ?? [];
   }
-  // The service reads every tenant; always filter to the caller's company.
-  async function list(schema, fields, tenantRole) {
-    return (await listAll(schema, fields)).filter((r) => r.tenantRole === tenantRole);
+  // The service reads every tenant, so every read names the caller's company: the gateway filters
+  // on the server (DynamicQueryInput.filter, a JSON string) and the result is checked again here.
+  // `where` adds equality filters, e.g. { projectId }.
+  async function list(schema, fields, tenantRole, where = {}) {
+    const q = `get${schema}s`;
+    const filter = JSON.stringify({ ...where, tenantRole });
+    const data = await gql(`query q($input: DynamicQueryInput) { ${q}(input: $input) { items { tenantRole ${fields} } } }`, { input: { pageNo: 1, pageSize: 1000, filter } });
+    const items = data?.[q]?.items ?? [];
+    return items.filter((r) => r.tenantRole === tenantRole && Object.entries(where).every(([k, v]) => r[k] === v));
+  }
+  // Activity history (audit trail): who did what, when. Never blocks the action it records.
+  async function audit(me, entry) {
+    try {
+      await insert("ActivityEvent", {
+        tenantRole: me.tenantRole,
+        projectId: entry.projectId,
+        recordType: entry.recordType,
+        recordId: entry.recordId,
+        recordNumber: entry.recordNumber,
+        action: entry.action,
+        actorUserId: me.userId,
+        actorName: entry.actorName,
+        at: new Date().toISOString(),
+        changedFields: entry.changedFields,
+        beforeJson: entry.before === undefined ? undefined : JSON.stringify(entry.before),
+        afterJson: entry.after === undefined ? undefined : JSON.stringify(entry.after),
+        summary: entry.summary,
+        source: "app"
+      });
+    } catch {
+      // The change itself succeeded; a missing history line must not turn it into an error.
+    }
   }
   async function insert(schema, input) {
     const data = await gql(`mutation m($input: ${schema}InsertInput!) { insert${schema}(input: $input) { acknowledged itemId } }`, { input });
@@ -88,7 +118,7 @@ export function client(ctx, token) {
     const changed = await updateWhere(schema, { ItemId: { eq: itemId } }, tenantRole, input);
     if (changed === 0) throw new Error(`update${schema} matched no row`);
   }
-  return { iam, gql, insert, list, listAll, update, updateWhere };
+  return { iam, gql, insert, list, listAll, update, updateWhere, audit };
 }
 
 // A company's tag (its tenant role): "company-<short name>", or "co-<short name>" for companies
@@ -104,7 +134,11 @@ export function caller(ctx) {
     organizationId: ctx.context.organizationId,
     tenantRole: companyRoles[0],
     isAdmin: roles.includes("company-admin"),
-    isStaff: roles.includes("staff") || roles.includes("company-admin")
+    isStaff: roles.includes("staff") || roles.includes("company-admin"),
+    // A person from a partner company (subcontractor, design firm, owner): sees only their projects.
+    isPartner: roles.includes("external") && !roles.includes("staff") && !roles.includes("company-admin"),
+    // IAM account roles, for accountCan() (company and platform permissions).
+    roles
   };
 }
 
