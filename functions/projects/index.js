@@ -8,8 +8,8 @@
 //   { action: "addMembers", projectId, team: [{ orgMemberId, role }] }
 //   { action: "setRole", projectId, projectMemberId, role }
 //   { action: "removeMember", projectId, projectMemberId }
-//   { action: "notificationSettings" }                       -> { emailEnabled }
-//   { action: "setNotificationSettings", emailEnabled }      -> { emailEnabled }
+//   { action: "notificationSettings" }                       -> { emailEnabled, reminderEmails }
+//   { action: "setNotificationSettings", emailEnabled?, reminderEmails? } -> { emailEnabled, reminderEmails }
 //     The caller's own notification settings (one row per person per company). Email is on unless
 //     they turn it off; the bell is always on. The rfis Function reads them before it emails.
 //
@@ -825,22 +825,30 @@ async function workspace(db, me) {
 }
 
 // ---------- my notification settings ----------
-const PREF_FIELDS = "ItemId userId emailEnabled updatedAt";
+// Email on or off as a whole, and reminder emails (RFI due soon / overdue) on or off; unset = on.
+const PREF_FIELDS = "ItemId userId emailEnabled reminderEmails updatedAt";
+const settingsOf = (row) => ({ emailEnabled: row?.emailEnabled !== false, reminderEmails: row?.reminderEmails !== false });
+
+async function myPreference(db, me) {
+  const rows = await db.list("NotificationPreference", PREF_FIELDS, me.tenantRole, { userId: me.userId });
+  return rows.sort((a, b) => String(a.ItemId).localeCompare(String(b.ItemId)))[0];
+}
 
 async function notificationSettings(db, me) {
-  const rows = await db.list("NotificationPreference", PREF_FIELDS, me.tenantRole, { userId: me.userId });
-  return { ok: true, emailEnabled: rows[0]?.emailEnabled !== false };
+  return { ok: true, ...settingsOf(await myPreference(db, me)) };
 }
 
 async function setNotificationSettings(db, me, args) {
-  if (typeof args.emailEnabled !== "boolean") throw new Refused("BAD_REQUEST", "Choose whether you want emails.");
-  const rows = (await db.list("NotificationPreference", PREF_FIELDS, me.tenantRole, { userId: me.userId }))
-    .sort((a, b) => String(a.ItemId).localeCompare(String(b.ItemId)));
-  const values = { emailEnabled: args.emailEnabled, updatedAt: new Date().toISOString() };
+  const changes = {};
+  if (typeof args.emailEnabled === "boolean") changes.emailEnabled = args.emailEnabled;
+  if (typeof args.reminderEmails === "boolean") changes.reminderEmails = args.reminderEmails;
+  if (!Object.keys(changes).length) throw new Refused("BAD_REQUEST", "Choose whether you want emails.");
+  const row = await myPreference(db, me);
+  const values = { ...changes, updatedAt: new Date().toISOString() };
   // Two first saves at once can make two rows; every reader uses the first by id, and so does this.
-  if (rows[0]) await db.update("NotificationPreference", rows[0].ItemId, me.tenantRole, values);
+  if (row) await db.update("NotificationPreference", row.ItemId, me.tenantRole, values);
   else await db.insert("NotificationPreference", { tenantRole: me.tenantRole, userId: me.userId, ...values });
-  return { ok: true, emailEnabled: args.emailEnabled };
+  return { ok: true, ...settingsOf({ ...row, ...changes }) };
 }
 
 export default async function handler(input, ctx) {

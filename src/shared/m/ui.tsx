@@ -278,28 +278,39 @@ export function Checkbox({ checked, onChange, label }: { checked: boolean; onCha
   );
 }
 
-export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: ReactNode }) {
+export function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: ReactNode; disabled?: boolean }) {
   return (
-    <label className="m-toggle">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className="m-toggle" style={disabled ? { opacity: 0.55, cursor: "not-allowed" } : undefined}>
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       <span className="m-toggle-track"><span /></span>
       {label}
     </label>
   );
 }
 
-/** Builds and downloads a CSV from rows. */
-export function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
+/** Builds and downloads a CSV from rows (the first row's keys are the headers).
+ * UTF-8 with a byte-order mark and CRLF line ends, so Excel shows accents (Müller, Lindqvist).
+ * Text that Excel would run as a formula (starting with = + - @ or a tab) gets a leading ' so a
+ * subject typed as "=HYPERLINK(…)" stays text; numbers are written as they are. */
+export function downloadCsv(filename: string, rows: Record<string, unknown>[], headers?: string[]) {
   if (rows.length === 0) return;
-  const headers = Object.keys(rows[0] as Record<string, unknown>);
-  const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const csv = [headers.join(","), ...rows.map((r) => headers.map((h) => esc(r[h])).join(","))].join("\n");
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const cols = headers ?? Object.keys(rows[0] as Record<string, unknown>);
+  const keys = Object.keys(rows[0] as Record<string, unknown>);
+  const cell = (v: unknown) => {
+    if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
+    let s = String(v ?? "");
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+    return `"${s.replace(/"/g, '""')}"`;
+  };
+  const csv = [cols.map(cell).join(","), ...rows.map((r) => keys.map((k) => cell(r[k])).join(","))].join("\r\n");
+  const url = URL.createObjectURL(new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** Bottom-right toasts, as in the demo. */

@@ -4,7 +4,8 @@
 // Function, which decides who may do what; the buttons shown here follow its `can` answer.
 // Files (Part 3): on the question and on every response, uploaded through the rfis Function's
 // links (features/files). Phone layout: the list becomes cards below 640 px (RfisPage.css).
-// Not real yet (later parts of the RFI work): reminders, CSV export; and from later releases:
+// Part 4: CSV export of the list as filtered (rfiCsvRows; the reminders themselves run on the
+// server). Not real yet, from later releases:
 // board view, bulk reassign, PDF with letterhead, linked sheets, change events, related RFIs,
 // reply by email.
 import { useMemo, useState } from "react";
@@ -20,7 +21,7 @@ import { projectCan } from "../../lib/permissions";
 import { addWorkingDays, todayIso, workingDaysBetween } from "../../lib/workdays";
 import {
   Avatar, Badge, Button, Checkbox, Dialog, Empty, Field, Kpi, KeyValue, Note, PageTitle, Panel, PersonChip, ReleaseTag, SearchInput,
-  Segmented, Select, Tabs, Timeline, Toasts, colorFor, cx, fmt, useToasts
+  Segmented, Select, Tabs, Timeline, Toasts, colorFor, cx, downloadCsv, fmt, useToasts
 } from "../../shared/m/ui";
 import type { Tone, ToastTone } from "../../shared/m/ui";
 import { personName, useProjects } from "../projects/projectsApi";
@@ -46,6 +47,36 @@ const fmtDateTime = (iso?: string) =>
   iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const isOverdue = (r: RfiRow, today: string) => r.status === "open" && Boolean(r.dueDate) && String(r.dueDate) < today;
 const newRequestId = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+// The CSV of the list (Part 4): exactly the rows on screen, with what the role sees on screen (the
+// Function leaves cost and schedule impact out for roles that may not see them). No file links:
+// they expire after an hour. Dates are yyyy-mm-dd so Excel sorts them.
+export function rfiCsv(rows: RfiRow[], { t, today, seesCost, nameOf }: { t: T; today: string; seesCost: boolean; nameOf: (userId?: string, fallback?: string) => string }) {
+  const headers = [
+    "Number", "Subject", "Status", "Priority", "Ball in court", "Due date", "Working days overdue", "Discipline", "Location",
+    "Raised by", "Raised on", "Answered on", "Closed on", "Files",
+    ...(seesCost ? ["Cost impact", "Cost amount", "Schedule impact", "Schedule days"] : [])
+  ];
+  const impact = (v?: Impact) => (v ? t(`rfi.impact.${v}` as TranslationKey) : "");
+  const data = rows.map((r) => ({
+    number: r.number || t("rfi.status.draft"),
+    subject: r.subject,
+    status: t(`rfi.status.${r.status}` as TranslationKey),
+    priority: r.priority ? t(`rfi.priority.${r.priority}` as TranslationKey) : "",
+    ball: LIVE.includes(r.status) && r.ballInCourtUserId ? nameOf(r.ballInCourtUserId, r.ballInCourtName) : "",
+    due: r.dueDate ?? "",
+    overdue: isOverdue(r, today) ? workingDaysBetween(String(r.dueDate), today) : "",
+    discipline: r.discipline ?? "",
+    location: r.location ?? "",
+    raisedBy: nameOf(r.createdByUserId, r.createdByName),
+    raisedOn: String(r.createdAt ?? "").slice(0, 10),
+    answered: String(r.answeredDate ?? "").slice(0, 10),
+    closed: String(r.closedDate ?? "").slice(0, 10),
+    files: r.attachments?.length ?? 0,
+    ...(seesCost ? { cost: impact(r.costImpact), amount: r.costImpactAmount ?? "", schedule: impact(r.scheduleImpact), days: r.scheduleImpactDays ?? "" } : {})
+  }));
+  return { headers, data };
+}
 
 function median(values: number[]): number | undefined {
   if (values.length === 0) return undefined;
@@ -145,7 +176,8 @@ function RfiListView({ ctx }: { ctx: Ctx }) {
   const [q, setQ] = useState("");
   const [ball, setBall] = useState("");
   const [discipline, setDiscipline] = useState("");
-  const [overdueOnly, setOverdueOnly] = useState(false);
+  // The manager's "RFIs overdue" reminder links here with ?overdue=1.
+  const [overdueOnly, setOverdueOnly] = useState(() => new URLSearchParams(window.location.search).get("overdue") === "1");
   const [ballOnMe, setBallOnMe] = useState(false);
   const [createdByMe, setCreatedByMe] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "number", dir: -1 });
@@ -207,7 +239,19 @@ function RfiListView({ ctx }: { ctx: Ctx }) {
         subtitle={t("rfi.subtitle")}
         actions={
           <>
-            <Button variant="secondary" icon={<Download size={15} />} disabled title={t("rfi.later.csv")}>{t("coadmin.exportCsv")}</Button>
+            <Button
+              variant="secondary"
+              icon={<Download size={15} />}
+              disabled={filtered.length === 0}
+              title={filtered.length ? fmt(t("rfi.csvTitle"), { count: filtered.length }) : t("rfi.csvEmpty")}
+              onClick={() => {
+                const { headers, data } = rfiCsv(filtered, { t, today, seesCost: showCost, nameOf });
+                downloadCsv(`${project.number || "project"}-RFIs-${today}.csv`, data, headers);
+                ctx.toast(fmt(t("rfi.csvDone"), { count: data.length }));
+              }}
+            >
+              {t("coadmin.exportCsv")}
+            </Button>
             <Button icon={<Plus size={15} />} onClick={() => setShowNew(true)} disabled={!canCreate} title={createWhy}>{t("rfi.new")}</Button>
           </>
         }
@@ -753,8 +797,6 @@ function RfiDetailView({ ctx, rfiId }: { ctx: Ctx; rfiId: string }) {
 
           <Panel title={<span className="m-row"><AlarmClock size={16} />{t("rfi.comingNext")}</span>}>
             <ul className="m-small m-muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
-              <li>{t("rfi.later.reminders")}</li>
-              <li>{t("rfi.later.csv")}</li>
               <li>{t("rfi.later.pdf")} <ReleaseTag release="R2" /></li>
               <li>{t("rfi.later.links")} <ReleaseTag release="R2" /></li>
             </ul>

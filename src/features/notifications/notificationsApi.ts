@@ -102,9 +102,9 @@ export function useInbox(unreadOnly: boolean) {
   });
 }
 
-export type NotificationSettings = { emailEnabled: boolean };
+export type NotificationSettings = { emailEnabled: boolean; reminderEmails: boolean };
 
-/** My notification settings (email on or off; the bell is always on). */
+/** My notification settings: email on or off, reminder emails on or off; the bell is always on. */
 export function useNotificationSettings() {
   return useQuery({
     queryKey: SETTINGS_KEY,
@@ -115,7 +115,7 @@ export function useNotificationSettings() {
 export function useSetNotificationSettings() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (settings: NotificationSettings) => callFunction<NotificationSettings>(FUNCTIONS.projects, { action: "setNotificationSettings", ...settings }),
-    onSuccess: (saved) => queryClient.setQueryData(SETTINGS_KEY, { emailEnabled: saved.emailEnabled })
+    mutationFn: (settings: Partial<NotificationSettings>) => callFunction<NotificationSettings>(FUNCTIONS.projects, { action: "setNotificationSettings", ...settings }),
+    onSuccess: (saved) => queryClient.setQueryData(SETTINGS_KEY, { emailEnabled: saved.emailEnabled, reminderEmails: saved.reminderEmails !== false })
   });
 }

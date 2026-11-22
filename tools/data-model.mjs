@@ -167,6 +167,9 @@ const entities = {
     ...str("internalNote"),
     ...date("lastResponseAt"),
     f("attachments", "Attachment", true), // files of the question (Part 3); kept once submitted
+    // Reminders (Part 4): the due date the "due soon" reminder was sent for, and the project-local
+    // day ("yyyy-MM-dd") of the last overdue reminder. Written only by the reminder run.
+    ...str("dueSoonNotifiedFor", "overdueNoticeLastDate"),
     f("lastChange", "LastChange"),
     ...bool("isVoided"),
     ...str("voidReason", "searchText")
@@ -192,6 +195,7 @@ const entities = {
     ...TENANT,
     ...id("userId"),
     ...bool("emailEnabled"),
+    ...bool("reminderEmails"), // due-soon and overdue reminders by email (only while emailEnabled); unset = on
     ...date("updatedAt")
   ],
   Comment: [

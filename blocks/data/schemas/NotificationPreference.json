@@ -19,6 +19,11 @@
       "isArray": false
     },
     {
+      "name": "reminderEmails",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
       "name": "updatedAt",
       "type": "DateTime",
       "isArray": false

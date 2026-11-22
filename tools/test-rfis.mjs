@@ -475,5 +475,106 @@ await test("people who can't open the RFI get no file links and no upload links"
   expect(Object.keys(links.files).length >= 3, `owner links ${JSON.stringify(links.files)}`);
 });
 
+// ---------- reminders (Part 4) ----------
+// The reminder run reads the clock, so these tests set it: 2030-01-03 is a Thursday, the RFIs are
+// due Monday 2030-01-07 (2 working days later). Berlin is UTC+1 in January.
+const RealDate = Date;
+function setNow(iso) {
+  const at = RealDate.parse(iso);
+  globalThis.Date = class extends RealDate {
+    constructor(...a) {
+      if (a.length) super(...a);
+      else super(at);
+    }
+    static now() {
+      return at;
+    }
+  };
+}
+const R = "p3";
+rows("Project").push({ ItemId: R, tenantRole: T, number: "PRJ-003", name: "Reminders", status: "active", timezone: "Europe/Berlin" });
+for (const userId of ["pm", "supt", "design", "owner"]) {
+  const p = people[userId];
+  rows("ProjectMember").push({ ItemId: `pm3-${userId}`, tenantRole: T, projectId: R, userId, displayName: userId.toUpperCase(), email: `${userId}@test.local`, companyId: p.company, companyName: p.company, role: p.role, status: "active" });
+}
+const remind = (type = "workflow", input = {}) =>
+  handler(input, { context: { tenantId: "TEN", roles: [] }, run: { invokedBy: { type } }, env: { CLIENT_ID: "id", CLIENT_SECRET: "secret" }, log: { error: (...a) => console.error("  [function error]", ...a), warn() {}, info() {} } });
+// Only what the run sent about PRJ-003 (the RFIs of the tests above are reminded too).
+const mine3 = () => sent.filter((s) => (s.type === "bell" ? s.payload.projectId === R : s.subject.startsWith("[PRJ-003]")));
+const rem = {};
+
+await test("people can't start the reminder run", async () => {
+  refused(await call("pm", { action: "reminders" }), "BAD_ACTION", "pm asks for reminders");
+  refused(await remind("http", { method: "POST", body: { action: "reminders" } }), "BAD_ACTION", "an http call is a person's call");
+});
+await test("reminders: nothing before 07:00 project time", async () => {
+  setNow("2030-01-02T12:00:00Z");
+  const a = await create("supt", { projectId: R, subject: "Due Monday", dueDate: DUE });
+  ok(a, "create due Monday");
+  rem.a = a.rfi;
+  const b = await create("supt", { projectId: R, subject: "Answered already", dueDate: DUE });
+  ok(b, "create second");
+  ok(await call("pm", { projectId: R, action: "respond", rfiId: b.rfi.ItemId, body: "Use 1100 mm.", asOfficial: true }), "answer b");
+  rem.b = b.rfi;
+  setNow("2030-01-03T05:30:00Z"); // 06:30 in Berlin
+  sent.length = 0;
+  const r = await remind();
+  ok(r, "run");
+  expect(mine3().length === 0, `sent ${JSON.stringify(mine3())}`);
+});
+await test("reminders: due in 2 working days → the ball holder, bell and email, once", async () => {
+  setNow("2030-01-03T08:00:00Z"); // Thursday 09:00 Berlin
+  sent.length = 0;
+  ok(await remind(), "run");
+  const bells = mine3().filter((s) => s.type === "bell");
+  expect(bells.length === 1 && bells[0].userIds.join() === "design" && bells[0].payload.kind === "rfi.due", `bells ${JSON.stringify(bells)}`);
+  expect(bells[0].payload.title === `${rem.a.number} is due in 2 working days`, bells[0].payload.title);
+  expect(!bells.some((s) => s.payload.title.startsWith(rem.b.number)), "the answered RFI reminds nobody");
+  const mails = mine3().filter((s) => s.type === "mail");
+  expect(mails.length === 1 && mails[0].to[0] === "design@test.local", `mails ${JSON.stringify(mails)}`);
+  sent.length = 0;
+  ok(await remind(), "second run the same day");
+  expect(mine3().length === 0, "told once per due date");
+});
+await test("reminders: overdue → ball holder every working day, the manager gets a list", async () => {
+  setNow("2030-01-09T08:00:00Z"); // Wednesday: due Monday, 2 working days late
+  sent.length = 0;
+  ok(await remind(), "run");
+  const bells = mine3().filter((s) => s.type === "bell");
+  const holder = bells.find((s) => s.payload.kind === "rfi.overdue");
+  expect(holder && holder.userIds.join() === "design" && holder.payload.title === `${rem.a.number} is 2 working days overdue`, `holder ${JSON.stringify(bells)}`);
+  const list = bells.find((s) => s.payload.kind === "rfi.digest");
+  expect(list && list.userIds.join() === "pm" && list.payload.title === "1 RFI overdue on PRJ-003" && list.payload.link.endsWith("&overdue=1"), `digest ${JSON.stringify(list)}`);
+  expect(list.payload.body.startsWith(`${rem.a.number} (2 days, DESIGN)`), list.payload.body);
+  sent.length = 0;
+  ok(await remind(), "again the same day");
+  expect(mine3().length === 0, "once a day");
+  setNow("2030-01-12T09:00:00Z"); // Saturday
+  ok(await remind(), "weekend run");
+  expect(mine3().length === 0, "no reminders at weekends");
+  setNow("2030-01-14T08:00:00Z"); // Monday
+  ok(await remind(), "next working day");
+  expect(mine3().some((s) => s.type === "bell" && s.payload.title === `${rem.a.number} is 5 working days overdue`), `monday ${JSON.stringify(mine3().map((s) => s.payload?.title ?? s.subject))}`);
+});
+await test("reminders: reminder emails off → bell only", async () => {
+  rows("NotificationPreference").push({ ItemId: "pref-design", tenantRole: T, userId: "design", emailEnabled: true, reminderEmails: false });
+  setNow("2030-01-15T08:00:00Z");
+  sent.length = 0;
+  ok(await remind(), "run");
+  expect(mine3().some((s) => s.type === "bell" && s.userIds.includes("design")), "bell still rings");
+  expect(!mine3().some((s) => s.type === "mail" && s.to[0] === "design@test.local"), "no email to design");
+  expect(mine3().some((s) => s.type === "mail" && s.to[0] === "pm@test.local"), "the manager's list still emails");
+});
+await test("reminders: a project admin's dry run writes and sends nothing", async () => {
+  setNow("2030-01-16T08:00:00Z");
+  sent.length = 0;
+  const before = rows("Rfi").find((r) => r.ItemId === rem.a.ItemId).overdueNoticeLastDate;
+  const r = await remind("test", { action: "reminders", dryRun: true });
+  ok(r, "dry run");
+  expect(sent.length === 0 && r.planned.some((p) => p.project === "PRJ-003" && p.kind === "rfi.overdue"), `planned ${JSON.stringify(r.planned)}`);
+  expect(rows("Rfi").find((x) => x.ItemId === rem.a.ItemId).overdueNoticeLastDate === before, "marker untouched");
+  globalThis.Date = RealDate;
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

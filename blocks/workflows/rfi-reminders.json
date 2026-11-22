@@ -1,0 +1,17 @@
+{
+  "name": "rfi-reminders",
+  "settings": {},
+  "nodes": [
+    { "id": "t1", "name": "Every hour", "category": "trigger", "type": "schedule", "version": "v1",
+      "position": { "x": 0, "y": 0 },
+      "parameters": { "triggerInterval": "custom", "cronExpression": "5 * * * *" },
+      "settings": {}, "pinData": null },
+    { "id": "f1", "name": "RFI reminders", "category": "action", "type": "function", "version": "v1",
+      "position": { "x": 300, "y": 0 },
+      "parameters": { "functionId": "d19216d3-7925-4aa1-bff6-cae9853b0ab0", "inputMode": "item" },
+      "settings": {}, "pinData": null }
+  ],
+  "edges": [
+    { "id": "e1", "source": "t1", "target": "f1", "sourceHandle": "source", "targetHandle": "target" }
+  ]
+}

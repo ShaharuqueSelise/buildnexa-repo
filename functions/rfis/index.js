@@ -18,6 +18,8 @@
 //   { action: "uploadLinks", projectId, rfiId?, files: [{ name, contentType, sizeBytes, thumbnail? }] }
 //                                                          -> { uploads: [{ fileId, uploadUrl, …, ticket }] }
 //   { action: "fileLinks", projectId, rfiId }             -> { files: { fileId: download link } }
+// Reminders (Part 4) run only when the hourly `rfi-reminders` workflow calls this Function (see
+// runReminders near the end); people can't start them.
 // create / edit (changes.attachments) / respond take `attachments`: the uploads with their tickets.
 // detail = { rfi, can, responses, history, files }. Every change answers with the fresh detail, so
 // the screen needs no second call.
@@ -1287,7 +1289,190 @@ async function fileLinks(db, me, args) {
   return { ok: true, files: await fileLinksFor(db, r, responses) };
 }
 
+// ---------- reminders (Part 4, RFI-05; docs/architecture/03-rfis.md §4.7) ----------
+// Run only by the hourly `rfi-reminders` workflow (and by a Blocks project admin's
+// `blocks logic function test`): see handler(). A person's call can never start it, because it is
+// not one of the actions people can name.
+// For every active project where it is a working day and 07:00 or later (project timezone):
+// - due soon: an open RFI due within 2 working days, not yet reminded for this due date
+//   → whoever holds the ball (bell + email);
+// - overdue: an open RFI past its due date, not yet reminded today → the ball holder, every working
+//   day until it moves (bell + email);
+// - the RFI manager: one list of the RFIs that became overdue notices in this run, apart from the
+//   ones whose ball they hold themselves (bell + email).
+// The marker (dueSoonNotifiedFor / overdueNoticeLastDate) is written BEFORE sending: a crash then
+// loses that day's notice instead of sending it twice. Runs that Blocks skips are caught up: the
+// next run tells whatever was not told yet today. Emails follow the person's settings (email on,
+// and reminder emails on); the bell always rings. Answered, closed, void and draft RFIs never remind.
+const REMINDER_HOUR = 7;
+const DUE_SOON_DAYS = 2;
+const REMINDER_BUDGET_MS = 22_000;
+
+function workingDaysBetween(from, to) {
+  let count = 0;
+  let d = String(from).slice(0, 10);
+  const end = String(to).slice(0, 10);
+  while (d < end) {
+    d = addDays(d, 1);
+    if (weekday(d) !== 0 && weekday(d) !== 6) count += 1;
+  }
+  return count;
+}
+
+function hourIn(timeZone) {
+  try {
+    return Number(new Intl.DateTimeFormat("en-GB", { timeZone: timeZone || "Europe/Berlin", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
+  } catch {
+    return new Date().getUTCHours();
+  }
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// What the reminder says, and to whom. `c` is a project context for the service (no caller).
+function reminderFor(r, c) {
+  const today = c.today;
+  const holder = r.ballInCourtUserId && memberOf(c, r.ballInCourtUserId) ? r.ballInCourtUserId : "";
+  // Nobody (or someone who left the team) holds the ball: the manager, else every PM, hears instead.
+  const to = holder ? [holder]
+    : r.managerUserId && memberOf(c, r.managerUserId) ? [r.managerUserId]
+    : c.active.filter((m) => m.role === "project-manager").map((m) => m.userId);
+  const num = r.number || "An RFI";
+  const waiting = r.ballInCourtRole === "manager" ? "waiting for your review" : "waiting for your answer";
+  if (r.dueDate < today) {
+    const late = workingDaysBetween(r.dueDate, today);
+    return { kind: "overdue", to, late, title: `${num} is ${plural(late, "working day")} overdue`, body: `${r.subject} · was due ${shortDate(r.dueDate)} · ${waiting}` };
+  }
+  const left = workingDaysBetween(today, r.dueDate);
+  const when = left === 0 ? "today" : `in ${plural(left, "working day")}`;
+  return { kind: "due", to, left, title: `${num} is due ${when}`, body: `${r.subject} · due ${shortDate(r.dueDate)} · ${waiting}` };
+}
+
+async function remindProject(db, project, rfis, now, out, options) {
+  const tenantRole = project.tenantRole;
+  const today = todayIn(project.timezone);
+  const team = await db.list("ProjectMember", TEAM_FIELDS, tenantRole, { projectId: project.ItemId });
+  const c = { me: { userId: "", tenantRole }, project, projectId: project.ItemId, active: team.filter((m) => m.status === "active"), today };
+  const due = [];
+  for (const r of rfis) {
+    if (r.status !== "open" || r.isVoided || !DATE.test(String(r.dueDate ?? ""))) continue;
+    if (r.dueDate < today) {
+      if (r.overdueNoticeLastDate !== today) due.push(r);
+    } else if (workingDaysBetween(today, r.dueDate) <= DUE_SOON_DAYS && r.dueSoonNotifiedFor !== r.dueDate) {
+      due.push(r);
+    }
+  }
+  if (!due.length) return;
+  const prefs = await db.list("NotificationPreference", "ItemId userId emailEnabled reminderEmails", tenantRole).catch(() => []);
+  const firstPref = new Map();
+  for (const p of [...prefs].sort((x, y) => String(x.ItemId).localeCompare(String(y.ItemId)))) if (!firstPref.has(p.userId)) firstPref.set(p.userId, p);
+  const emailsOn = (u) => firstPref.get(u)?.emailEnabled !== false && firstPref.get(u)?.reminderEmails !== false;
+  const send = async (userIds, n, link, kind) => {
+    const ids = userIds.filter((u) => {
+      const m = memberOf(c, u);
+      return m && (kind === "rfi.digest" || canSee(n.rfi, { me: { userId: u }, role: m.role, mine: m }));
+    });
+    if (!ids.length || options.dryRun) {
+      out.planned.push({ project: project.number, kind, title: n.title, people: ids.length });
+      return;
+    }
+    const tasks = [db.notify(ids, { title: n.title, body: n.body, link, projectId: c.projectId, kind }).then(() => { out.bell += ids.length; })];
+    for (const u of ids) {
+      const m = memberOf(c, u);
+      if (!m.email || !emailsOn(u)) continue;
+      tasks.push(db.mail(m.email, `${project.number ? `[${project.number}] ` : ""}${n.title}`, {
+        DisplayName: html(m.displayName || ""),
+        Heading: html(n.title),
+        Text: html(n.body),
+        ProjectName: html(project.name || ""),
+        ButtonLabel: kind === "rfi.digest" ? "Open the overdue RFIs" : "Open the RFI",
+        ButtonUrl: `${db.appUrl}${link}`,
+        SettingsUrl: `${db.appUrl}/inbox?tab=settings`
+      }).then(() => { out.email += 1; }));
+    }
+    for (const x of await Promise.allSettled(tasks)) if (x.status === "rejected") out.failed.push(String(x.reason?.message ?? x.reason).slice(0, 200));
+  };
+  const overdueByManager = new Map();
+  for (const r of due) {
+    if (Date.now() - now > REMINDER_BUDGET_MS) {
+      out.leftForNextRun += 1;
+      continue;
+    }
+    const n = { ...reminderFor(r, c), rfi: r };
+    // Claim first: a second run (or the retry of this one) finds the marker and skips the RFI.
+    if (!options.dryRun) {
+      const marker = n.kind === "overdue" ? { overdueNoticeLastDate: today } : { dueSoonNotifiedFor: r.dueDate };
+      const claimed = await db.updateWhere("Rfi", { ItemId: { eq: r.ItemId }, version: { eq: Number(r.version ?? 0) } }, tenantRole, marker);
+      if (claimed !== 1) continue; // changed meanwhile (answered, moved…): the next run decides again
+    }
+    out[n.kind === "overdue" ? "overdue" : "dueSoon"] += 1;
+    await send(n.to, n, `/rfis/${r.ItemId}?project=${c.projectId}`, n.kind === "overdue" ? "rfi.overdue" : "rfi.due");
+    if (n.kind === "overdue") {
+      const manager = r.managerUserId && memberOf(c, r.managerUserId) ? r.managerUserId : "";
+      if (manager && !n.to.includes(manager)) {
+        if (!overdueByManager.has(manager)) overdueByManager.set(manager, []);
+        overdueByManager.get(manager).push({ r, late: n.late });
+      }
+    }
+  }
+  for (const [manager, items] of overdueByManager) {
+    items.sort((a, b) => b.late - a.late);
+    const shown = items.slice(0, 6).map(({ r, late }) => `${r.number} (${plural(late, "day")}, ${r.ballInCourtName || "nobody"})`);
+    const more = items.length > shown.length ? ` · and ${items.length - shown.length} more` : "";
+    const n = {
+      title: `${plural(items.length, "RFI")} overdue on ${project.number || project.name}`,
+      body: `${shown.join(" · ")}${more}`,
+      rfi: items[0].r
+    };
+    out.digests += 1;
+    await send([manager], n, `/rfis?project=${c.projectId}&overdue=1`, "rfi.digest");
+  }
+}
+
+async function runReminders(ctx, options = {}) {
+  const now = Date.now();
+  const out = { ok: true, projects: 0, dueSoon: 0, overdue: 0, digests: 0, bell: 0, email: 0, leftForNextRun: 0, failed: [], planned: [] };
+  try {
+    const db = client(ctx, await serviceToken(ctx));
+    // Every company's open RFIs in one read (filtered on the server); then per project.
+    const data = await db.gql(
+      "query q($input: DynamicQueryInput) { getRfis(input: $input) { items { tenantRole dueSoonNotifiedFor overdueNoticeLastDate " + RFI_FIELDS + " } } }",
+      { input: { pageNo: 1, pageSize: 1000, filter: JSON.stringify({ status: "open" }) } }
+    );
+    const open = (data?.getRfis?.items ?? []).filter((r) => r.status === "open" && r.dueDate);
+    if (!open.length) return out;
+    const projects = await db.listAll("Project", "ItemId number name status timezone");
+    for (const project of projects) {
+      if (project.status === "archived") continue;
+      const today = todayIn(project.timezone);
+      if (!options.anyTime && (weekday(today) === 0 || weekday(today) === 6)) continue;
+      if (!options.anyTime && hourIn(project.timezone) < REMINDER_HOUR) continue;
+      const rfis = open.filter((r) => r.tenantRole === project.tenantRole && r.projectId === project.ItemId);
+      if (!rfis.length) continue;
+      if (Date.now() - now > REMINDER_BUDGET_MS) {
+        out.leftForNextRun += rfis.length;
+        continue;
+      }
+      out.projects += 1;
+      await remindProject(db, project, rfis, now, out, options);
+    }
+  } catch (error) {
+    ctx.log.error("rfis reminders failed", { message: error.message });
+    out.ok = false;
+    out.failed.push(String(error?.message ?? error).slice(0, 200));
+  }
+  ctx.log.info("rfis reminders", { ...out, planned: out.planned.length });
+  if (!options.dryRun) delete out.planned;
+  return out;
+}
+
 export default async function handler(input, ctx) {
+  // The hourly reminder workflow. `ctx.run.invokedBy` is set by Blocks, not by the caller, so an
+  // app user can't start this. A project admin's test run may ask for a dry run (nothing written
+  // or sent) and ignore the working-day and 07:00 rules (anyTime).
+  const by = ctx.run?.invokedBy?.type;
+  if (by === "workflow") return runReminders(ctx);
+  if (by === "test" && input?.action === "reminders") return runReminders(ctx, { dryRun: input.dryRun === true, anyTime: input.anyTime === true });
   return handle(input, ctx, "rfis", {
     list: (args, { db, me }) => list(db, me, args),
     get: (args, { db, me }) => get(db, me, args),

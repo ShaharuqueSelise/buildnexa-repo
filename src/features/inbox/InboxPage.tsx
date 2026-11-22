@@ -2,7 +2,7 @@
 // (mock/src/mock/pages/InboxPage.tsx).
 // Real now: every notification in the person's Blocks inbox (newest first, grouped by day), all or
 // unread, filter by kind, open the record (marks it read), mark one or all read; the email on/off
-// setting. Not yet: marking unread and selecting several (Blocks Notifier marks read only), the
+// setting and the reminder-email setting (RFI Part 4). Not yet: marking unread and selecting several (Blocks Notifier marks read only), the
 // per-event matrix, quiet hours, the daily digest (R2), push (R2) and a test email.
 import { AlarmClock, Bell, BellOff, CheckCheck, CircleDot, ExternalLink, Info, Mail, MailOpen, Moon, Smartphone, Users } from "lucide-react";
 import type { ReactNode } from "react";
@@ -19,13 +19,17 @@ import { useInbox, useMarkAllRead, useMarkRead, useNotificationSettings, useSetN
 import "./Inbox.css";
 
 // The kinds the rfis Function sends (payload `kind`), plus Blocks' own notices (sign-ins, ...).
-type Kind = "turn" | "decided" | "info";
+type Kind = "turn" | "reminder" | "decided" | "info";
 const KIND_META: Record<Kind, { label: TranslationKey; icon: ReactNode; tone: Tone }> = {
   turn: { label: "inbox.kind.turn", icon: <CircleDot size={16} />, tone: "purple" },
+  reminder: { label: "inbox.kind.reminder", icon: <AlarmClock size={16} />, tone: "red" },
   decided: { label: "inbox.kind.decided", icon: <CheckCheck size={16} />, tone: "green" },
   info: { label: "inbox.kind.info", icon: <Info size={16} />, tone: "gray" }
 };
-const kindOf = (n: AppNotification): Kind => (n.kind === "rfi.turn" ? "turn" : n.kind === "rfi.decided" ? "decided" : "info");
+// Reminders (Part 4): due soon, overdue, and the RFI manager's list of overdue RFIs.
+const REMINDER_KINDS = ["rfi.due", "rfi.overdue", "rfi.digest"];
+const kindOf = (n: AppNotification): Kind =>
+  n.kind === "rfi.turn" ? "turn" : REMINDER_KINDS.includes(n.kind ?? "") ? "reminder" : n.kind === "rfi.decided" ? "decided" : "info";
 
 const timeOf = (iso?: string) => {
   if (!iso) return "";
@@ -151,16 +155,23 @@ function SettingsTab({ toast, onNavigate }: { toast: (text: string) => void; onN
   const settings = useNotificationSettings();
   const save = useSetNotificationSettings();
   // While a save runs, show the choice just made (a save can take several seconds).
-  const emailOn = save.isPending && save.variables ? save.variables.emailEnabled : settings.data?.emailEnabled ?? true;
+  const emailOn = save.isPending && save.variables?.emailEnabled !== undefined ? save.variables.emailEnabled : settings.data?.emailEnabled ?? true;
+  const remindersOn = save.isPending && save.variables?.reminderEmails !== undefined ? save.variables.reminderEmails : settings.data?.reminderEmails ?? true;
 
   const setEmail = (v: boolean) =>
     save.mutate({ emailEnabled: v }, {
       onSuccess: () => toast(v ? t("inbox.emailOnSaved") : t("inbox.emailOffSaved")),
       onError: () => toast(t("common.error"))
     });
+  const setReminders = (v: boolean) =>
+    save.mutate({ reminderEmails: v }, {
+      onSuccess: () => toast(v ? t("inbox.remindersOnSaved") : t("inbox.remindersOffSaved")),
+      onError: () => toast(t("common.error"))
+    });
 
-  const rows: { label: TranslationKey; hint: TranslationKey; email: boolean }[] = [
+  const rows: { label: TranslationKey; hint: TranslationKey; email: boolean; on?: boolean }[] = [
     { label: "inbox.event.turn", hint: "inbox.event.turnHint", email: true },
+    { label: "inbox.event.reminder", hint: "inbox.event.reminderHint", email: true, on: remindersOn },
     { label: "inbox.event.mine", hint: "inbox.event.mineHint", email: true },
     { label: "inbox.event.list", hint: "inbox.event.listHint", email: false }
   ];
@@ -187,7 +198,7 @@ function SettingsTab({ toast, onNavigate }: { toast: (text: string) => void; onN
                     </div>
                   </td>
                   <td className="m-inbox-c">{t("inbox.always")}</td>
-                  <td className="m-inbox-c">{r.email ? (emailOn ? t("inbox.yes") : t("inbox.off")) : "—"}</td>
+                  <td className="m-inbox-c">{r.email ? (emailOn && r.on !== false ? t("inbox.yes") : t("inbox.off")) : "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -204,7 +215,10 @@ function SettingsTab({ toast, onNavigate }: { toast: (text: string) => void; onN
             ) : settings.isError ? (
               <span className="m-small m-muted">{t("common.error")}</span>
             ) : (
-              <Toggle checked={emailOn} onChange={(v) => { if (!save.isPending) setEmail(v); }} label={t("inbox.emailToggle")} />
+              <>
+                <Toggle checked={emailOn} onChange={(v) => { if (!save.isPending) setEmail(v); }} label={t("inbox.emailToggle")} />
+                <Toggle checked={emailOn && remindersOn} disabled={!emailOn} onChange={(v) => { if (!save.isPending) setReminders(v); }} label={t("inbox.remindersToggle")} />
+              </>
             )}
             {save.isPending ? <span className="m-small m-muted">{t("inbox.saving")}</span> : null}
             <span className="m-small m-muted">{t("inbox.emailHint")}</span>
@@ -219,7 +233,6 @@ function SettingsTab({ toast, onNavigate }: { toast: (text: string) => void; onN
 
         <Panel title={<span className="m-row"><AlarmClock size={15} /> {t("inbox.comingTitle")}</span>}>
           <ul className="m-small m-muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
-            <li>{t("inbox.coming.reminders")}</li>
             <li className="m-row"><Moon size={13} /> {t("inbox.coming.quiet")}</li>
             <li>{t("inbox.coming.digest")} <ReleaseTag release="R2" /></li>
             <li className="m-row"><Smartphone size={13} /> {t("inbox.coming.push")} <ReleaseTag release="R2" /></li>

@@ -199,6 +199,16 @@
       "isArray": true
     },
     {
+      "name": "dueSoonNotifiedFor",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "overdueNoticeLastDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
       "name": "lastChange",
       "type": "LastChange",
       "isArray": false
