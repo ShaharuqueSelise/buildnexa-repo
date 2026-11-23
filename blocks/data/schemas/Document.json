@@ -1,0 +1,132 @@
+{
+  "schemaName": "Document",
+  "collectionName": "Documents",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "folderId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "name",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "nameKey",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "ext",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "contentType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "currentVersion",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "sizeBytes",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "versions",
+      "type": "DocVersion",
+      "isArray": true
+    },
+    {
+      "name": "createdByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "updatedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "updatedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "createdAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "updatedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "trashed",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "trashedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "trashedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "trashedFromFolderId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "trashedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    },
+    {
+      "name": "searchText",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

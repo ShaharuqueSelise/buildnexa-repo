@@ -42,7 +42,7 @@ export const navItems: readonly NavItem[] = [
   { href: "/daily-logs", labelKey: "nav.dailyLogs", icon: CalendarDays, module: "logs", group: "project", phase: 3 },
   { href: "/punch", labelKey: "nav.punch", icon: ClipboardCheck, module: "punch", group: "project", phase: 3 },
   { href: "/photos", labelKey: "nav.photos", icon: Images, module: "photos", group: "project", phase: 2 },
-  { href: "/documents", labelKey: "nav.documents", icon: FolderOpen, module: "documents", group: "project", phase: 2 },
+  { href: "/documents", labelKey: "nav.documents", icon: FolderOpen, module: "documents", group: "project" },
   { href: "/budget", labelKey: "nav.budget", icon: Wallet, module: "budget", group: "financials", phase: 4 },
   { href: "/change-orders", labelKey: "nav.changeOrders", icon: Receipt, module: "changeOrders", group: "financials", phase: 4 },
   { href: "/directory", labelKey: "nav.directory", icon: Users, module: "directory", group: "projectAdmin" },
@@ -65,7 +65,7 @@ const ROLE_MODULES: Record<string, ModuleKey[]> = {
   "document-controller": [...ALL_PROJECT, "reports", "audit"],
   "field-user": ["home", "drawings", "rfis", "submittals", "logs", "punch", "photos", "documents", "directory", "inbox", "portfolio", "field"],
   "design-reviewer": ["home", "drawings", "rfis", "submittals", "photos", "documents", "directory", "inbox", "portfolio"],
-  "owner-viewer": ["home", "drawings", "rfis", "submittals", "logs", "punch", "photos", "budget", "changeOrders", "reports", "directory", "inbox", "portfolio"]
+  "owner-viewer": ["home", "drawings", "rfis", "submittals", "logs", "punch", "photos", "documents", "budget", "changeOrders", "reports", "directory", "inbox", "portfolio"]
 };
 const COMPANY_ADMIN: ModuleKey[] = ["portfolio", "companyAdmin", "inbox", "directory", "home"];
 const EVERYONE: ModuleKey[] = ["home", "portfolio", "inbox"];

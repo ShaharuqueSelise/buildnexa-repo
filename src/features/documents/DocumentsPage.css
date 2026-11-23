@@ -1,0 +1,53 @@
+/* Documents, from the demo app (mock/src/mock/pages/DocumentsPage.css). Prefix m-doc-. */
+.m-doc-layout { display: grid; gap: 16px; grid-template-columns: 250px minmax(0, 1fr); }
+.m-doc-tree { align-self: start; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 12px; display: grid; gap: 2px; padding: 8px; position: sticky; top: 0; }
+.m-doc-tree-title { color: hsl(var(--muted-foreground)); font-size: 11px; font-weight: 600; letter-spacing: .05em; padding: 8px 8px 4px; text-transform: uppercase; }
+.m-doc-node { align-items: center; background: transparent; border: 0; border-radius: 8px; color: inherit; display: flex; font-size: 13.5px; gap: 8px; padding: 7px 8px; text-align: left; width: 100%; }
+.m-doc-node:hover { background: hsl(var(--secondary)); }
+.m-doc-node.m-doc-node-on { background: hsl(var(--m-blue-bg)); color: hsl(var(--m-blue-fg)); font-weight: 600; }
+.m-doc-node.m-doc-drop-target { box-shadow: inset 0 0 0 2px hsl(var(--primary)); }
+.m-doc-node span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-doc-node em { color: hsl(var(--muted-foreground)); font-size: 11.5px; font-style: normal; }
+.m-doc-ext { border-radius: 5px; color: #fff; display: inline-block; flex-shrink: 0; font-size: 9.5px; font-weight: 600; letter-spacing: .02em; min-width: 34px; padding: 3px 0; text-align: center; }
+.m-doc-ext-pdf { background: #dc2626; }
+.m-doc-ext-docx { background: #2563eb; }
+.m-doc-ext-xlsx { background: #16a34a; }
+.m-doc-ext-dwg { background: #7c3aed; }
+.m-doc-ext-zip { background: #64748b; }
+.m-doc-ext-jpg { background: #d97706; }
+.m-doc-name { align-items: center; display: flex; gap: 10px; min-width: 0; }
+.m-doc-name b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-doc-acts { display: flex; gap: 2px; justify-content: flex-end; }
+.m-doc-acts .m-icon-btn { height: 30px; width: 30px; }
+.m-doc-acts .m-icon-btn:disabled { cursor: not-allowed; opacity: .35; }
+.m-doc-drop { align-items: center; border: 2px dashed hsl(var(--border)); border-radius: 12px; color: hsl(var(--muted-foreground)); display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 12px; padding: 14px; text-align: center; transition: background .15s, border-color .15s; }
+.m-doc-drop input { display: none; }
+.m-doc-drop.m-doc-drop-on { background: hsl(var(--m-blue-bg) / .6); border-color: hsl(var(--primary)); color: hsl(var(--m-blue-fg)); }
+.m-doc-th { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; letter-spacing: inherit; padding: 0; text-transform: inherit; }
+
+@media (max-width: 880px) {
+  .m-doc-layout { grid-template-columns: 1fr; }
+  .m-doc-tree { position: static; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .m-doc-tree-title { grid-column: 1 / -1; }
+}
+
+/* Types the real app accepts, beyond the demo's six. */
+.m-doc-ext-doc { background: #2563eb; }
+.m-doc-ext-xls, .m-doc-ext-csv { background: #16a34a; }
+.m-doc-ext-pptx { background: #ea580c; }
+.m-doc-ext-jpeg, .m-doc-ext-png { background: #d97706; }
+.m-doc-ext-msg, .m-doc-ext-eml { background: #0891b2; }
+.m-doc-ext-txt, .m-doc-ext-file { background: #64748b; }
+
+.m-doc-pending { border: 1px solid hsl(var(--border)); border-radius: 10px; display: grid; gap: 4px; margin-bottom: 12px; padding: 8px 12px; }
+.m-doc-pending-row { align-items: center; display: flex; font-size: 13px; gap: 8px; }
+.m-doc-pending-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-doc-pending-row em { color: hsl(var(--muted-foreground)); font-size: 12px; font-style: normal; }
+.m-doc-matrix td, .m-doc-matrix th { padding-bottom: 6px; padding-top: 6px; }
+.m-doc-newversion { align-items: center; display: flex; gap: 8px; width: 100%; }
+.m-doc-newversion .m-input { flex: 1; min-width: 0; }
+
+/* Phones: read-only (spec 09 §7). Browsing, search, open and versions stay. */
+@media (max-width: 640px) {
+  .m-doc-edit { display: none !important; }
+}

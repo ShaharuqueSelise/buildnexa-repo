@@ -495,7 +495,8 @@ const PROJECT_PERMISSIONS = {
   "document.view": [PM, SUPT, DC, OWNER],
   "document.view_relevant": [SUB, DESIGN],
   "document.upload": [PM, SUPT, DC, SUB, DESIGN],
-  "document.manage": [PM, DC],
+  "document.manage": [PM, DC], // every folder: upload, version, move, rename, trash, restore, new folders
+  "document.folder_access": [PM], // who views and who uploads, per folder
   // Submittals
   "submittal.view": [PM, SUPT, DC, DESIGN, OWNER],
   "submittal.view_own": [SUB],

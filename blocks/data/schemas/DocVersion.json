@@ -1,0 +1,57 @@
+{
+  "schemaName": "DocVersion",
+  "collectionName": "DocVersions",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "versionNo",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "fileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "fileName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "contentType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "sizeBytes",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "uploadedBy",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "uploadedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "note",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "uploadedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "restoredFrom",
+      "type": "Int",
+      "isArray": false
+    }
+  ]
+}

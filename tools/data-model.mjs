@@ -62,6 +62,17 @@ const dtos = {
     ...int("sizeBytes"),
     ...id("thumbnailFileId", "uploadedBy"),
     ...date("uploadedAt")
+  ],
+  // One version of a document (newest last). A restored version points at the same file.
+  DocVersion: [
+    ...int("versionNo"),
+    ...id("fileId"),
+    ...str("fileName", "contentType"),
+    ...int("sizeBytes"),
+    ...id("uploadedBy"),
+    ...str("uploadedByName", "note"),
+    ...date("uploadedAt"),
+    ...int("restoredFrom")
   ]
 };
 
@@ -198,6 +209,36 @@ const entities = {
     ...bool("reminderEmails"), // due-soon and overdue reminders by email (only while emailEnabled); unset = on
     ...date("updatedAt")
   ],
+  // Documents (docs/architecture/09-photos-and-documents.md, changed: files belong to the service
+  // identity, so folders, versions and trash are records here, written only by the documents
+  // Function). A project gets the seven standard folders on first open.
+  DocFolder: [
+    ...PROJECT,
+    ...str("key", "name"), // key: contracts | specifications | … for the standard folders, "" for new ones
+    ...int("sortOrder", "version"),
+    f("viewRoles", "String", true), // project roles that see it (PM and DC always do)
+    f("uploadRoles", "String", true), // project roles that upload, version, move and rename in it
+    ...id("createdByUserId"),
+    ...date("createdAt"),
+    f("lastChange", "LastChange"),
+    ...bool("isVoided")
+  ],
+  Document: [
+    ...PROJECT,
+    ...id("folderId"),
+    ...str("name", "nameKey", "ext", "contentType"), // nameKey: lower-case name, one live file per name per folder
+    ...int("currentVersion", "sizeBytes", "version"), // version: compare-and-set guard
+    f("versions", "DocVersion", true),
+    ...id("createdByUserId", "createdByCompanyId", "updatedByUserId"),
+    ...str("createdByName", "updatedByName"),
+    ...date("createdAt", "updatedAt"),
+    ...bool("trashed"), // never deleted: trash keeps it restorable
+    ...date("trashedAt"),
+    ...id("trashedByUserId", "trashedFromFolderId"),
+    ...str("trashedByName"),
+    f("lastChange", "LastChange"),
+    ...str("searchText")
+  ],
   Comment: [
     ...PROJECT,
     ...str("recordType"),
@@ -256,6 +297,9 @@ const access = {
   // Project content: only through the rfis Function, which checks the caller's project role.
   Rfi: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   RfiResponse: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  // Documents: only through the documents Function (folder rules per project role).
+  DocFolder: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  Document: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Own settings, read and saved through the projects Function (the caller's id from their token).
   NotificationPreference: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] }
 };
