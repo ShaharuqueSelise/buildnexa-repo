@@ -11,7 +11,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
 import {
-  Clock, Download, ExternalLink, FileDown, Folder, FolderInput, FolderOpen, FolderPlus, Loader2, Lock, Pencil, RotateCcw, ShieldCheck,
+  Clock, Download, Eye, FileDown, Folder, FolderInput, FolderOpen, FolderPlus, Loader2, Lock, Pencil, RotateCcw, ShieldCheck,
   Trash, Undo2, Upload
 } from "lucide-react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
@@ -26,7 +26,8 @@ import { useProjects } from "../projects/projectsApi";
 import { fmtDate, fmtShortDate } from "../projects/ProjectsPage";
 import { fileSize } from "../files/files";
 import type { NewAttachment } from "../files/files";
-import { DOC_EXTENSIONS, docLink, docRefusal, uploadDocs, useDocAction, useDocuments } from "./documentsApi";
+import { DOC_EXTENSIONS, docLink, docRefusal, extOf, uploadDocs, useDocAction, useDocuments } from "./documentsApi";
+import { FileViewer, saveUrlAs } from "../files/FileViewer";
 import type { DocFolder, DocListing, DocRow, DocVersion } from "./documentsApi";
 import "./DocumentsPage.css";
 
@@ -54,6 +55,10 @@ function listedLink(doc: DocRow, expires: string | undefined, versionNo?: number
   const fresh = expires ? Date.parse(expires) > Date.now() : false;
   return current && fresh && doc.url ? { url: doc.url, fileName: doc.name } : undefined;
 }
+
+// A link for the viewer: the listed one when it fits, otherwise asked from the Function.
+const linkFor = (projectId: string, doc: DocRow, expires: string | undefined, versionNo?: number) =>
+  listedLink(doc, expires, versionNo)?.url ?? docLink(projectId, doc.ItemId, versionNo).then((l) => l.url);
 
 // Opens a file in a new tab: straight away with the listed link; otherwise the tab is opened at the
 // click (so no popup blocker stops it), says it is getting the file, and moves on once the link comes.
@@ -88,18 +93,7 @@ async function saveFile(projectId: string, doc: DocRow, expires: string | undefi
     const ready = listedLink(doc, expires, versionNo);
     if (!ready) toast(t("doc.opening"));
     const { url, fileName } = ready ?? (await docLink(projectId, doc.ItemId, versionNo));
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(String(res.status));
-      const href = URL.createObjectURL(await res.blob());
-      const a = Object.assign(document.createElement("a"), { href, download: fileName || doc.name });
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(href), 60_000);
-    } catch {
-      window.open(url, "_blank", "noopener");
-    }
+    await saveUrlAs(url, fileName || doc.name);
   } catch (e) {
     toast(errorText(t, e), "warn");
   }
@@ -144,6 +138,7 @@ type Dlg =
   | { k: "rename"; doc: DocRow }
   | { k: "move"; doc: DocRow }
   | { k: "versions"; docId: string }
+  | { k: "view"; docId: string; versionNo?: number }
   | null;
 
 type Pending = { key: string; name: string; progress: number };
@@ -285,6 +280,9 @@ function DocumentsView({ projectId, projectNumber, toast, t }: { projectId: stri
   };
 
   const versionsDoc = dlg?.k === "versions" ? data.documents.find((d) => d.ItemId === dlg.docId) : undefined;
+  const viewDoc = dlg?.k === "view" ? data.documents.find((d) => d.ItemId === dlg.docId) : undefined;
+  const viewVersion = dlg?.k === "view" && dlg.versionNo !== undefined ? viewDoc?.versions.find((v) => v.versionNo === dlg.versionNo) : undefined;
+  const viewExt = viewVersion ? extOf(viewVersion.fileName) || viewDoc?.ext || "" : viewDoc?.ext ?? "";
 
   return (
     <div>
@@ -371,7 +369,7 @@ function DocumentsView({ projectId, projectNumber, toast, t }: { projectId: stri
                 {rows.map((d) => {
                   const editable = mayEdit(d);
                   return (
-                    <tr key={d.ItemId} className="m-clickable" draggable={editable} onDragStart={(e) => e.dataTransfer.setData(DRAG_TYPE, d.ItemId)} onClick={() => setDlg({ k: "versions", docId: d.ItemId })}>
+                    <tr key={d.ItemId} className="m-clickable" draggable={editable} onDragStart={(e) => e.dataTransfer.setData(DRAG_TYPE, d.ItemId)} onClick={() => setDlg(d.trashed ? { k: "versions", docId: d.ItemId } : { k: "view", docId: d.ItemId })}>
                       <td><div className="m-doc-name"><Ext ext={d.ext} /><b title={d.name}>{d.name}</b></div></td>
                       {!inFolder ? <td className="m-hide-mobile">{folderName(d.folderId)}</td> : null}
                       <td><button type="button" className="m-link" onClick={(e) => { e.stopPropagation(); setDlg({ k: "versions", docId: d.ItemId }); }}>v{d.currentVersion}</button></td>
@@ -384,7 +382,7 @@ function DocumentsView({ projectId, projectNumber, toast, t }: { projectId: stri
                             <Button small variant="secondary" icon={<Undo2 size={14} />} disabled={busy} onClick={() => void run({ action: "restore", documentId: d.ItemId }, fmt(t("doc.restored"), { name: d.name, folder: folderName(d.folderId) }))}>{t("doc.restore")}</Button>
                           ) : (
                             <>
-                              <button type="button" className="m-icon-btn" title={t("doc.open")} onClick={() => void openFile(projectId, d, data.linksExpireAt, toast, t)}><ExternalLink size={15} /></button>
+                              <button type="button" className="m-icon-btn" title={t("doc.view")} onClick={() => setDlg({ k: "view", docId: d.ItemId })}><Eye size={15} /></button>
                               <button type="button" className="m-icon-btn" title={t("doc.download")} onClick={() => void saveFile(projectId, d, data.linksExpireAt, toast, t)}><Download size={15} /></button>
                               <button type="button" className="m-icon-btn" title={t("doc.versions")} onClick={() => setDlg({ k: "versions", docId: d.ItemId })}><Clock size={15} /></button>
                               {editable ? <button type="button" className="m-icon-btn m-doc-edit" title={t("doc.rename")} disabled={busy} onClick={() => setDlg({ k: "rename", doc: d })}><Pencil size={15} /></button> : null}
@@ -435,9 +433,23 @@ function DocumentsView({ projectId, projectNumber, toast, t }: { projectId: stri
           if (r) setDlg(null);
         }} />
       ) : null}
+      {dlg?.k === "view" && viewDoc ? (
+        <FileViewer
+          key={`${viewDoc.ItemId}-${dlg.versionNo ?? "cur"}`}
+          name={viewDoc.name}
+          ext={viewExt}
+          title={<><Ext ext={viewExt} /> <span className="m-viewer-name">{viewDoc.name}</span> <Badge tone="gray">v{dlg.versionNo ?? viewDoc.currentVersion}</Badge></>}
+          load={() => Promise.resolve(linkFor(projectId, viewDoc, data.linksExpireAt, dlg.versionNo))}
+          onDownload={() => void saveFile(projectId, viewDoc, data.linksExpireAt, toast, t, dlg.versionNo)}
+          onOpenTab={() => void openFile(projectId, viewDoc, data.linksExpireAt, toast, t, dlg.versionNo)}
+          extra={<Button variant="secondary" icon={<Clock size={14} />} onClick={() => setDlg({ k: "versions", docId: viewDoc.ItemId })}><span className="m-hide-mobile">{t("doc.versions")}</span></Button>}
+          onClose={() => setDlg(null)}
+        />
+      ) : null}
       {dlg?.k === "versions" && versionsDoc ? (
         <VersionsDrawer t={t} projectId={projectId} doc={versionsDoc} folder={folderById.get(versionsDoc.folderId)} data={data} toast={toast} busy={busy}
           onClose={() => setDlg(null)}
+          onView={(v) => setDlg({ k: "view", docId: versionsDoc.ItemId, versionNo: v === versionsDoc.currentVersion ? undefined : v })}
           onRestore={(v) => void run({ action: "restoreVersion", documentId: versionsDoc.ItemId, versionNo: v }, fmt(t("doc.versionRestored"), { v }))}
           onUpload={async (file, note) => {
             const why = docRefusal(file);
@@ -547,9 +559,9 @@ function MoveDialog({ t, doc, folders, busy, onClose, onMove }: { t: T; doc: Doc
   );
 }
 
-function VersionsDrawer({ t, projectId, doc, folder, data, toast, busy, onClose, onRestore, onUpload }: {
+function VersionsDrawer({ t, projectId, doc, folder, data, toast, busy, onClose, onRestore, onUpload, onView }: {
   t: T; projectId: string; doc: DocRow; folder?: DocFolder; data: DocListing; toast: Toast; busy: boolean; onClose: () => void;
-  onRestore: (versionNo: number) => void; onUpload: (file: File, note: string) => void;
+  onRestore: (versionNo: number) => void; onUpload: (file: File, note: string) => void; onView: (versionNo: number) => void;
 }) {
   const editable = !doc.trashed && Boolean(folder?.canUpload);
   const [note, setNote] = useState("");
@@ -587,6 +599,7 @@ function VersionsDrawer({ t, projectId, doc, folder, data, toast, busy, onClose,
                     <td className="m-num">{fileSize(v.sizeBytes)}</td>
                     <td>
                       <div className="m-doc-acts">
+                        {!doc.trashed ? <button type="button" className="m-icon-btn" title={fmt(t("doc.viewVersion"), { v: v.versionNo })} onClick={() => onView(v.versionNo)}><Eye size={15} /></button> : null}
                         <button type="button" className="m-icon-btn" title={fmt(t("doc.openVersion"), { v: v.versionNo })} onClick={() => void saveFile(projectId, doc, data.linksExpireAt, toast, t, v.versionNo)}><Download size={15} /></button>
                         {!isCurrent && editable ? <button type="button" className="m-icon-btn m-doc-edit" title={fmt(t("doc.makeCurrent"), { v: v.versionNo })} disabled={busy} onClick={() => onRestore(v.versionNo)}><RotateCcw size={15} /></button> : null}
                       </div>

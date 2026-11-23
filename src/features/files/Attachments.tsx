@@ -1,15 +1,17 @@
 // The file picker (New RFI, Edit, reply) and the file list (question, responses), from the demo
 // app's AttachButton + FileChip (mock/src/mock/pages/RfisPage.tsx). Real now: upload with progress,
 // photo previews, "Take photo" with the phone camera, open/download through short-lived links.
+// A click on a file opens it in the in-app viewer (FileViewer); Ctrl/middle click opens a new tab.
 // Files can be removed before saving (and from a draft); a submitted record keeps its files.
 import { Camera, FileText, Loader2, Paperclip, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, MouseEvent, SetStateAction } from "react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import { Button, cx, fmt } from "../../shared/m/ui";
 import type { ToastTone } from "../../shared/m/ui";
 import { MAX_FILES, fileSize, isImage, prepare, refusal, upload } from "./files";
 import type { Attachment, FileLinks, NewAttachment, UploadRequest, UploadSlot } from "./files";
+import { FileViewer, saveUrlAs } from "./FileViewer";
 import "./Attachments.css";
 
 export type PickedFile = Attachment | NewAttachment;
@@ -131,7 +133,15 @@ export function AttachmentPicker({ value, onChange, requestLinks, onBusyChange, 
 /** A record's files: photos as previews, everything else as chips; both open the file. */
 export function AttachmentList({ items, links }: { items?: Attachment[]; links?: FileLinks }) {
   const { t } = useT();
+  const [viewing, setViewing] = useState<Attachment>();
   if (!items?.length) return null;
+  // Plain clicks open the viewer; a click with a modifier key keeps the browser's own behaviour.
+  const view = (a: Attachment) => (e: MouseEvent) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    setViewing(a);
+  };
+  const viewUrl = viewing ? links?.[viewing.fileId] : undefined;
   const photos = items.filter((a) => isImage(a) && links?.[a.thumbnailFileId || a.fileId]);
   const others = items.filter((a) => !photos.includes(a));
   return (
@@ -139,7 +149,7 @@ export function AttachmentList({ items, links }: { items?: Attachment[]; links?:
       {photos.length ? (
         <div className="m-att-photos">
           {photos.map((a) => (
-            <a key={a.fileId} className="m-att-photo" href={links?.[a.fileId]} target="_blank" rel="noopener noreferrer" title={fmt(t("files.open"), { name: a.fileName })}>
+            <a key={a.fileId} className="m-att-photo" href={links?.[a.fileId]} target="_blank" rel="noopener noreferrer" title={fmt(t("files.open"), { name: a.fileName })} onClick={view(a)}>
               <img src={links?.[a.thumbnailFileId || a.fileId]} alt={a.fileName} loading="lazy" />
             </a>
           ))}
@@ -157,12 +167,23 @@ export function AttachmentList({ items, links }: { items?: Attachment[]; links?:
               </>
             );
             return href ? (
-              <a key={a.fileId} className="m-file m-att-link" href={href} target="_blank" rel="noopener noreferrer" title={fmt(t("files.open"), { name: a.fileName })}>{inner}</a>
+              <a key={a.fileId} className="m-file m-att-link" href={href} target="_blank" rel="noopener noreferrer" title={fmt(t("files.open"), { name: a.fileName })} onClick={view(a)}>{inner}</a>
             ) : (
               <span key={a.fileId} className="m-file" title={t("files.noLink")}>{inner}</span>
             );
           })}
         </div>
+      ) : null}
+      {viewing && viewUrl ? (
+        <FileViewer
+          name={viewing.fileName}
+          ext={(/\.([a-z0-9]{1,8})$/i.exec(viewing.fileName)?.[1] ?? "").toLowerCase()}
+          title={<><span className="m-file-ext">{ext(viewing.fileName)}</span> <span className="m-viewer-name">{viewing.fileName}</span></>}
+          load={() => Promise.resolve(viewUrl)}
+          onDownload={() => void saveUrlAs(viewUrl, viewing.fileName)}
+          onOpenTab={() => window.open(viewUrl, "_blank", "noopener")}
+          onClose={() => setViewing(undefined)}
+        />
       ) : null}
     </div>
   );
