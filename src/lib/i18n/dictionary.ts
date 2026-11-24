@@ -1135,7 +1135,7 @@ export const defaultDictionary = {
   "drw.v.pinWho": "Only the project manager, superintendent and subcontractors pin RFIs on sheets.",
   "drw.v.pinCurrentOnly": "Pins go on the current revision only.",
   "drw.v.roleManager": "You can upload revisions, void a wrong one and edit sheet details. Pinning is for the project manager, superintendent and subcontractors.",
-  "drw.v.roleDesigner": "You can upload new revisions of sheets in your discipline.",
+  "drw.v.roleDesigner": "You can upload new sheets and new revisions. The project manager or document controller changes sheet details and voids revisions.",
   "drw.v.rolePinner": "You can pin RFIs on the current revision and move or remove your own pins.",
   "drw.v.roleViewer": "You can view and download sheets.",
   "drw.v.newRevision": "New revision",
