@@ -7,7 +7,8 @@ export const FUNCTIONS = {
   projects: "369dbe7b-61a5-443a-8f19-0abe7f15e0c0",
   platform: "fcf68e44-aa63-4306-8429-551fce3d8467",
   rfis: "d19216d3-7925-4aa1-bff6-cae9853b0ab0",
-  documents: "7aa5c9d4-5ce6-486a-8df3-87d42db341d3"
+  documents: "7aa5c9d4-5ce6-486a-8df3-87d42db341d3",
+  photos: "17490b4f-03f8-4e97-91e5-c51401347723"
 } as const;
 
 // Every Buildnexa Function answers { ok: true, ... } or { ok: false, code, error }.

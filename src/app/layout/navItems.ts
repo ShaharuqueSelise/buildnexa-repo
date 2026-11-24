@@ -41,7 +41,7 @@ export const navItems: readonly NavItem[] = [
   { href: "/submittals", labelKey: "nav.submittals", icon: FileStack, module: "submittals", group: "project", phase: 4 },
   { href: "/daily-logs", labelKey: "nav.dailyLogs", icon: CalendarDays, module: "logs", group: "project", phase: 3 },
   { href: "/punch", labelKey: "nav.punch", icon: ClipboardCheck, module: "punch", group: "project", phase: 3 },
-  { href: "/photos", labelKey: "nav.photos", icon: Images, module: "photos", group: "project", phase: 2 },
+  { href: "/photos", labelKey: "nav.photos", icon: Images, module: "photos", group: "project" },
   { href: "/documents", labelKey: "nav.documents", icon: FolderOpen, module: "documents", group: "project" },
   { href: "/budget", labelKey: "nav.budget", icon: Wallet, module: "budget", group: "financials", phase: 4 },
   { href: "/change-orders", labelKey: "nav.changeOrders", icon: Receipt, module: "changeOrders", group: "financials", phase: 4 },

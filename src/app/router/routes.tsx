@@ -19,6 +19,7 @@ import { HomePage } from "../../features/home/HomePage";
 import { PlatformAdminPage } from "../../features/platform/PlatformAdminPage";
 import { RfisPage } from "../../features/rfis/RfisPage";
 import { DocumentsPage } from "../../features/documents/DocumentsPage";
+import { PhotosPage } from "../../features/photos/PhotosPage";
 import { InboxPage } from "../../features/inbox/InboxPage";
 import { setCurrentProject } from "../../features/projects/projectsApi";
 import { navItemFor } from "../layout/navItems";
@@ -34,6 +35,7 @@ type PageProps = { onNavigate: (path: string) => void; params?: string[] };
 const protectedRoutes: Record<string, ComponentType<PageProps>> = {
   "/": HomePage,
   "/rfis": RfisPage,
+  "/photos": PhotosPage,
   "/documents": DocumentsPage,
   "/inbox": InboxPage,
   "/profile": ProfilePage,
@@ -46,7 +48,7 @@ const protectedRoutes: Record<string, ComponentType<PageProps>> = {
 };
 
 // Pages that also open one record by id: /rfis/<id> renders the /rfis page with params ["<id>"].
-const ROUTES_WITH_ID = new Set(["/rfis"]);
+const ROUTES_WITH_ID = new Set(["/rfis", "/photos"]);
 
 function matchRoute(path: string): { base: string; params: string[] } {
   if (protectedRoutes[path]) return { base: path, params: [] };

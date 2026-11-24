@@ -1,0 +1,162 @@
+{
+  "schemaName": "Photo",
+  "collectionName": "Photos",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "fileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "previewFileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "thumbFileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "fileName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "contentType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "sizeBytes",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "width",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "height",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "takenAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "uploadedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "yearMonth",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "caption",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "locationLabel",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "tags",
+      "type": "String",
+      "isArray": true
+    },
+    {
+      "name": "linkedRecordType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "linkedRecordNumber",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "linkedRecordLabel",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "linkRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "linkedRecordId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "uploadedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "uploaderCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "uploadedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "clientRequestId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "voidedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "voidedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    },
+    {
+      "name": "searchText",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

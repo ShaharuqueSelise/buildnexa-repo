@@ -12,7 +12,7 @@ import type { Relation } from "./peopleApi";
 
 const RELATIONS: Relation[] = ["self", "sub", "design", "owner", "supplier"];
 // The spec's "Limited": the right only covers the person's own or assigned records.
-const isLimited = (key: string) => /_(assigned|own|involved|relevant)$/.test(key);
+const isLimited = (key: string) => /_(assigned|own|involved|relevant|company)$/.test(key);
 
 export function RolesTab() {
   const { t } = useT();

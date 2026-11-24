@@ -239,6 +239,27 @@ const entities = {
     f("lastChange", "LastChange"),
     ...str("searchText")
   ],
+  // Photos (docs/architecture/09 §2, DOC-01): one record per photo, written only by the photos
+  // Function. Three files: the original as taken (EXIF kept), a 1600 px copy for viewing and a
+  // 320 px copy for the grid, both made in the browser (a type the browser can't draw, such as
+  // HEIC on most desktops, has only the original). Sheet pins come with the Drawings step.
+  Photo: [
+    ...PROJECT,
+    ...id("fileId", "previewFileId", "thumbFileId"),
+    ...str("fileName", "contentType"),
+    ...int("sizeBytes", "width", "height", "version"), // version: compare-and-set guard
+    ...date("takenAt", "uploadedAt"), // takenAt: EXIF date when the photo has one, else the file date
+    ...str("yearMonth", "caption", "locationLabel"),
+    f("tags", "String", true), // lower case
+    ...str("linkedRecordType", "linkedRecordNumber", "linkedRecordLabel", "linkRole"), // type: rfi | punchItem | dailyLog | none; role: general | before | after
+    ...id("linkedRecordId", "uploadedByUserId", "uploaderCompanyId"),
+    ...str("uploadedByName"),
+    ...bool("isVoided"), // removed photos stay restorable by the PM and document controller
+    ...date("voidedAt"),
+    ...id("voidedByUserId"),
+    f("lastChange", "LastChange"),
+    ...str("searchText")
+  ],
   Comment: [
     ...PROJECT,
     ...str("recordType"),
@@ -300,6 +321,9 @@ const access = {
   // Documents: only through the documents Function (folder rules per project role).
   DocFolder: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   Document: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  // Photos: only through the photos Function (subcontractors see their company's photos and
+  // photos on records they can open).
+  Photo: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Own settings, read and saved through the projects Function (the caller's id from their token).
   NotificationPreference: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] }
 };

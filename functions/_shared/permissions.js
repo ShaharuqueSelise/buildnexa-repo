@@ -58,6 +58,10 @@ const PROJECT_PERMISSIONS = {
   "document.upload": [PM, SUPT, DC, SUB, DESIGN],
   "document.manage": [PM, DC], // every folder: upload, version, move, rename, trash, restore, new folders
   "document.folder_access": [PM], // who views and who uploads, per folder
+  "photo.view": [PM, SUPT, DC, DESIGN, OWNER],
+  "photo.view_company": [SUB], // own company's photos, and photos on records they can open
+  "photo.upload": [PM, SUPT, DC, SUB, DESIGN],
+  "photo.manage": [PM, DC], // edit, tag and remove any photo, see and restore removed ones
   // Submittals
   "submittal.view": [PM, SUPT, DC, DESIGN, OWNER],
   "submittal.view_own": [SUB],
