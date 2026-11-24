@@ -1,0 +1,122 @@
+{
+  "schemaName": "Sheet",
+  "collectionName": "Sheets",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "sheetNumber",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "sheetNumberKey",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "sortKey",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "title",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "discipline",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "setName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "revisionCount",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "currentRevisionId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "currentFileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "currentThumbFileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "currentRevisionLabel",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastIssuedDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "currentRevisionIndex",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "createdByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "updatedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "voidReason",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "searchText",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

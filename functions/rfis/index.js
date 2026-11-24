@@ -7,7 +7,8 @@
 //   { action: "get", projectId, rfiId }                   -> detail
 //   { action: "create", projectId, clientRequestId, submit, subject, question, suggestedAnswer?,
 //     priority?, discipline?, location?, dueDate?, assigneeUserIds, distributionUserIds,
-//     costImpact?, scheduleImpact?, costImpactAmount?, scheduleImpactDays?, internalNote? }
+//     costImpact?, scheduleImpact?, costImpactAmount?, scheduleImpactDays?, internalNote?,
+//     pin?: { sheetId, revisionIndex, x, y } }   ("New RFI here" on a drawing: the pin is saved with it)
 //                                                          -> detail (+ created: true)
 //   { action: "edit", projectId, rfiId, changes: { same fields as create } }  -> detail
 //   { action: "submit" | "close", projectId, rfiId }                           -> detail
@@ -980,6 +981,45 @@ async function tell(db, c, before, r, event, extra = {}) {
   return result;
 }
 
+// ---------- a pin on a drawing (New RFI here, from the sheet viewer) ----------
+// Same rules as the drawings Function: drawing.pin, on the sheet's current revision only.
+async function checkPin(db, c, pin) {
+  if (!projectCan(c.role, "drawing.pin")) throw new Refused("NOT_ALLOWED", "Your role can't place pins on drawings.");
+  const [sheet] = await db.list("Sheet", "ItemId sheetNumber currentRevisionIndex currentRevisionLabel isVoided", c.me.tenantRole, { projectId: c.projectId, ItemId: String(pin?.sheetId ?? "") });
+  if (!sheet || sheet.isVoided) throw new Refused("NOT_FOUND", "That sheet doesn't exist in this project.");
+  if (Number(pin.revisionIndex) !== Number(sheet.currentRevisionIndex ?? 0)) {
+    throw new Refused("NOT_CURRENT", `Pins go on the current revision (rev ${sheet.currentRevisionLabel}). Reload the sheet and try again.`);
+  }
+  const at = (v) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 1) throw new Refused("BAD_POINT", "Place the pin on the sheet.");
+    return Math.round(n * 100000) / 100000;
+  };
+  return { sheet, x: at(pin.x), y: at(pin.y) };
+}
+
+async function placePin(db, c, { sheet, x, y }, r) {
+  await db.insert("Pin", {
+    tenantRole: c.me.tenantRole,
+    projectId: c.projectId,
+    sheetId: sheet.ItemId,
+    fromRevisionIndex: Number(sheet.currentRevisionIndex),
+    toRevisionIndex: 0,
+    version: 0,
+    x,
+    y,
+    linkedRecordType: "rfi",
+    linkedRecordId: r.ItemId,
+    linkedRecordNumber: r.number || "",
+    createdByUserId: c.me.userId,
+    createdByCompanyId: c.mine.companyId ?? "",
+    createdByName: c.mine.displayName ?? "",
+    createdAt: new Date().toISOString(),
+    isVoided: false,
+    lastChange: { kind: "created", nonce: crypto.randomUUID(), actorUserId: c.me.userId }
+  });
+}
+
 async function create(db, me, args) {
   const c = await projectContext(db, me, args.projectId, { write: true });
   if (!projectCan(c.role, "rfi.create")) throw new Refused("NOT_ALLOWED", "Your project role can't raise RFIs.");
@@ -991,6 +1031,7 @@ async function create(db, me, args) {
 
   const submit = args.submit === true;
   const v = rfiInput(args, {}, c, { submit });
+  const pinAt = args.pin ? await checkPin(db, c, args.pin) : undefined;
   const attachments = (await acceptAttachments(db, me, c.projectId, args.attachments)) ?? [];
   const now = new Date().toISOString();
   const managerUserId = defaultManager(c);
@@ -1020,6 +1061,7 @@ async function create(db, me, args) {
   row.lastChange = { kind: "created", nonce: crypto.randomUUID(), fromStatus: "", toStatus: row.status, previousBallUserId: "", actorUserId: me.userId, reason: "" };
   const rfiId = await db.insert("Rfi", row);
   const saved = { ...row, ItemId: rfiId };
+  if (pinAt) await placePin(db, c, pinAt, saved);
   const [, notified] = await Promise.all([
     history(db, c, saved, submit ? "submitted" : "draftCreated", (submit ? `${actor(c)} raised ${row.number} and passed it to ${row.ballInCourtName || "the manager"}` : `${actor(c)} saved a draft`) + withFiles(attachments.length), { toStatus: row.status }),
     submit ? tell(db, c, undefined, saved, "submitted", { files: attachments.length }) : undefined

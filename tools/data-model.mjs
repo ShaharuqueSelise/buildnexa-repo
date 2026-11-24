@@ -243,6 +243,55 @@ const entities = {
   // Function. Three files: the original as taken (EXIF kept), a 1600 px copy for viewing and a
   // 320 px copy for the grid, both made in the browser (a type the browser can't draw, such as
   // HEIC on most desktops, has only the original). Sheet pins come with the Drawings step.
+  // Drawings (docs/architecture/02-drawings.md, changed like the other modules: files belong to
+  // the service identity and every record is written only by the drawings Function).
+  // One register row per sheet number; its revisions are never overwritten.
+  Sheet: [
+    ...PROJECT,
+    ...str("sheetNumber", "sheetNumberKey", "sortKey", "title", "discipline", "setName"), // key: upper case, no spaces
+    ...int("version", "revisionCount"), // version: compare-and-set guard (every publish and edit)
+    ...id("currentRevisionId", "currentFileId", "currentThumbFileId"),
+    ...str("currentRevisionLabel", "lastIssuedDate"), // lastIssuedDate: yyyy-MM-dd
+    ...int("currentRevisionIndex"),
+    ...id("createdByUserId"),
+    ...date("createdAt", "updatedAt"),
+    f("lastChange", "LastChange"),
+    ...bool("isVoided"),
+    ...str("voidReason", "searchText")
+  ],
+  SheetRevision: [
+    ...PROJECT,
+    ...id("sheetId"),
+    ...str("sheetNumber", "revisionLabel", "issuedDate", "note", "status"), // status: current | superseded | void
+    ...int("revisionIndex", "sizeBytes"), // revisionIndex: 1..n in order of issue
+    ...id("fileId", "thumbFileId"),
+    ...str("fileName"),
+    f("pageWidthPt", "Float"), // page size after rotation, from pdf.js in the browser
+    f("pageHeightPt", "Float"),
+    ...id("uploadedByUserId", "uploadedByCompanyId"),
+    ...str("uploadedByName"),
+    ...date("uploadedAt", "supersededAt", "voidedAt"),
+    ...id("voidedByUserId"),
+    f("lastChange", "LastChange"),
+    ...bool("isVoided"),
+    ...str("voidReason")
+  ],
+  // A pin belongs to the sheet and shows on every revision from fromRevisionIndex up to
+  // toRevisionIndex (0 = still open). Moving a pin on a newer revision closes the old row.
+  Pin: [
+    ...PROJECT,
+    ...id("sheetId"),
+    ...int("fromRevisionIndex", "toRevisionIndex", "version"),
+    f("x", "Float"), // 0..1 of the rotated page, origin top left
+    f("y", "Float"),
+    ...str("linkedRecordType", "linkedRecordNumber"), // rfi | punchItem
+    ...id("linkedRecordId", "createdByUserId", "createdByCompanyId", "movedFromPinId"),
+    ...str("createdByName"),
+    ...date("createdAt", "voidedAt"),
+    ...id("voidedByUserId"),
+    f("lastChange", "LastChange"),
+    ...bool("isVoided")
+  ],
   Photo: [
     ...PROJECT,
     ...id("fileId", "previewFileId", "thumbFileId"),
@@ -253,7 +302,7 @@ const entities = {
     f("tags", "String", true), // lower case
     ...str("linkedRecordType", "linkedRecordNumber", "linkedRecordLabel", "linkRole"), // type: rfi | punchItem | dailyLog | none; role: general | before | after
     ...id("linkedRecordId", "uploadedByUserId", "uploaderCompanyId"),
-    ...str("uploadedByName"),
+    ...str("uploadedByName", "clientRequestId"), // clientRequestId: on the server already, unused
     ...bool("isVoided"), // removed photos stay restorable by the PM and document controller
     ...date("voidedAt"),
     ...id("voidedByUserId"),
@@ -321,6 +370,10 @@ const access = {
   // Documents: only through the documents Function (folder rules per project role).
   DocFolder: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   Document: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  // Drawings: only through the drawings Function (subcontractors see only the pins they can open).
+  Sheet: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  SheetRevision: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  Pin: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Photos: only through the photos Function (subcontractors see their company's photos and
   // photos on records they can open).
   Photo: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },

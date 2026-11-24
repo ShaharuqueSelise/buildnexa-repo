@@ -36,7 +36,7 @@ export const NAV_GROUPS: { key: NavGroup; labelKey: TranslationKey }[] = [
 
 export const navItems: readonly NavItem[] = [
   { href: "/", labelKey: "nav.home", icon: Home, module: "home", group: "project" },
-  { href: "/drawings", labelKey: "nav.drawings", icon: MapIcon, module: "drawings", group: "project", phase: 3 },
+  { href: "/drawings", labelKey: "nav.drawings", icon: MapIcon, module: "drawings", group: "project" },
   { href: "/rfis", labelKey: "nav.rfis", icon: FileQuestion, module: "rfis", group: "project" },
   { href: "/submittals", labelKey: "nav.submittals", icon: FileStack, module: "submittals", group: "project", phase: 4 },
   { href: "/daily-logs", labelKey: "nav.dailyLogs", icon: CalendarDays, module: "logs", group: "project", phase: 3 },

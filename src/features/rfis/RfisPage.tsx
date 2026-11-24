@@ -11,7 +11,7 @@
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  AlarmClock, ArrowLeft, Check, CheckCircle2, Download, FilePlus2, Loader2, Lock, MessageSquare, Paperclip, Pencil, Plus,
+  AlarmClock, ArrowLeft, Check, CheckCircle2, Download, FilePlus2, Loader2, Lock, MapPin, MessageSquare, Paperclip, Pencil, Plus,
   RotateCcw, Send, Star, UserRoundCog, XCircle
 } from "lucide-react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
@@ -31,7 +31,7 @@ import { AttachmentList, AttachmentPicker } from "../files/Attachments";
 import type { PickedFile } from "../files/Attachments";
 import type { NewAttachment } from "../files/files";
 import { rfiUploadLinks, useRfi, useRfiAction, useRfiList } from "./rfisApi";
-import type { Impact, RfiInput, RfiRow, RfiStatus } from "./rfisApi";
+import type { Impact, RfiDetail, RfiInput, RfiPin, RfiRow, RfiStatus } from "./rfisApi";
 import "./RfisPage.css";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
@@ -85,8 +85,8 @@ function median(values: number[]): number | undefined {
   return s.length % 2 ? s[mid] : ((s[mid - 1] ?? 0) + (s[mid] ?? 0)) / 2;
 }
 
-// ---------- shared context for the list and the detail ----------
-type Ctx = {
+// ---------- shared context for the list and the detail (and the New RFI form on a drawing) ----------
+export type Ctx = {
   t: T;
   project: ProjectRow;
   team: TeamRow[];
@@ -148,13 +148,7 @@ export function RfisPage({ onNavigate, params = [] }: Nav) {
     );
   }
 
-  const nameOf = (userId?: string, fallback?: string) => {
-    const member = ws.people.find((m) => m.userId === userId);
-    if (member) return personName(member);
-    return team.find((r) => r.userId === userId)?.displayName || fallback || "";
-  };
-  const companyOf = (userId?: string) => team.find((r) => r.userId === userId)?.companyName ?? "";
-  const ctx: Ctx = { t, project, team, myUserId, myRole, today, nameOf, companyOf, toast, onNavigate };
+  const ctx = makeRfiCtx({ t, ws, project, team, myUserId, myRole, today, toast, onNavigate });
   const id = params[0];
 
   return (
@@ -369,8 +363,31 @@ function RfiListView({ ctx }: { ctx: Ctx }) {
 }
 
 // ---------- new RFI and edit ----------
-function RfiFormDialog({ ctx, seesCost, seesInternal, initial, onClose, onDone }: {
-  ctx: Ctx; seesCost: boolean; seesInternal: boolean; initial?: RfiRow; onClose: () => void; onDone: (rfiId: string) => void;
+/** The context the RFI form needs, from the projects workspace (used here and by Drawings). */
+export function makeRfiCtx({ t, ws, project, team, myUserId, myRole, today, toast, onNavigate }: {
+  t: T;
+  ws: NonNullable<ReturnType<typeof useProjects>["ws"]>;
+  project: ProjectRow;
+  team: TeamRow[];
+  myUserId: string;
+  myRole?: string;
+  today: string;
+  toast: (text: string, tone?: ToastTone) => void;
+  onNavigate: (path: string) => void;
+}): Ctx {
+  const nameOf = (userId?: string, fallback?: string) => {
+    const member = ws.people.find((m) => m.userId === userId);
+    if (member) return personName(member);
+    return team.find((r) => r.userId === userId)?.displayName || fallback || "";
+  };
+  const companyOf = (userId?: string) => team.find((r) => r.userId === userId)?.companyName ?? "";
+  return { t, project, team, myUserId, myRole, today, nameOf, companyOf, toast, onNavigate };
+}
+
+export function RfiFormDialog({ ctx, seesCost, seesInternal, initial, prefill, pin, pinLabel, onClose, onDone }: {
+  ctx: Ctx; seesCost: boolean; seesInternal: boolean; initial?: RfiRow; onClose: () => void; onDone: (rfiId: string, detail?: RfiDetail) => void;
+  /** New RFI from a drawing: starting values and the pin saved with it. */
+  prefill?: Partial<RfiInput>; pin?: RfiPin; pinLabel?: string;
 }) {
   const { t, project, team, myUserId, today, toast } = ctx;
   const action = useRfiAction(project.ItemId);
@@ -385,6 +402,7 @@ function RfiFormDialog({ ctx, seesCost, seesInternal, initial, onClose, onDone }
     discipline: initial?.discipline ?? "",
     location: initial?.location ?? "",
     dueDate: initial?.dueDate ?? addWorkingDays(today, 7),
+    ...(initial ? {} : { discipline: prefill?.discipline ?? "", location: prefill?.location ?? "" }),
     assigneeUserIds: initial?.assigneeUserIds ?? (firstDesigner ? [firstDesigner] : []),
     distributionUserIds: initial?.distributionUserIds ?? team.filter((r) => r.role === "project-manager" && r.userId !== myUserId).map((r) => r.userId),
     costImpact: initial?.costImpact ?? "tbd",
@@ -431,9 +449,9 @@ function RfiFormDialog({ ctx, seesCost, seesInternal, initial, onClose, onDone }
     try {
       const detail = initial
         ? await action.mutateAsync({ action: "edit", rfiId: initial.ItemId, changes: payload() })
-        : await action.mutateAsync({ action: "create", clientRequestId: requestId, submit, ...payload() });
+        : await action.mutateAsync({ action: "create", clientRequestId: requestId, submit, ...payload(), ...(pin ? { pin } : {}) });
       toast(initial ? t("rfi.toast.edited") : submit ? fmt(t("rfi.toast.submitted"), { number: detail.rfi.number, name: detail.rfi.ballInCourtName || "" }) : t("rfi.toast.draft"));
-      onDone(detail.rfi.ItemId);
+      onDone(detail.rfi.ItemId, detail);
     } catch (error) {
       toast(errorText(error, t), "warn");
     }
@@ -463,6 +481,7 @@ function RfiFormDialog({ ctx, seesCost, seesInternal, initial, onClose, onDone }
       }
     >
       <div className="m-form">
+        {pinLabel ? <div style={{ gridColumn: "1 / -1" }}><Note tone="info"><MapPin size={14} style={{ display: "inline", verticalAlign: -2 }} /> {pinLabel}</Note></div> : null}
         <Field label={`${t("rfi.form.subject")} *`} wide hint={required(v.subject.trim().length < 3)}>
           <input className="m-input" value={v.subject} maxLength={200} onChange={(e) => set("subject", e.target.value)} placeholder={t("rfi.form.subjectPh")} autoFocus />
         </Field>

@@ -151,7 +151,7 @@ function Loading({ text }: { text: string }) {
 }
 
 /** Reads the whole file (with progress), so pdf.js needs no range requests to storage. */
-async function fetchBytes(url: string, onProgress: (pct: number) => void) {
+export async function fetchBytes(url: string, onProgress: (pct: number) => void) {
   const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
@@ -174,7 +174,7 @@ async function fetchBytes(url: string, onProgress: (pct: number) => void) {
   return out;
 }
 
-async function pdfjs() {
+export async function pdfjs() {
   const lib = await import("pdfjs-dist");
   if (!lib.GlobalWorkerOptions.workerSrc) {
     lib.GlobalWorkerOptions.workerSrc = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;

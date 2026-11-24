@@ -1,0 +1,107 @@
+{
+  "schemaName": "Pin",
+  "collectionName": "Pins",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "sheetId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "fromRevisionIndex",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "toRevisionIndex",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "x",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "y",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "linkedRecordType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "linkedRecordNumber",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "linkedRecordId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "movedFromPinId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "createdAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "voidedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "voidedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    }
+  ]
+}

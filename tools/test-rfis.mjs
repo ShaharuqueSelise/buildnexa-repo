@@ -576,5 +576,20 @@ await test("reminders: a project admin's dry run writes and sends nothing", asyn
   globalThis.Date = RealDate;
 });
 
+await test("New RFI here: the pin is saved with the RFI, on the current revision only, for roles that pin", async () => {
+  rows("Sheet").push({ ItemId: "sheet-a101", tenantRole: T, projectId: P, sheetNumber: "A-101", currentRevisionIndex: 2, currentRevisionLabel: "A", isVoided: false });
+  const pin = { sheetId: "sheet-a101", revisionIndex: 2, x: 0.42, y: 0.61 };
+  const r = await create("supt", { pin });
+  ok(r, "supt creates with a pin");
+  const saved = rows("Pin").find((p) => p.linkedRecordId === r.rfi.ItemId);
+  expect(saved && saved.sheetId === "sheet-a101" && saved.fromRevisionIndex === 2 && saved.x === 0.42 && saved.linkedRecordNumber === r.rfi.number && !saved.isVoided, JSON.stringify(saved));
+  const before = rows("Rfi").length;
+  refused(await create("supt", { pin: { ...pin, revisionIndex: 1 } }), "NOT_CURRENT", "old revision");
+  refused(await create("supt", { pin: { ...pin, sheetId: "nope" } }), "NOT_FOUND", "unknown sheet");
+  refused(await create("supt", { pin: { ...pin, x: 2 } }), "BAD_POINT", "off the sheet");
+  refused(await create("dc", { pin }), "NOT_ALLOWED", "dc doesn't pin");
+  expect(rows("Rfi").length === before, "no RFI saved when the pin is refused");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

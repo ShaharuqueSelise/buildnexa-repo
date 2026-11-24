@@ -1,0 +1,132 @@
+{
+  "schemaName": "SheetRevision",
+  "collectionName": "SheetRevisions",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "sheetId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "sheetNumber",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "revisionLabel",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "issuedDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "note",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "revisionIndex",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "sizeBytes",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "fileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "thumbFileId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "fileName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "pageWidthPt",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "pageHeightPt",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "uploadedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "uploadedByCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "uploadedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "uploadedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "supersededAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "voidedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "voidedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "voidReason",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

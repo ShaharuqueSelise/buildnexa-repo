@@ -140,7 +140,7 @@ export function useRfi(projectId?: string, rfiId?: string) {
 }
 
 type ActionBody =
-  | ({ action: "create"; clientRequestId: string; submit: boolean } & RfiInput)
+  | ({ action: "create"; clientRequestId: string; submit: boolean; pin?: RfiPin } & RfiInput)
   | { action: "edit"; rfiId: string; changes: Partial<RfiInput> }
   | { action: "submit"; rfiId: string }
   | { action: "reassign"; rfiId: string; toUserId: string; note?: string }
@@ -152,6 +152,9 @@ type ActionBody =
   | { action: "void"; rfiId: string; reason: string };
 
 /** Runs one RFI action; the answer (the RFI's full detail) replaces the cached copy. */
+/** "New RFI here" on a drawing: the pin is saved with the RFI, on the sheet's current revision. */
+export type RfiPin = { sheetId: string; revisionIndex: number; x: number; y: number };
+
 export function useRfiAction(projectId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
