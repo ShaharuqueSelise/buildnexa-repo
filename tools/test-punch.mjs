@@ -12,11 +12,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 const store = {};
 const rows = (schema) => (store[schema] ??= []);
 const files = [];
+const sent = [];
 
 globalThis.fetch = async (url, init) => {
   const json = (body) => ({ ok: true, status: 200, json: async () => body });
   if (String(url).includes("/oidc/token")) return json({ access_token: "test-token" });
-  if (String(url).includes("/logic/v4/")) return json({ isSuccess: true });
+  if (String(url).includes("/logic/v4/")) {
+    // The bell (Notifier) and email (Mail): recorded in `sent` instead of going anywhere.
+    const b = JSON.parse(init.body);
+    if (String(url).includes("Notifier")) sent.push({ type: "bell", userIds: b.userIds, payload: JSON.parse(b.denormalizedPayload) });
+    else if (String(url).includes("Mail")) sent.push({ type: "mail", to: b.to, subject: b.subjectDataContext.Subject, data: b.bodyDataContext });
+    return json({ isSuccess: true });
+  }
   if (String(url).includes("/data/v4/files/get-files")) {
     const b = JSON.parse(init.body);
     return json({ isSuccess: true, data: b.FileIds.map((id) => ({ fileId: id, url: `https://blob.test/${id}?read=1` })) });
@@ -405,6 +412,127 @@ await test("the document controller reads the list but changes nothing", async (
   refused(await call("dc", { action: "start", itemId: first }), "INVALID_TRANSITION", "first is in progress");
   const fresh = await create("supt", { title: "For the DC" });
   refused(await call("dc", { action: "start", itemId: fresh.item.ItemId }), "NOT_ALLOWED", "dc starts");
+});
+
+// ---------- notifications (part 4) ----------
+const bellsTo = (u, kind) => sent.filter((x) => x.type === "bell" && x.userIds.includes(u) && (!kind || x.payload.kind === kind)).map((x) => x.payload);
+const mailsTo = (u) => sent.filter((x) => x.type === "mail" && x.to.includes(`${u}@test.example`));
+
+await test("marked ready tells the verifier (bell + email); nobody hears about their own change", async () => {
+  const r = await create("supt", { title: "Scuffed wall" });
+  const id = r.item.ItemId;
+  addPhoto(id, "after", "sub");
+  sent.length = 0;
+  ok(await call("sub", { action: "start", itemId: id }), "start");
+  expect(sent.length === 0, `start tells nobody: ${JSON.stringify(sent)}`);
+  const m = await call("sub", { action: "markReady", itemId: id });
+  ok(m, "mark ready");
+  const b = bellsTo("supt", "punch.ready");
+  expect(b.length === 1 && b[0].title === `${r.item.number} is ready for your check` && b[0].link === `/punch/${id}?project=${P}`, JSON.stringify(b));
+  expect(mailsTo("supt").length === 1 && mailsTo("supt")[0].subject === `[PRJ-001] ${r.item.number} is ready for your check`, "verifier email");
+  expect(mailsTo("supt")[0].data.ButtonLabel === "Open the punch item" && mailsTo("supt")[0].data.ButtonUrl.endsWith(`/punch/${id}?project=${P}`), "email button");
+  expect(bellsTo("sub").length === 0 && m.notified.bell === 1 && m.notified.email === 1 && m.notified.failed.length === 0, `notified ${JSON.stringify(m.notified)}`);
+});
+
+await test("sent back tells the whole assigned company with the reason; email off means bell only; closed is bell only", async () => {
+  const r = await create("supt", { title: "Door rubs" });
+  const id = r.item.ItemId;
+  addPhoto(id, "after", "sub");
+  ok(await call("sub", { action: "markReady", itemId: id }), "ready");
+  rows("NotificationPreference").push({ ItemId: "np-sub2", tenantRole: T, userId: "sub2", emailEnabled: false });
+  sent.length = 0;
+  ok(await call("supt", { action: "sendBack", itemId: id, reason: "Still rubs at the top" }), "send back");
+  for (const u of ["sub", "sub2"]) {
+    const b = bellsTo(u, "punch.rejected");
+    expect(b.length === 1 && b[0].title === `${r.item.number} was sent back: a new after photo is needed` && b[0].body.includes("“Still rubs at the top”"), `${u}: ${JSON.stringify(b)}`);
+  }
+  expect(mailsTo("sub").length === 1 && mailsTo("sub2").length === 0, "sub2 turned email off");
+  expect(bellsTo("other").length === 0 && bellsTo("supt").length === 0, "other company and the actor hear nothing");
+  addPhoto(id, "after", "sub");
+  sent.length = 0;
+  ok(await call("pm", { action: "close", itemId: id }), "pm closes");
+  expect(bellsTo("sub", "punch.closed").length === 1 && bellsTo("sub2", "punch.closed").length === 1, "company told it's closed");
+  expect(sent.every((x) => x.type === "bell"), "closed: no email");
+  sent.length = 0;
+  ok(await call("pm", { action: "reopen", itemId: id, reason: "Cracked again" }), "reopen");
+  expect(bellsTo("sub", "punch.rejected")[0]?.title === `${r.item.number} was reopened: a new after photo is needed`, "reopened wording");
+});
+
+await test("a bulk close sends one notice per person, not one per item", async () => {
+  const a = await create("supt", { title: "Bulk notice one" });
+  const b = await create("supt", { title: "Bulk notice two" });
+  addPhoto(a.item.ItemId, "after", "pm");
+  addPhoto(b.item.ItemId, "after", "pm");
+  sent.length = 0;
+  const r = await call("pm", { action: "bulk", op: "close", itemIds: [a.item.ItemId, b.item.ItemId] });
+  expect(r.updated.length === 2, `closed ${r.updated.length}`);
+  const told = bellsTo("sub", "punch.closed");
+  expect(told.length === 1 && told[0].title === "2 punch items were closed" && told[0].body.startsWith(`${a.item.number}, ${b.item.number}`) && told[0].link === `/punch?project=${P}`, JSON.stringify(told));
+  expect(r.notified.bell === 2, `bulk notified ${JSON.stringify(r.notified)}`);
+});
+
+const runNotices = (type, input = {}) =>
+  handler(input, { context: { tenantId: "TEN", roles: [] }, run: { invokedBy: { type } }, env: { CLIENT_ID: "id", CLIENT_SECRET: "secret" }, log: { error: (...a) => console.error("  [function error]", ...a), warn() {}, info() {} } });
+
+await test("the 15-minute pass can't be started by a person", async () => {
+  refused(await call("pm", { action: "notices" }), "BAD_ACTION", "pm asks for it");
+  refused(await runNotices("http", { method: "POST", body: { action: "notices" } }), "BAD_ACTION", "an http call is a person's call");
+});
+
+await test("new and reassigned items: one notice per company every 15 minutes; flags cleared; never twice", async () => {
+  for (const i of mine("PunchItem")) i.notifyPending = false;
+  const a = await create("supt", { title: "Batch one" });
+  const b = await create("supt", { title: "Batch two", dueDate: workingDaysAhead(3) });
+  const c = await create("supt", { title: "Batch paint", assigneeCompanyId: "paint-co" });
+  const gone = await create("supt", { title: "Closed before the run" });
+  addPhoto(gone.item.ItemId, "after", "pm");
+  ok(await call("pm", { action: "close", itemId: gone.item.ItemId }), "closed before the run");
+  expect(row(a.item.ItemId).notifyPending === true && row(gone.item.ItemId).notifyPending === true, "queued");
+  sent.length = 0;
+  const dry = await runNotices("test", { action: "notices", dryRun: true });
+  expect(dry.ok && dry.planned.some((p) => p.title === "2 new punch items for Dry Walls Ltd" && p.people === 2), `dry ${JSON.stringify(dry.planned)}`);
+  expect(sent.length === 0 && row(a.item.ItemId).notifyPending === true, "dry run sends and writes nothing");
+  const run = await runNotices("workflow");
+  expect(run.ok && run.assigned === 3 && run.assignedNotices === 2 && run.cleared === 1 && !run.planned, JSON.stringify(run));
+  const subs = bellsTo("sub", "punch.assigned");
+  expect(subs.length === 1 && subs[0].title === "2 new punch items for Dry Walls Ltd" && subs[0].body.startsWith(`${a.item.number}, ${b.item.number}`), JSON.stringify(subs));
+  expect(subs[0].link === `/punch?project=${P}&company=sub-co`, subs[0].link);
+  expect(bellsTo("sub2", "punch.assigned").length === 1, "sub2 too (sub2 has email off)");
+  const paint = bellsTo("other", "punch.assigned");
+  expect(paint.length === 1 && paint[0].title === `New punch item ${c.item.number} for Paint & Co` && paint[0].link === `/punch/${c.item.ItemId}?project=${P}`, JSON.stringify(paint));
+  expect(mailsTo("sub").length === 1 && mailsTo("other").length === 1 && mailsTo("sub2").length === 0, "emails");
+  expect(mine("PunchItem").every((i) => i.notifyPending !== true), "all flags cleared");
+  sent.length = 0;
+  const again = await runNotices("workflow");
+  expect(again.ok && again.assigned === 0 && sent.length === 0, `second run ${JSON.stringify(again)}`);
+  ok(await call("supt", { action: "reassign", itemId: a.item.ItemId, assigneeCompanyId: "paint-co" }), "reassign to Paint & Co");
+  await runNotices("workflow");
+  expect(bellsTo("other", "punch.assigned").some((p) => p.title === `New punch item ${a.item.number} for Paint & Co`), "the new company hears about the reassigned item");
+});
+
+await test("the daily overdue digest: one per company, the PM copied, once a day; reminder emails respected", async () => {
+  for (const i of mine("PunchItem")) if (["open", "inProgress"].includes(i.status)) Object.assign(i, { dueDate: dayPlus(30), overdueNoticeLastDate: "" });
+  const late = mine("PunchItem").filter((i) => i.status === "open" && i.assigneeCompanyId === "sub-co" && !i.isVoided)[0];
+  const latePaint = mine("PunchItem").filter((i) => ["open", "inProgress"].includes(i.status) && i.assigneeCompanyId === "paint-co" && !i.isVoided)[0];
+  late.dueDate = dayPlus(-5);
+  latePaint.dueDate = dayPlus(-2);
+  const ready = mine("PunchItem").find((i) => i.status === "readyForReview");
+  if (ready) ready.dueDate = dayPlus(-9);
+  rows("NotificationPreference").push({ ItemId: "np-other", tenantRole: T, userId: "other", reminderEmails: false });
+  sent.length = 0;
+  const run = await runNotices("test", { action: "notices", anyTime: true });
+  expect(run.ok && run.overdue === 2 && run.digests === 3, JSON.stringify(run));
+  const s = bellsTo("sub", "punch.overdue");
+  expect(s.length === 1 && s[0].title === "1 punch item overdue for Dry Walls Ltd" && s[0].body.startsWith(late.number), JSON.stringify(s));
+  expect(s[0].link === `/punch?project=${P}&overdue=1&company=sub-co`, s[0].link);
+  expect(bellsTo("other", "punch.overdue").length === 1 && mailsTo("other").length === 0, "reminder emails off: bell only");
+  expect(mailsTo("sub").length === 1, "sub emailed");
+  const pm = bellsTo("pm", "punch.digest");
+  expect(pm.length === 1 && pm[0].title === "2 punch items overdue on PRJ-001" && pm[0].body === "Dry Walls Ltd: 1 · Paint & Co: 1", JSON.stringify(pm));
+  expect(late.overdueNoticeLastDate === today, "marker written");
+  sent.length = 0;
+  const again = await runNotices("test", { action: "notices", anyTime: true });
+  expect(again.overdue === 0 && sent.length === 0, "once a day");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

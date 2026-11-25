@@ -134,6 +134,7 @@ list does not let anyone read the secret's value; that was tested and refused wi
 | P5 | **Change order separation of duties** | Approval within thresholds, and never approving your own change order, comes with the change orders module. |
 | P6 | **Role names** | Screens use the spec's names. System names stay (`field-user` = Subcontractor, `design-reviewer` = Designer / Consultant, `owner-viewer` = Owner). |
 | P7 | **Custom roles** | Not built. The code checks permission keys, never role names, so a custom role later is one more entry in the table. |
+| P8 | **Document Controller: pins on drawings** | A DC can create RFIs, and through `drawing.manage_versions` can move or remove any pin. But the spec gives `drawing.pin` (placing a new pin) only to the PM, superintendent and subcontractor, so a DC can't pin the RFIs they raise; the PM or superintendent has to add the pin. **Confirm** whether a DC should also place pins. If yes, add the DC to `drawing.pin`. |
 
 ## 7. Known limits (accepted for now)
 

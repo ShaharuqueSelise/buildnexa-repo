@@ -1,11 +1,12 @@
 // Project home (PRJ-02), built from the demo app's HomePage (mock/src/mock/pages/HomePage.tsx):
 // the project header, quick actions, "My items" first, then the project's health.
 // Real now: the header (project, dates, time elapsed, contract value for cost roles), the role
-// notes, "My items" for RFIs (ball in court on me) and the RFI numbers. Submittals, punch, daily
-// logs and activity fill in as each module is built; until then their panels say which phase
-// brings them.
+// notes, "My items" for RFIs and punch items (ball in court on me), and the RFI and punch numbers.
+// Submittals, daily logs and activity fill in as each module is built; until then their panels say
+// which phase brings them.
 import { CalendarDays, Camera, CheckCircle2, ClipboardCheck, FileQuestion, HardHat, Lock, MapPin, Plus, Users } from "lucide-react";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import { ROLE_LABEL, isProjectRole } from "../../lib/roles";
 import { todayIso, workingDaysBetween } from "../../lib/workdays";
@@ -16,6 +17,9 @@ import { fmtDate, fmtShortDate } from "../projects/ProjectsPage";
 import { rfisOnMe, useRfiList } from "../rfis/rfisApi";
 import type { RfiRow } from "../rfis/rfisApi";
 import { DueLabel, StatusPill } from "../rfis/RfisPage";
+import { punchOnMe, usePunchList } from "../punch/punchApi";
+import type { PunchRow } from "../punch/punchApi";
+import { StatusPill as PunchStatusPill } from "../punch/PunchPage";
 import "./Home.css";
 
 // What the person does next on an RFI that waits on them.
@@ -24,6 +28,14 @@ function rfiAction(r: RfiRow): "finish" | "review" | "pass" | "respond" {
   if (r.ballInCourtRole === "manager") return r.status === "answered" ? "review" : "pass";
   return "respond";
 }
+
+// What the person does next on a punch item that waits on them.
+function punchAction(p: PunchRow): "verify" | "start" | "fix" {
+  if (p.ballInCourtRole === "verifier" || p.status === "readyForReview") return "verify";
+  return p.status === "open" ? "start" : "fix";
+}
+
+type MineRow = { key: string; kind: "rfi" | "punch"; number: string; title: string; status: ReactNode; due?: string; over: boolean; done: boolean; action: string; link: string };
 
 const DAY = 86_400_000;
 const daysBetween = (a: number, b: number) => Math.round((b - a) / DAY);
@@ -34,6 +46,8 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
   const me = useCurrentUser();
   const { project, myRole, isAdmin, seesCost, ws, query, myUserId } = useProjects();
   const rfiList = useRfiList(myRole ? project?.ItemId : undefined);
+  const seesPunch = Boolean(myRole) && myRole !== "design-reviewer";
+  const punchList = usePunchList(seesPunch ? project?.ItemId : undefined);
   const [showAllMine, setShowAllMine] = useState(false);
 
   if (query.isLoading) return <div className="m-panel m-empty"><strong>{t("shell.loading")}</strong></div>;
@@ -74,13 +88,29 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
   // RFIs: what waits on me, and the project's numbers (only the RFIs my role may see).
   const today = todayIso();
   const rfis = rfiList.data?.rfis ?? [];
-  const mine = rfisOnMe(rfis, myUserId, today);
+  const rfisLoading = rfiList.isLoading && Boolean(myRole);
+  const punch = punchList.data?.items ?? [];
+  const punchLoading = punchList.isLoading && seesPunch;
+  const mine: MineRow[] = [
+    ...rfisOnMe(rfis, myUserId, today).map((r): MineRow => ({
+      key: r.ItemId, kind: "rfi", number: r.number || t("rfi.status.draft"), title: r.subject, status: <StatusPill status={r.status} t={t} />,
+      due: r.dueDate, over: r.status === "open" && Boolean(r.dueDate) && String(r.dueDate) < today, done: r.status !== "open" && r.status !== "draft",
+      action: t(`home.action.${rfiAction(r)}`), link: `/rfis/${r.ItemId}`
+    })),
+    ...punchOnMe(punch, myUserId).map((p): MineRow => ({
+      key: p.ItemId, kind: "punch", number: p.number, title: p.location ? `${p.title} · ${p.location}` : p.title, status: <PunchStatusPill status={p.status} t={t} />,
+      due: p.dueDate, over: p.overdue, done: false, action: t(`home.action.${punchAction(p)}`), link: `/punch/${p.ItemId}`
+    }))
+  ].sort((a, b) => Number(b.over) - Number(a.over) || String(a.due || "9999").localeCompare(String(b.due || "9999")));
   const shownMine = showAllMine ? mine : mine.slice(0, 8);
-  const overdueMine = mine.filter((r) => r.status === "open" && r.dueDate && r.dueDate < today).length;
+  const overdueMine = mine.filter((r) => r.over).length;
+  const openPunch = punch.filter((p) => p.status === "open" || p.status === "inProgress" || p.status === "readyForReview");
+  const readyPunch = openPunch.filter((p) => p.status === "readyForReview").length;
+  const overduePunch = openPunch.filter((p) => p.overdue).length;
+  const mineLoading = rfisLoading || punchLoading;
   const openRfis = rfis.filter((r) => r.status === "open" || r.status === "answered");
   const answeredRfis = rfis.filter((r) => r.status === "answered").length;
   const overdueRfis = openRfis.filter((r) => r.status === "open" && r.dueDate && r.dueDate < today);
-  const rfisLoading = rfiList.isLoading && Boolean(myRole);
   const rfiValue = (n: number) => (rfisLoading ? "…" : rfiList.isError ? "—" : n);
 
   return (
@@ -124,7 +154,7 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
         </div>
       ) : null}
 
-      {!rfisLoading && !rfiList.isError && rfis.length === 0 ? (
+      {!mineLoading && !rfiList.isError && rfis.length === 0 && punch.length === 0 ? (
         <Panel>
           <Empty icon={<HardHat size={28} />} title={t("home.emptyTitle")}>{t("home.emptyText")}</Empty>
         </Panel>
@@ -134,34 +164,31 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
         <div>
           <Panel
             className="m-panel-flush"
-            title={<>{t("home.myItems")} <Badge tone={mine.length ? "blue" : "green"}>{rfisLoading ? "…" : mine.length}</Badge></>}
+            title={<>{t("home.myItems")} <Badge tone={mine.length ? "blue" : "green"}>{mineLoading ? "…" : mine.length}</Badge></>}
             actions={<span className="m-muted m-small m-hide-mobile">{t("home.myItemsHint")}</span>}
           >
-            {rfisLoading ? (
+            {mineLoading ? (
               <div className="m-empty m-small">{t("shell.loading")}</div>
-            ) : rfiList.isError ? (
+            ) : rfiList.isError && !mine.length ? (
               <div className="m-empty m-small">{t("home.myItemsError")}</div>
             ) : mine.length === 0 ? (
               <Empty icon={<CheckCircle2 size={26} />} title={t("home.nothingTitle")}>{t("home.nothingText")}</Empty>
             ) : (
               <div className="m-home-mine">
-                {shownMine.map((r) => {
-                  const over = r.status === "open" && Boolean(r.dueDate) && String(r.dueDate) < today;
-                  return (
-                    <button key={r.ItemId} className={cx("m-home-mine-row", over && "m-home-mine-over")} onClick={() => onNavigate(`/rfis/${r.ItemId}`)}>
-                      <span className="m-home-mine-icon"><FileQuestion size={16} /></span>
-                      <span className="m-home-mine-text">
-                        <span className="m-row" style={{ gap: 6 }}><b className="m-mono">{r.number || t("rfi.status.draft")}</b><span className="m-muted m-small">RFI</span></span>
-                        <span className="m-home-mine-title">{r.subject}</span>
-                        <span className="m-small m-muted">{t(`home.action.${rfiAction(r)}`)}</span>
-                      </span>
-                      <span className="m-home-mine-meta">
-                        <StatusPill status={r.status} t={t} />
-                        <DueLabel due={r.dueDate} today={today} t={t} />
-                      </span>
-                    </button>
-                  );
-                })}
+                {shownMine.map((r) => (
+                  <button key={`${r.kind}-${r.key}`} className={cx("m-home-mine-row", r.over && "m-home-mine-over")} onClick={() => onNavigate(r.link)}>
+                    <span className="m-home-mine-icon">{r.kind === "punch" ? <ClipboardCheck size={16} /> : <FileQuestion size={16} />}</span>
+                    <span className="m-home-mine-text">
+                      <span className="m-row" style={{ gap: 6 }}><b className="m-mono">{r.number}</b><span className="m-muted m-small">{r.kind === "punch" ? t("home.kindPunch") : "RFI"}</span></span>
+                      <span className="m-home-mine-title">{r.title}</span>
+                      <span className="m-small m-muted">{r.action}</span>
+                    </span>
+                    <span className="m-home-mine-meta">
+                      {r.status}
+                      <DueLabel due={r.due} done={r.done} today={today} t={t} />
+                    </span>
+                  </button>
+                ))}
                 {mine.length > 8 ? (
                   <button className="m-home-mine-more m-link m-small" onClick={() => setShowAllMine(!showAllMine)}>
                     {showAllMine ? t("home.showFewer") : fmt(t("home.showAll"), { count: mine.length, overdue: overdueMine })}
@@ -181,7 +208,15 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
               onClick={() => onNavigate("/rfis")}
             />
             <Kpi label={t("home.kpi.overdueSubmittals")} value="—" hint={later(4)} />
-            {myRole !== "design-reviewer" ? <Kpi label={isSub ? t("home.kpi.myPunch") : t("home.kpi.openPunch")} value="—" hint={later(3)} /> : null}
+            {seesPunch ? (
+              <Kpi
+                label={isSub ? t("home.kpi.myPunch") : t("home.kpi.openPunch")}
+                value={punchLoading ? "…" : punchList.isError ? "—" : openPunch.length}
+                hint={fmt(t("home.kpi.openPunchHint"), { ready: readyPunch, overdue: overduePunch })}
+                tone={overduePunch ? "red" : readyPunch ? "amber" : undefined}
+                onClick={() => onNavigate("/punch")}
+              />
+            ) : null}
             {myRole !== "design-reviewer" ? <Kpi label={t("home.kpi.todaysLog")} value="—" hint={later(3)} /> : null}
             {cost ? <Kpi label={t("home.kpi.budget")} value="—" hint={later(4)} /> : null}
             {cost ? <Kpi label={t("home.kpi.pendingCos")} value="—" hint={later(4)} /> : null}

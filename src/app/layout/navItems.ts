@@ -64,7 +64,7 @@ const ROLE_MODULES: Record<string, ModuleKey[]> = {
   superintendent: [...ALL_PROJECT, "budget", "changeOrders", "reports"],
   "document-controller": [...ALL_PROJECT, "reports", "audit"],
   "field-user": ["home", "drawings", "rfis", "submittals", "logs", "punch", "photos", "documents", "directory", "inbox", "portfolio", "field"],
-  "design-reviewer": ["home", "drawings", "rfis", "submittals", "photos", "documents", "directory", "inbox", "portfolio"],
+  "design-reviewer": ["home", "drawings", "rfis", "submittals", "punch", "photos", "documents", "directory", "inbox", "portfolio"],
   "owner-viewer": ["home", "drawings", "rfis", "submittals", "logs", "punch", "photos", "documents", "budget", "changeOrders", "reports", "directory", "inbox", "portfolio"]
 };
 const COMPANY_ADMIN: ModuleKey[] = ["portfolio", "companyAdmin", "inbox", "directory", "home"];

@@ -136,6 +136,12 @@ const listKey = (projectId?: string) => ["punch", projectId ?? ""];
 const detailKey = (projectId?: string, itemId?: string) => ["punchItem", projectId ?? "", itemId ?? ""];
 const call = <T,>(body: Record<string, unknown>) => callFunction<T>(FUNCTIONS.punch, body);
 
+/** Active punch items whose ball is with this person: overdue first, then by due date. */
+export function punchOnMe(items: PunchRow[] | undefined, userId: string) {
+  const mine = (items ?? []).filter((p) => userId && p.ballInCourtUserId === userId && PUNCH_ACTIVE.includes(p.status) && !p.isVoided);
+  return mine.sort((a, b) => Number(b.overdue) - Number(a.overdue) || String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999")));
+}
+
 export function usePunchList(projectId?: string) {
   const queryClient = useQueryClient();
   const query = useQuery({

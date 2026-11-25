@@ -23,6 +23,10 @@
 // current revision). Pins are placed, moved and removed in the sheet viewer (drawings Function), so
 // `item.sheetId`, `item.pinId` and `item.sheetNumber` are read from the Pin and Sheet rows, and the
 // detail adds `pin` with the sheet's thumbnail and the spot on it.
+// Notifications (part 4, 06 §7): marked ready, sent back / reopened and closed are told right away
+// (tellPunch); new and reassigned items wait for the 15-minute pass, which also sends the daily
+// overdue digest (runNotices, started only by the `punch-notices` workflow or a project admin's
+// `blocks logic function test` with { action: "notices", dryRun?, anyTime? }).
 //
 // Status flow (06 §5): open -> inProgress -> readyForReview -> closed, plus void.
 // - Start and Mark ready: the general contractor (PM, superintendent) or the assigned company.
@@ -1006,6 +1010,126 @@ async function get(db, me, args) {
   return detail(db, c, String(args.itemId ?? ""));
 }
 
+// ---------- telling people (part 4; 06-punch-list.md §7) ----------
+// Right away, from the change itself:
+// - marked ready -> the verifier (who holds the ball now): bell + email;
+// - sent back / reopened -> the assigned company's people on the project: bell + email, with the reason;
+// - closed -> the assigned company's people: bell only.
+// New and reassigned items are NOT told here: the 15-minute pass (runNotices) sends one notice per
+// company, so a walkthrough of 20 items is one message, not 20. A bulk change sends one notice per
+// person ("4 punch items were closed"). Emails follow the person's settings (email off = bell only;
+// the overdue digest also follows "reminder emails").
+const PREF_FIELDS = "ItemId userId emailEnabled reminderEmails";
+const html = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const shortDate = (iso) => {
+  try {
+    return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${String(iso).slice(0, 10)}T12:00:00Z`));
+  } catch {
+    return String(iso);
+  }
+};
+const OP_EVENT = { markReady: "markedReady", sendBack: "sentBack", reopen: "reopened", close: "closed" };
+const MANY = {
+  markedReady: "are ready for your check",
+  sentBack: "were sent back: new after photos are needed",
+  reopened: "were reopened: new after photos are needed",
+  closed: "were closed"
+};
+const itemLink = (projectId, item) => `/punch/${item.ItemId}?project=${projectId}`;
+const listLink = (projectId, extra = "") => `/punch?project=${projectId}${extra}`;
+const headOf = (item) => `${item.title}${item.location ? ` · ${item.location}` : ""}`;
+function numbersOf(items, max = 8) {
+  const shown = items.slice(0, max).map((i) => i.number).join(", ");
+  return items.length > max ? `${shown} and ${items.length - max} more` : shown;
+}
+
+// The assigned company's people on this project (its field users), the named assignee first.
+function companyPeople(c, item) {
+  const people = fieldUsersOf(c, item.assigneeCompanyId);
+  const named = people.find((m) => m.userId === item.assigneeUserId);
+  return named ? [named, ...people.filter((m) => m !== named)] : people;
+}
+
+// What one change tells, and to whom.
+function noticeFor(c, item, event, extra = {}) {
+  const head = headOf(item);
+  if (event === "markedReady") {
+    return { kind: "ready", to: [memberOf(c, item.ballInCourtUserId)], title: `${item.number} is ready for your check`, body: `${head} · ${item.assigneeCompanyName} · marked ready by ${actor(c)}`, email: true };
+  }
+  if (event === "sentBack" || event === "reopened") {
+    const why = extra.reason ? ` · “${String(extra.reason).slice(0, 200)}”` : "";
+    return {
+      kind: "rejected",
+      to: companyPeople(c, item),
+      title: `${item.number} was ${event === "sentBack" ? "sent back" : "reopened"}: a new after photo is needed`,
+      body: `${head} · by ${actor(c)}${why}`,
+      email: true
+    };
+  }
+  if (event === "closed") return { kind: "closed", to: companyPeople(c, item), title: `${item.number} was closed`, body: `${head} · closed by ${actor(c)}`, email: false };
+  return null;
+}
+
+// Sends prepared messages ({ m: team member, kind, title, body, link, email }): one bell call per
+// identical message, one email per person (never a shared "to" list).
+async function deliver(db, project, messages, result, { reminder = false } = {}) {
+  if (!messages.length) return;
+  const prefs = await db.list("NotificationPreference", PREF_FIELDS, project.tenantRole).catch(() => []);
+  // One row per person; if two were ever made, the first by id counts (as in the rfis Function).
+  const firstPref = new Map();
+  for (const x of [...prefs].sort((a, b) => String(a.ItemId).localeCompare(String(b.ItemId)))) if (!firstPref.has(x.userId)) firstPref.set(x.userId, x);
+  const emailsOn = (u) => firstPref.get(u)?.emailEnabled !== false && (!reminder || firstPref.get(u)?.reminderEmails !== false);
+  const groups = new Map();
+  for (const x of messages) {
+    const key = `${x.kind}\n${x.title}\n${x.body}\n${x.link}`;
+    if (!groups.has(key)) groups.set(key, { x, users: [] });
+    groups.get(key).users.push(x.m.userId);
+  }
+  const tasks = [];
+  for (const { x, users } of groups.values()) {
+    tasks.push(db.notify(users, { title: x.title, body: x.body, link: x.link, projectId: project.ItemId, kind: `punch.${x.kind}` }).then(() => { result.bell += users.length; }));
+  }
+  for (const x of messages) {
+    if (!x.email || !x.m.email || !emailsOn(x.m.userId)) continue;
+    const subject = `${project.number ? `[${project.number}] ` : ""}${x.title}`;
+    tasks.push(db.mail(x.m.email, subject, {
+      DisplayName: html(x.m.displayName || ""),
+      Heading: html(x.title),
+      Text: html(x.body),
+      ProjectName: html(project.name || ""),
+      ButtonLabel: x.link.startsWith("/punch/") ? "Open the punch item" : "Open the punch list",
+      ButtonUrl: `${db.appUrl}${x.link}`,
+      SettingsUrl: `${db.appUrl}/inbox?tab=settings`
+    }).then(() => { result.email += 1; }));
+  }
+  for (const r of await Promise.allSettled(tasks)) if (r.status === "rejected") result.failed.push(String(r.reason?.message ?? r.reason).slice(0, 200));
+}
+
+// Tells what changes did: events = [{ item (saved), event, extra? }]. Never fails the change.
+async function tellPunch(db, c, events) {
+  const result = { bell: 0, email: 0, failed: [] };
+  try {
+    const per = new Map();
+    for (const { item, event, extra } of events) {
+      const n = noticeFor(c, item, event, extra);
+      if (!n) continue;
+      for (const m of n.to) {
+        if (!m || m.userId === c.me.userId) continue;
+        const key = `${m.userId}\n${event}`;
+        if (!per.has(key)) per.set(key, { m, event, n, items: [] });
+        per.get(key).items.push(item);
+      }
+    }
+    const messages = [...per.values()].map(({ m, event, n, items }) => (items.length === 1
+      ? { m, kind: n.kind, title: n.title, body: n.body, link: itemLink(c.projectId, items[0]), email: n.email }
+      : { m, kind: n.kind, title: `${items.length} punch items ${MANY[event]}`, body: `${numbersOf(items)} · by ${actor(c)}`, link: listLink(c.projectId), email: n.email }));
+    await deliver(db, c.project, messages, result);
+  } catch (error) {
+    result.failed.push(String(error?.message ?? error).slice(0, 200));
+  }
+  return result;
+}
+
 // ---------- writing ----------
 // One compare-and-set update: matches the version read, bumps it, stamps lastChange.
 async function save(db, c, item, changes, kind, extra = {}) {
@@ -1271,7 +1395,10 @@ function change(op) {
     const item = await loadItem(db, c, args.itemId);
     const photos = photoSummary(item, photosByItem(await loadPhotos(db, c, item.ItemId)).get(item.ItemId));
     const saved = await applyChange(db, c, item, op, args, photos);
-    return detail(db, c, saved);
+    const event = saved !== item ? OP_EVENT[op] : undefined;
+    if (!event) return detail(db, c, saved);
+    const [d, notified] = await Promise.all([detail(db, c, saved), tellPunch(db, c, [{ item: saved, event, extra: { reason: saved.lastRejectReason } }])]);
+    return { ...d, notified };
   };
 }
 
@@ -1329,6 +1456,7 @@ async function bulk(db, me, args) {
   const byItem = photosByItem(photoRows);
   const updated = [];
   const rejected = [];
+  const events = [];
   await inBatches(ids, 8, async (id) => {
     const item = byId.get(id);
     if (!item) {
@@ -1336,17 +1464,200 @@ async function bulk(db, me, args) {
       return;
     }
     try {
-      await applyChange(db, c, item, op, extra, photoSummary(item, byItem.get(id)));
+      const saved = await applyChange(db, c, item, op, extra, photoSummary(item, byItem.get(id)));
+      if (saved !== item && OP_EVENT[op]) events.push({ item: saved, event: OP_EVENT[op] });
       updated.push(id);
     } catch (error) {
       if (!(error instanceof Refused)) throw error;
       rejected.push({ itemId: id, number: item.number, code: error.code, error: error.message });
     }
   });
-  return { ok: true, op, updated, rejected };
+  const notified = events.length ? await tellPunch(db, c, events) : undefined;
+  return { ok: true, op, updated, rejected, ...(notified ? { notified } : {}) };
+}
+
+// ---------- the 15-minute pass: new assignments and the daily overdue digest (06 §4.4, §4.5) ----------
+// Run only by the `punch-notices` workflow (every 15 minutes) and by a Blocks project admin's
+// `blocks logic function test` (see handler()). No action people can name starts it.
+// 1. Assigned: items with notifyPending (new, or moved to another company) that are still active.
+//    One notice per company and project, to its people on the project: "3 new punch items for
+//    Dry Walls Ltd" (bell + email). The flag is cleared BEFORE sending, matched on the item's
+//    version as the RFI reminders do: a crash loses the notice instead of sending it twice, and an
+//    item changed meanwhile waits for the next run. Closed or void items just lose the flag.
+// 2. Overdue: once per working day, from 07:00 project time, the open and in-progress items past
+//    their due date that weren't told today (overdueNoticeLastDate) go into one digest per company
+//    (bell, + email when reminder emails are on); the project managers get one copy with the count
+//    per company. Ready-for-review items wait on the general contractor, so they're not in it.
+// Runs that Blocks skips are caught up by the next one. Archived projects are left alone.
+const NOTICE_HOUR = 7;
+const NOTICE_BUDGET_MS = 22_000;
+const RUN_FIELDS =
+  "ItemId projectId number seq title location status dueDate version isVoided assigneeCompanyId assigneeCompanyName " +
+  "notifyPending overdueNoticeLastDate";
+
+function hourIn(timeZone) {
+  try {
+    return Number(new Intl.DateTimeFormat("en-GB", { timeZone: timeZone || "Europe/Berlin", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
+  } catch {
+    return new Date().getUTCHours();
+  }
+}
+
+function workingDaysBetween(from, to) {
+  let count = 0;
+  let d = String(from).slice(0, 10);
+  const end = String(to).slice(0, 10);
+  while (d < end) {
+    d = addDays(d, 1);
+    if (!isWeekend(d)) count += 1;
+  }
+  return count;
+}
+
+// Every company's rows matching `filter` (the service reads all tenants; split per project below).
+async function readAll(db, filter) {
+  const data = await db.gql(
+    `query q($input: DynamicQueryInput) { getPunchItems(input: $input) { items { tenantRole ${RUN_FIELDS} } } }`,
+    { input: { pageNo: 1, pageSize: 1000, filter: JSON.stringify(filter) } }
+  );
+  return (data?.getPunchItems?.items ?? []).filter((i) => Object.entries(filter).every(([k, v]) => i[k] === v));
+}
+
+async function noticeProject(db, project, pending, late, started, out, options) {
+  const tenantRole = project.tenantRole;
+  const today = todayIn(project.timezone);
+  const team = await db.list("ProjectMember", TEAM_FIELDS, tenantRole, { projectId: project.ItemId });
+  const c = { me: { userId: "", tenantRole }, project, projectId: project.ItemId, active: team.filter((m) => m.status === "active"), today };
+  const overBudget = () => Date.now() - started > NOTICE_BUDGET_MS;
+  // Claim first (no version bump, so nobody's open item goes stale): 1 = ours to tell.
+  const claim = async (i, patch) => options.dryRun
+    || (await db.updateWhere("PunchItem", { ItemId: { eq: i.ItemId }, version: { eq: Number(i.version ?? 0) } }, tenantRole, patch)) === 1;
+  const companyName = (items, people) => items[0].assigneeCompanyName || people[0]?.companyName || "your company";
+  const messages = [];
+  const reminders = [];
+
+  // 1. new and reassigned items, one notice per company
+  const assigned = new Map();
+  for (const i of [...pending].sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0))) {
+    if (overBudget()) {
+      out.leftForNextRun += 1;
+      continue;
+    }
+    if (!(await claim(i, { notifyPending: false }))) continue;
+    if (i.isVoided || !ACTIVE.includes(i.status)) {
+      out.cleared += 1;
+      continue;
+    }
+    if (!assigned.has(i.assigneeCompanyId)) assigned.set(i.assigneeCompanyId, []);
+    assigned.get(i.assigneeCompanyId).push(i);
+  }
+  for (const [companyId, items] of assigned) {
+    out.assigned += items.length;
+    const people = fieldUsersOf(c, companyId);
+    if (!people.length) continue;
+    const name = companyName(items, people);
+    const first = items.map((i) => i.dueDate).filter(Boolean).sort()[0];
+    const one = items.length === 1;
+    const title = one ? `New punch item ${items[0].number} for ${name}` : `${items.length} new punch items for ${name}`;
+    const body = one ? `${headOf(items[0])}${first ? ` · due ${shortDate(first)}` : ""}` : `${numbersOf(items)}${first ? ` · first due ${shortDate(first)}` : ""}`;
+    const link = one ? itemLink(c.projectId, items[0]) : listLink(c.projectId, `&company=${encodeURIComponent(companyId)}`);
+    out.assignedNotices += 1;
+    for (const m of people) messages.push({ m, kind: "assigned", title, body, link, email: true });
+  }
+
+  // 2. the daily overdue digest (late = this project's candidates, already checked for the hour)
+  const lateBy = new Map();
+  for (const i of [...late].sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)))) {
+    if (overBudget()) {
+      out.leftForNextRun += 1;
+      continue;
+    }
+    if (!(await claim(i, { overdueNoticeLastDate: today }))) continue;
+    out.overdue += 1;
+    if (!lateBy.has(i.assigneeCompanyId)) lateBy.set(i.assigneeCompanyId, []);
+    lateBy.get(i.assigneeCompanyId).push(i);
+  }
+  const lines = [];
+  for (const [companyId, items] of lateBy) {
+    const people = fieldUsersOf(c, companyId);
+    const name = companyName(items, people);
+    lines.push(`${name}: ${items.length}`);
+    if (!people.length) continue;
+    const oldest = Math.max(...items.map((i) => workingDaysBetween(i.dueDate, today)));
+    const title = `${plural(items.length, "punch item")} overdue for ${name}`;
+    const body = `${numbersOf(items)} · oldest ${plural(oldest, "working day")} late`;
+    out.digests += 1;
+    for (const m of people) reminders.push({ m, kind: "overdue", title, body, link: listLink(c.projectId, `&overdue=1&company=${encodeURIComponent(companyId)}`), email: true });
+  }
+  const pms = c.active.filter((m) => m.role === "project-manager");
+  if (lines.length && pms.length) {
+    const total = [...lateBy.values()].reduce((n, items) => n + items.length, 0);
+    const title = `${plural(total, "punch item")} overdue on ${project.number || project.name}`;
+    out.digests += 1;
+    for (const m of pms) reminders.push({ m, kind: "digest", title, body: lines.join(" · "), link: listLink(c.projectId, "&overdue=1"), email: true });
+  }
+
+  if (options.dryRun) {
+    const seen = new Map();
+    for (const x of [...messages, ...reminders]) {
+      const key = `${x.kind}\n${x.title}`;
+      if (!seen.has(key)) seen.set(key, { project: project.number, kind: `punch.${x.kind}`, title: x.title, people: 0 });
+      seen.get(key).people += 1;
+    }
+    out.planned.push(...seen.values());
+    return;
+  }
+  await deliver(db, project, messages, out);
+  await deliver(db, project, reminders, out, { reminder: true });
+}
+
+async function runNotices(ctx, options = {}) {
+  const started = Date.now();
+  const out = { ok: true, projects: 0, assigned: 0, assignedNotices: 0, cleared: 0, overdue: 0, digests: 0, bell: 0, email: 0, leftForNextRun: 0, failed: [], planned: [] };
+  try {
+    const db = client(ctx, await serviceToken(ctx));
+    // Every company's flagged and late-candidate items in three reads (filtered on the server).
+    const [pending, open, inProgress] = await Promise.all([
+      readAll(db, { notifyPending: true }),
+      readAll(db, { status: "open" }),
+      readAll(db, { status: "inProgress" })
+    ]);
+    const working = [...open, ...inProgress].filter((i) => !i.isVoided && DATE.test(String(i.dueDate ?? "")));
+    if (pending.length || working.length) {
+      const projects = await db.listAll("Project", "ItemId number name status timezone");
+      for (const project of projects) {
+        if (project.status === "archived") continue;
+        const ours = (i) => i.tenantRole === project.tenantRole && i.projectId === project.ItemId;
+        const today = todayIn(project.timezone);
+        const digestTime = options.anyTime || (!isWeekend(today) && hourIn(project.timezone) >= NOTICE_HOUR);
+        const p = pending.filter(ours);
+        const late = digestTime ? working.filter((i) => ours(i) && i.dueDate < today && i.overdueNoticeLastDate !== today) : [];
+        if (!p.length && !late.length) continue;
+        if (Date.now() - started > NOTICE_BUDGET_MS) {
+          out.leftForNextRun += p.length + late.length;
+          continue;
+        }
+        out.projects += 1;
+        await noticeProject(db, project, p, late, started, out, options);
+      }
+    }
+  } catch (error) {
+    ctx.log.error("punch notices failed", { message: error.message });
+    out.ok = false;
+    out.failed.push(String(error?.message ?? error).slice(0, 200));
+  }
+  ctx.log.info("punch notices", { ...out, planned: out.planned.length });
+  if (!options.dryRun) delete out.planned;
+  return out;
 }
 
 export default async function handler(input, ctx) {
+  // The 15-minute notice workflow. `ctx.run.invokedBy` is set by Blocks, not by the caller, so an
+  // app user can't start it. A project admin's test run may ask for a dry run (nothing written or
+  // sent) and ignore the working-day and 07:00 rule of the overdue digest (anyTime).
+  const by = ctx.run?.invokedBy?.type;
+  if (by === "workflow") return runNotices(ctx);
+  if (by === "test" && input?.action === "notices") return runNotices(ctx, { dryRun: input.dryRun === true, anyTime: input.anyTime === true });
   return handle(input, ctx, "punch", {
     list: (args, { db, me }) => list(db, me, args),
     get: (args, { db, me }) => get(db, me, args),

@@ -59,7 +59,7 @@ type Ctx = {
   onNavigate: (path: string) => void;
 };
 
-function StatusPill({ status, t }: { status: PunchStatus; t: T }) {
+export function StatusPill({ status, t }: { status: PunchStatus; t: T }) {
   return <Badge tone={STATUS_TONE[status] ?? "gray"}>{t(`punch.status.${status}` as TranslationKey)}</Badge>;
 }
 
@@ -125,7 +125,8 @@ function PunchListView({ ctx, openId }: { ctx: Ctx; openId?: string }) {
   const search = new URLSearchParams(window.location.search);
   const [view, setView] = useState<View>("table");
   const [status, setStatus] = useState<StatusFilter>("active");
-  const [company, setCompany] = useState("");
+  // The company's notices (new items, overdue digest) link here with ?company=<id>.
+  const [company, setCompany] = useState(() => search.get("company") ?? "");
   const [location, setLocation] = useState("");
   const [priority, setPriority] = useState("");
   const [ball, setBall] = useState("");

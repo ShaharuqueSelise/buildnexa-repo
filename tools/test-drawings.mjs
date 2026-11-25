@@ -373,5 +373,22 @@ await test("sheet details: managers only, version checked, numbers unique", asyn
   expect(mine("ActivityEvent").some((e) => e.recordType === "sheet" && e.action === "edited"), "history");
 });
 
+await test("a new revision also tells who holds the ball on a pinned punch item; closed items stay quiet", async () => {
+  const pi = mine("PunchItem").find((i) => i.ItemId === "pi-other");
+  Object.assign(pi, { status: "readyForReview", ballInCourtUserId: "supt", ballInCourtName: "SUPT" });
+  const s = sheetBy("A-102");
+  const at = { sheetId: s.ItemId, revisionIndex: s.currentRevisionIndex, recordType: "punchItem" };
+  ok(await call("pm", { action: "pin", ...at, x: 0.3, y: 0.3, recordId: "pi-other" }), "pm pins PI-002 on A-102");
+  sent.length = 0;
+  ok(await publish("dc", [{ sheetNumber: "A-102", revisionLabel: "A" }]), "dc publishes A-102 rev A");
+  const told = bells("drawing.pinned_sheet_revised");
+  expect(told.length === 1 && told[0].userIds.join(",") === "supt", `told ${JSON.stringify(told.map((b) => b.userIds))}`);
+  expect(told[0].payload.body === "Check that PI-002 on A-102 still points at the right spot.", told[0].payload.body);
+  Object.assign(pi, { status: "closed" });
+  sent.length = 0;
+  ok(await publish("dc", [{ sheetNumber: "A-102", revisionLabel: "B" }]), "rev B");
+  expect(bells("drawing.pinned_sheet_revised").length === 0, "a closed item's pin tells nobody");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

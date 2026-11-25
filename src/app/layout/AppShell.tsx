@@ -14,6 +14,7 @@ import { ProjectSwitcher } from "../../features/projects/ProjectSwitcher";
 import { useProjects } from "../../features/projects/projectsApi";
 import { useNotifications } from "../../features/notifications/notificationsApi";
 import { rfisOnMe, useRfiList } from "../../features/rfis/rfisApi";
+import { punchOnMe, usePunchList } from "../../features/punch/punchApi";
 import { todayIso } from "../../lib/workdays";
 import { useQueryClient } from "@tanstack/react-query";
 import { cx } from "../../shared/m/ui";
@@ -60,17 +61,22 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
   // RFIs waiting on me in the current project (the same list the RFI page uses, so one call).
   const rfiList = useRfiList(myRole ? project?.ItemId : undefined);
   const rfisMine = rfisOnMe(rfiList.data?.rfis, myUserId, todayIso()).length;
-  // A new notification usually means an RFI moved: refresh the RFI screens and My items.
+  // A new notification usually means an RFI or a punch item moved: refresh their screens and My items.
   const queryClient = useQueryClient();
   const lastUnread = useRef(unread);
   useEffect(() => {
     if (unread > lastUnread.current) {
       void queryClient.invalidateQueries({ queryKey: ["rfis"] });
       void queryClient.invalidateQueries({ queryKey: ["rfi"] });
+      void queryClient.invalidateQueries({ queryKey: ["punch"] });
+      void queryClient.invalidateQueries({ queryKey: ["punchItem"] });
     }
     lastUnread.current = unread;
   }, [unread, queryClient]);
   const visible = visibleModules({ projectRole: myRole, isAdmin, isPlatformAdmin, platformOnly });
+  // Punch items waiting on me (to fix, or to verify), from the list the punch page uses.
+  const punchList = usePunchList(myRole && visible.has("punch") ? project?.ItemId : undefined);
+  const punchMine = punchOnMe(punchList.data?.items, myUserId).length;
   // A platform admin outside any company starts in the platform area.
   const startPath = platformOnly ? "/platform" : "/";
   const active = navItemFor(activePath);
@@ -94,7 +100,7 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
   useEffect(() => { contentRef.current?.scrollTo({ top: 0 }); }, [activePath]);
 
   // What needs attention, per item (more counts arrive with each module).
-  const counts: Partial<Record<string, number>> = { "/inbox": unread || undefined, "/rfis": rfisMine || undefined };
+  const counts: Partial<Record<string, number>> = { "/inbox": unread || undefined, "/rfis": rfisMine || undefined, "/punch": punchMine || undefined };
 
   return (
     <div className="m-root">
@@ -134,7 +140,7 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
           {phone ? (
             <button className="m-icon-btn m-rel" onClick={() => setMenuOpen((v) => !v)} aria-label={t("shell.openMenu")} aria-expanded={menuOpen}>
               <Menu size={20} />
-              {rfisMine ? <span className="m-menu-dot" /> : null}
+              {rfisMine || punchMine ? <span className="m-menu-dot" /> : null}
             </button>
           ) : (
             <button className="m-icon-btn" onClick={() => setCollapsed((v) => !v)} aria-label={t("shell.toggleSidebar")}><PanelLeft size={18} /></button>

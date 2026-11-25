@@ -1,0 +1,17 @@
+{
+  "name": "punch-notices",
+  "settings": {},
+  "nodes": [
+    { "id": "t1", "name": "Every 15 minutes", "category": "trigger", "type": "schedule", "version": "v1",
+      "position": { "x": 0, "y": 0 },
+      "parameters": { "triggerInterval": "custom", "cronExpression": "*/15 * * * *" },
+      "settings": {}, "pinData": null },
+    { "id": "f1", "name": "Punch notices", "category": "action", "type": "function", "version": "v1",
+      "position": { "x": 300, "y": 0 },
+      "parameters": { "functionId": "1afe4026-70cf-4bc8-b6b8-e59d42d76eb8", "inputMode": "item" },
+      "settings": {}, "pinData": null }
+  ],
+  "edges": [
+    { "id": "e1", "source": "t1", "target": "f1", "sourceHandle": "source", "targetHandle": "target" }
+  ]
+}

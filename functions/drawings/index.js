@@ -632,7 +632,7 @@ const TEAM_FIELDS = "ItemId userId displayName email companyId companyName role 
 const RFI_FIELDS =
   "ItemId number subject status isVoided dueDate ballInCourtUserId ballInCourtName createdByUserId createdByCompanyId assigneeUserIds distributionUserIds";
 const PREF_FIELDS = "ItemId userId emailEnabled";
-const PUNCH_FIELDS = "ItemId number title status isVoided dueDate assigneeCompanyId assigneeCompanyName ballInCourtName createdByUserId";
+const PUNCH_FIELDS = "ItemId number title status isVoided dueDate assigneeCompanyId assigneeCompanyName ballInCourtUserId ballInCourtName createdByUserId";
 const PUNCH_ACTIVE = ["open", "inProgress", "readyForReview"];
 
 // ---------- small helpers ----------
@@ -1263,8 +1263,8 @@ async function publish(db, me, args) {
 }
 
 // The team hears about new sheets and revisions: a bell for everyone, an email when a revision
-// replaces an older one ("don't build from the old sheet"). People holding the ball on an RFI
-// pinned to a revised sheet are told to check their pin.
+// replaces an older one ("don't build from the old sheet"). People holding the ball on an RFI or a
+// punch item pinned to a revised sheet are told to check their pin.
 async function tellIssued(db, c, issued) {
   const result = { bell: 0, email: 0, failed: [] };
   try {
@@ -1298,15 +1298,17 @@ async function tellIssued(db, c, issued) {
           SettingsUrl: `${db.appUrl}/inbox?tab=settings`
         }).then(() => { result.email += 1; }));
       }
-      // Ball holders of open RFIs pinned on a revised sheet: check the pin still fits.
+      // Ball holders of open RFIs and active punch items pinned on a revised sheet: check the pin still fits.
       const sheetIds = new Set(revised.map((r) => r.sheetId));
-      const pins = (await loadPins(db, c)).filter((p) => sheetIds.has(p.sheetId) && !p.isVoided && !Number(p.toRevisionIndex) && p.linkedRecordType === "rfi");
+      const pins = (await loadPins(db, c)).filter((p) => sheetIds.has(p.sheetId) && !p.isVoided && !Number(p.toRevisionIndex) && (p.linkedRecordType === "rfi" || p.linkedRecordType === "punchItem"));
       if (pins.length) {
-        await loadRfis(db, c);
+        await Promise.all([loadRfis(db, c), loadPunch(db, c)]);
         const ask = new Map();
         for (const p of pins) {
-          const r = c.rfiById.get(p.linkedRecordId);
-          if (!r || r.isVoided || r.status === "closed" || r.status === "void" || r.status === "draft") continue;
+          const punch = p.linkedRecordType === "punchItem";
+          const r = punch ? c.punchById.get(p.linkedRecordId) : c.rfiById.get(p.linkedRecordId);
+          if (!r || r.isVoided) continue;
+          if (punch ? !PUNCH_ACTIVE.includes(r.status) : r.status === "closed" || r.status === "void" || r.status === "draft") continue;
           const u = r.ballInCourtUserId;
           if (!u || u === c.me.userId || !c.active.some((m) => m.userId === u)) continue;
           const s = revised.find((x) => x.sheetId === p.sheetId);
@@ -1316,7 +1318,7 @@ async function tellIssued(db, c, issued) {
         for (const [u, items] of ask) {
           tasks.push(db.notify([u], {
             title: "A sheet with your pin was revised",
-            body: `Check that ${items.join(", ")} still points at the right spot.`,
+            body: `Check that ${items.join(", ")} still ${items.length === 1 ? "points" : "point"} at the right spot.`,
             link: `/drawings/${revised[0].sheetId}?project=${c.projectId}`,
             projectId: c.projectId,
             kind: "drawing.pinned_sheet_revised"

@@ -26,10 +26,14 @@ const KIND_META: Record<Kind, { label: TranslationKey; icon: ReactNode; tone: To
   decided: { label: "inbox.kind.decided", icon: <CheckCheck size={16} />, tone: "green" },
   info: { label: "inbox.kind.info", icon: <Info size={16} />, tone: "gray" }
 };
-// Reminders (Part 4): due soon, overdue, and the RFI manager's list of overdue RFIs.
-const REMINDER_KINDS = ["rfi.due", "rfi.overdue", "rfi.digest"];
+// Reminders: RFIs due soon or overdue, the RFI manager's list of overdue RFIs, and the punch
+// list's daily overdue digest (per company, the PM copied).
+const REMINDER_KINDS = ["rfi.due", "rfi.overdue", "rfi.digest", "punch.overdue", "punch.digest"];
+// Work that lands on me: an RFI's ball, new punch items for my company, a fix to check, a fix sent back.
+const TURN_KINDS = ["rfi.turn", "punch.assigned", "punch.ready", "punch.rejected"];
+const DECIDED_KINDS = ["rfi.decided", "punch.closed"];
 const kindOf = (n: AppNotification): Kind =>
-  n.kind === "rfi.turn" ? "turn" : REMINDER_KINDS.includes(n.kind ?? "") ? "reminder" : n.kind === "rfi.decided" ? "decided" : "info";
+  TURN_KINDS.includes(n.kind ?? "") ? "turn" : REMINDER_KINDS.includes(n.kind ?? "") ? "reminder" : DECIDED_KINDS.includes(n.kind ?? "") ? "decided" : "info";
 
 const timeOf = (iso?: string) => {
   if (!iso) return "";
@@ -172,6 +176,10 @@ function SettingsTab({ toast, onNavigate }: { toast: (text: string) => void; onN
   const rows: { label: TranslationKey; hint: TranslationKey; email: boolean; on?: boolean }[] = [
     { label: "inbox.event.turn", hint: "inbox.event.turnHint", email: true },
     { label: "inbox.event.reminder", hint: "inbox.event.reminderHint", email: true, on: remindersOn },
+    { label: "inbox.event.punchAssigned", hint: "inbox.event.punchAssignedHint", email: true },
+    { label: "inbox.event.punchReady", hint: "inbox.event.punchReadyHint", email: true },
+    { label: "inbox.event.punchOverdue", hint: "inbox.event.punchOverdueHint", email: true, on: remindersOn },
+    { label: "inbox.event.punchClosed", hint: "inbox.event.punchClosedHint", email: false },
     { label: "inbox.event.mine", hint: "inbox.event.mineHint", email: true },
     { label: "inbox.event.list", hint: "inbox.event.listHint", email: false }
   ];
