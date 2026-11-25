@@ -5,7 +5,8 @@
 // Every action goes through the photos Function, which decides who may do what; the buttons
 // shown here follow its answer (can.upload, can.manage, photo.canEdit, photo.canRemove).
 // Deep link: /photos/<photoId> opens the lightbox.
-// Not real yet: sheet pins (Drawings step), links to punch items and daily logs (their steps),
+// Punch items link their before and after photos here (the punch page uploads them). Not real yet:
+// sheet pins (Drawings step), links to daily logs (their step),
 // linking an existing photo to another record (R2), download as a zip (R2), Draft RFI from a
 // photo (R3), uploads that continue after the app is closed (R2, PWA).
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -157,6 +158,7 @@ function PhotosView({ projectId, openId, onNavigate, toast, t }: { projectId: st
     if (author && p.uploadedByUserId !== author) return false;
     if (linkKind === "none" && p.link) return false;
     if (linkKind === "rfi" && p.link?.type !== "rfi") return false;
+    if (linkKind === "punchItem" && p.link?.type !== "punchItem") return false;
     if (needle) {
       const hay = `${p.caption} ${p.fileName} ${p.locationLabel} ${p.tags.join(" ")} ${p.uploadedByName} ${p.link ? `${p.link.number} ${p.link.label}` : ""}`.toLowerCase();
       if (!hay.includes(needle)) return false;
@@ -282,7 +284,7 @@ function PhotosView({ projectId, openId, onNavigate, toast, t }: { projectId: st
         <Select value={loc} onChange={setLoc} options={locations} placeholder={t("photo.allLocations")} />
         <Select value={tag} onChange={setTag} options={allTags.map((x) => ({ value: x, label: `#${x}` }))} placeholder={t("photo.allTags")} />
         <Select value={author} onChange={setAuthor} options={authors} placeholder={t("photo.allAuthors")} />
-        <Select value={linkKind} onChange={setLinkKind} options={[{ value: "rfi", label: t("photo.linkedRfi") }, { value: "none", label: t("photo.notLinked") }]} placeholder={t("photo.anyRecord")} />
+        <Select value={linkKind} onChange={setLinkKind} options={[{ value: "rfi", label: t("photo.linkedRfi") }, { value: "punchItem", label: t("photo.linkedPunch") }, { value: "none", label: t("photo.notLinked") }]} placeholder={t("photo.anyRecord")} />
       </div>
       <div className="m-toolbar">
         <Segmented value={mode} onChange={setMode} options={[{ key: "timeline", label: t("photo.mode.timeline") }, { key: "albums", label: t("photo.mode.albums") }, { key: "location", label: t("photo.mode.location") }]} />
@@ -565,7 +567,11 @@ function Lightbox({ projectId, photo, previewUrl, index, total, myCompanyId, all
             [t("photo.taken"), `${fmtDate(photo.takenAt)} · ${timeOf(photo.takenAt)}`],
             [t("photo.by"), <>{photo.uploadedByName}{photo.uploaderCompanyId === myCompanyId ? <span className="m-muted"> · {t("photo.yourCompany")}</span> : null}</>],
             [t("photo.location"), photo.locationLabel || <span className="m-muted">—</span>],
-            [t("photo.linked"), photo.link ? <button type="button" className="m-link" onClick={() => onNavigate(`/rfis/${encodeURIComponent(photo.link!.id)}`)}>{photo.link.number} · {photo.link.label}</button> : <span className="m-muted">{t("photo.notLinked")}</span>],
+            [t("photo.linked"), photo.link ? (
+              <button type="button" className="m-link" onClick={() => onNavigate(`/${photo.link!.type === "punchItem" ? "punch" : "rfis"}/${encodeURIComponent(photo.link!.id)}`)}>
+                {photo.link.number} · {photo.link.label}{photo.link.role === "before" || photo.link.role === "after" ? ` · ${t(photo.link.role === "before" ? "photo.roleBefore" : "photo.roleAfter")}` : ""}
+              </button>
+            ) : <span className="m-muted">{t("photo.notLinked")}</span>],
             [t("photo.sheet"), <span className="m-muted">{t("photo.sheetLater")}</span>],
             [t("photo.file"), <span className="m-small">{photo.fileName} · {fileSize(photo.sizeBytes)}{dims}</span>]
           ]} />

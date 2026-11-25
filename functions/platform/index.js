@@ -520,6 +520,7 @@ const PROJECT_PERMISSIONS = {
   "punch_item.assign": [PM, SUPT],
   "punch_item.close": [PM, SUPT],
   "punch_item.update_assigned": [SUB],
+  "punch_item.void": [PM], // the creator may also void their own item while it is still open
   // Budget
   "budget.view": [PM],
   "budget.manage": [PM],

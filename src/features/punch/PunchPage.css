@@ -1,0 +1,53 @@
+/* Punch list page (from mock/src/mock/pages/PunchPage.css). Class names prefixed m-punch-. */
+.m-punch-bulk { align-items: center; background: hsl(var(--m-blue-bg)); border-radius: 10px; color: hsl(var(--m-blue-fg)); display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; padding: 8px 12px; }
+.m-punch-bulk .m-input { background: hsl(var(--card)); width: auto; }
+.m-punch-bulk b { margin-right: 6px; }
+.m-punch-title { align-items: center; display: flex; gap: 10px; min-width: 220px; }
+.m-punch-thumb { border-radius: 6px; flex: none; object-fit: cover; }
+.m-punch-thumb-empty { align-items: center; background: hsl(var(--secondary)); color: hsl(var(--muted-foreground)); display: inline-flex; justify-content: center; }
+.m-punch-thumb-warn { background: hsl(var(--m-amber-bg)); color: hsl(var(--m-amber-fg)); }
+.m-punch-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.m-punch-filters .m-input { width: auto; }
+.m-punch-col-over { outline: 2px dashed hsl(var(--primary)); outline-offset: -2px; }
+.m-punch-card-meta { align-items: center; color: hsl(var(--muted-foreground)); display: flex; flex-wrap: wrap; font-size: 12px; gap: 6px; justify-content: space-between; }
+.m-punch-card-busy { opacity: .6; }
+.m-punch-pending { display: grid; gap: 6px; margin-bottom: 12px; }
+.m-punch-pending-row { align-items: center; background: hsl(var(--card)); border: 1px dashed hsl(var(--primary) / .5); border-radius: 10px; display: flex; gap: 10px; padding: 8px 12px; }
+.m-punch-pending-failed { border-color: hsl(var(--m-red-fg) / .6); }
+.m-punch-stepper { display: flex; gap: 4px; margin: 4px 0 16px; }
+.m-punch-step { align-items: center; background: hsl(var(--secondary)); border-radius: 8px; color: hsl(var(--muted-foreground)); display: flex; flex: 1; font-size: 12px; font-weight: 600; gap: 6px; justify-content: center; min-width: 0; padding: 8px 6px; text-align: center; }
+.m-punch-step.m-punch-done { background: hsl(var(--m-green-bg)); color: hsl(var(--m-green-fg)); }
+.m-punch-step.m-punch-now { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.m-punch-step.m-punch-void { background: hsl(var(--m-gray-bg)); text-decoration: line-through; }
+.m-punch-photos { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; margin-bottom: 16px; }
+.m-punch-photos h4 { color: hsl(var(--muted-foreground)); font-size: 11.5px; letter-spacing: .04em; margin: 0 0 6px; text-transform: uppercase; }
+.m-punch-photo-list { display: grid; gap: 6px; }
+.m-punch-photo { background: none; border: 0; cursor: zoom-in; display: grid; gap: 3px; padding: 0; text-align: left; }
+.m-punch-photo img { aspect-ratio: 4 / 3; border-radius: 10px; object-fit: cover; width: 100%; }
+.m-punch-photo small { color: hsl(var(--muted-foreground)); font-size: 11px; }
+.m-punch-nophoto { align-items: center; aspect-ratio: 4 / 3; border: 2px dashed hsl(var(--border)); border-radius: 10px; color: hsl(var(--muted-foreground)); display: grid; font-size: 12.5px; gap: 8px; justify-items: center; padding: 10px; place-content: center; text-align: center; }
+.m-punch-actions { background: hsl(var(--secondary) / .5); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; padding: 10px; }
+.m-punch-section { margin-top: 18px; }
+.m-punch-section > h4 { align-items: center; display: flex; font-size: 13px; gap: 6px; margin: 0 0 8px; }
+.m-punch-capture { align-items: center; aspect-ratio: 16 / 9; background: repeating-linear-gradient(45deg, hsl(var(--secondary)), hsl(var(--secondary)) 12px, hsl(var(--card)) 12px, hsl(var(--card)) 24px); border: 2px dashed hsl(var(--primary) / .6); border-radius: 14px; color: hsl(var(--primary)); cursor: pointer; display: grid; font-size: 16px; font-weight: 600; gap: 8px; justify-items: center; place-content: center; width: 100%; }
+.m-punch-capture:hover { background: hsl(var(--m-blue-bg)); }
+.m-punch-shot { position: relative; }
+.m-punch-shot img { aspect-ratio: 16 / 9; border-radius: 14px; display: block; object-fit: cover; width: 100%; }
+.m-punch-shot-retake { position: absolute; right: 8px; top: 8px; }
+.m-punch-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.m-punch-chip { background: hsl(var(--secondary)); border: 1px solid transparent; border-radius: 999px; color: inherit; cursor: pointer; font-size: 12.5px; padding: 5px 10px; }
+.m-punch-chip:hover, .m-punch-chip.m-punch-on { border-color: hsl(var(--primary)); color: hsl(var(--primary)); }
+.m-punch-timer { font-variant-numeric: tabular-nums; }
+.m-punch-bars { display: grid; gap: 6px; }
+.m-punch-bars button { align-items: center; background: none; border: 0; color: inherit; cursor: pointer; display: grid; font-size: 12.5px; gap: 8px; grid-template-columns: minmax(90px, 1fr) 2fr 28px; padding: 2px 0; text-align: left; }
+.m-punch-bars button span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-punch-bars b { text-align: right; }
+.m-punch-bar { background: hsl(var(--secondary)); border-radius: 999px; display: block; height: 8px; overflow: hidden; }
+.m-punch-bar i { border-radius: 999px; display: block; height: 100%; }
+@media (max-width: 760px) {
+  .m-punch-photos { gap: 8px; }
+  .m-punch-step { font-size: 10.5px; padding: 6px 3px; }
+  .m-punch-step svg { display: none; }
+  .m-punch-filters .m-input { flex: 1 1 140px; }
+  .m-punch-title { min-width: 0; }
+}

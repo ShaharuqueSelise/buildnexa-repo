@@ -13,7 +13,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { FUNCTIONS, callFunction } from "../../lib/blocks/functions";
 import { MAX_FILE_BYTES, put } from "../files/files";
 
-export type PhotoLink = { type: "rfi"; id: string; number: string; label: string; role: string };
+export type PhotoLink = { type: "rfi" | "punchItem"; id: string; number: string; label: string; role: string };
 
 export type Photo = {
   ItemId: string;
@@ -269,7 +269,9 @@ function readExifDate(view: DataView, tiff: number): string | undefined {
 }
 
 // ---------- the upload queue (lives while the app is open) ----------
-export type UploadOptions = { locationLabel?: string; tags?: string[]; link?: { type: "rfi"; id: string } };
+/** A photo for a record: an RFI, or a punch item's before or after photo (functions/photos add). */
+export type UploadLink = { type: "rfi"; id: string } | { type: "punchItem"; id: string; role: "before" | "after" };
+export type UploadOptions = { locationLabel?: string; tags?: string[]; link?: UploadLink };
 
 type Slot = {
   fileId: string;

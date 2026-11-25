@@ -309,13 +309,53 @@ const entities = {
     f("lastChange", "LastChange"),
     ...str("searchText")
   ],
+  // Punch list (docs/architecture/06-punch-list.md, changed like the other modules: written and
+  // read only by the punch Function, which checks the caller's company itself, so no
+  // assigneeCompanyUserIds copy and no PunchNotifyMarker). Before and after photos are Photo
+  // records linked with linkRole before | after (the photos Function); the item stores none.
+  PunchItem: [
+    ...PROJECT,
+    ...str("number"), // PI-014
+    ...int("seq", "version"), // version: +1 on every update, the compare-and-set guard
+    ...str("clientRequestId", "title", "description"),
+    ...str("status", "priority"), // status: open | inProgress | readyForReview | closed | void; priority: low | normal | high
+    ...str("trade", "location", "dueDate"), // dueDate: yyyy-MM-dd in the project's timezone
+    ...id("assigneeCompanyId", "assigneeUserId"),
+    ...str("assigneeCompanyName", "assigneeName"),
+    ...id("ballInCourtUserId"),
+    ...str("ballInCourtName", "ballInCourtRole"), // role: assignee | verifier | none
+    ...id("createdByUserId", "createdByCompanyId"),
+    ...str("createdByName"),
+    ...date("createdAt", "startedAt", "readyAt", "closedAt"),
+    ...id("readyByUserId", "closedByUserId"),
+    ...int("reopenCount"),
+    ...str("lastRejectReason"),
+    // After photos count only from this moment on: sending an item back asks for a new one.
+    ...date("afterPhotoSince"),
+    // Created with a photo still uploading: the item says "photo missing" until one arrives.
+    ...bool("photoExpected"),
+    ...id("sheetId", "pinId"),
+    // Batched "assigned to your company" notice (every 15 minutes, Part 4).
+    ...bool("notifyPending"),
+    ...date("notifyPendingSince"),
+    ...str("overdueNoticeLastDate"),
+    f("lastChange", "LastChange"),
+    ...bool("isVoided"),
+    ...date("voidedAt"),
+    ...id("voidedByUserId"),
+    ...str("voidReason", "searchText")
+  ],
+  // Comments on a record (punch items first). Written by the module's Function, so the author is
+  // stored here (Blocks' own CreatedBy is the service identity).
   Comment: [
     ...PROJECT,
     ...str("recordType"),
     ...id("recordId"),
     ...str("recordNumber", "body"),
     f("attachments", "Attachment", true),
-    ...id("authorCompanyId"),
+    ...id("authorUserId", "authorCompanyId"),
+    ...str("authorName"),
+    ...date("postedAt"),
     ...str("visibility"), // all | gcOnly
     f("mentionUserIds", "ID", true),
     ...bool("isVoided"),
@@ -377,6 +417,8 @@ const access = {
   // Photos: only through the photos Function (subcontractors see their company's photos and
   // photos on records they can open).
   Photo: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  // Punch list: only through the punch Function (subcontractors see their company's items).
+  PunchItem: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Own settings, read and saved through the projects Function (the caller's id from their token).
   NotificationPreference: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] }
 };

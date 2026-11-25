@@ -117,7 +117,7 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
       {!isOwner ? (
         <div className="m-home-quick">
           {canCreateRfi ? <Button icon={<Plus size={15} />} onClick={() => onNavigate("/rfis")}>{t("home.newRfi")}</Button> : null}
-          {canCreatePunch ? <Button variant="secondary" icon={<ClipboardCheck size={15} />} disabled title={later(3)}>{t("home.newPunch")}</Button> : null}
+          {canCreatePunch ? <Button variant="secondary" icon={<ClipboardCheck size={15} />} onClick={() => onNavigate("/punch?new=1")}>{t("home.newPunch")}</Button> : null}
           {myRole && myRole !== "design-reviewer" ? <Button variant="secondary" icon={<CalendarDays size={15} />} disabled title={later(3)}>{t("home.todaysLog")}</Button> : null}
           <Button variant="secondary" icon={<Camera size={15} />} disabled title={later(2)}>{t("nav.photos")}</Button>
           <Button variant="ghost" icon={<Users size={15} />} onClick={() => onNavigate("/directory")}>{fmt(t("home.team"), { count: team.length })}</Button>

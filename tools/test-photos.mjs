@@ -104,6 +104,14 @@ rows("Rfi").push(
   { ItemId: "rfi-draft", tenantRole: T, projectId: P, number: "", subject: "Draft", status: "draft", createdByUserId: "supt", createdByCompanyId: "gc", assigneeUserIds: [], distributionUserIds: [] },
   { ItemId: "rfi-void", tenantRole: T, projectId: P, number: "RFI-003", subject: "Voided", status: "open", isVoided: true, createdByUserId: "pm", createdByCompanyId: "gc", assigneeUserIds: [], distributionUserIds: [] }
 );
+// Punch items: one for the subcontractor's company, one for another company, a closed, a ready and a void one.
+rows("PunchItem").push(
+  { ItemId: "pi-sub", tenantRole: T, projectId: P, number: "PI-001", title: "Drywall crack", status: "open", isVoided: false, assigneeCompanyId: "sub-co", createdByUserId: "supt" },
+  { ItemId: "pi-other", tenantRole: T, projectId: P, number: "PI-002", title: "Paint run", status: "inProgress", isVoided: false, assigneeCompanyId: "other-sub", createdByUserId: "pm" },
+  { ItemId: "pi-closed", tenantRole: T, projectId: P, number: "PI-003", title: "Closed one", status: "closed", isVoided: false, assigneeCompanyId: "sub-co", createdByUserId: "supt" },
+  { ItemId: "pi-ready", tenantRole: T, projectId: P, number: "PI-004", title: "Ready one", status: "readyForReview", isVoided: false, assigneeCompanyId: "sub-co", createdByUserId: "supt" },
+  { ItemId: "pi-void", tenantRole: T, projectId: P, number: "PI-005", title: "Void one", status: "void", isVoided: true, assigneeCompanyId: "sub-co", createdByUserId: "supt" }
+);
 // Another company's photo with the same project id must never show.
 rows("Photo").push({ ItemId: "foreign", tenantRole: "company-other", projectId: P, fileId: "f", fileName: "Not yours.jpg", uploadedAt: new Date().toISOString(), isVoided: false });
 
@@ -304,6 +312,29 @@ await test("remove: sub own within 24 h only; PM/DC any; restore by PM/DC; remov
   ok(await call("pm", { action: "restore", photoId: bolts.ItemId }), "pm restores");
   expect(names(await call("sub", { action: "list" })).includes("Bolts.jpg"), "back for the sub");
   expect(rows("ActivityEvent").some((e) => e.action === "removed" && e.reason === "Duplicate"), "reason in history");
+});
+
+await test("punch photos: before by the GC, after by the GC or the assigned company, the right states only", async () => {
+  const link = (id, role) => ({ link: { type: "punchItem", id, role } });
+  const b = await addPhotos("supt", ["Crack before.jpg"], link("pi-sub", "before"));
+  ok(b, "supt before photo");
+  expect(b.photos[0].link.type === "punchItem" && b.photos[0].link.role === "before" && b.photos[0].link.number === "PI-001", JSON.stringify(b.photos[0].link));
+  ok(await addPhotos("pm", ["Ready before.jpg"], link("pi-ready", "before")), "before photo while ready for review");
+  refused(await addPhotos("sub", ["x.jpg"], link("pi-sub", "before")), "NOT_ALLOWED", "sub before photo");
+  refused(await addPhotos("dc", ["x.jpg"], link("pi-sub", "before")), "NOT_ALLOWED", "dc before photo");
+  refused(await addPhotos("pm", ["x.jpg"], link("pi-closed", "before")), "NOT_ALLOWED", "before on a closed item");
+  refused(await addPhotos("supt", ["x.jpg"], link("pi-sub", "general")), "BAD_LINK", "no role");
+  ok(await addPhotos("sub", ["Crack after.jpg"], link("pi-sub", "after")), "sub after photo on own company's item");
+  refused(await addPhotos("sub", ["x.jpg"], link("pi-other", "after")), "NOT_FOUND", "sub on another company's item");
+  refused(await addPhotos("sub", ["x.jpg"], link("pi-ready", "after")), "NOT_ALLOWED", "after photo while ready for review");
+  ok(await addPhotos("supt", ["Paint after.jpg"], link("pi-other", "after")), "GC takes the after photo itself");
+  refused(await addPhotos("pm", ["x.jpg"], link("pi-void", "after")), "NOT_FOUND", "void item");
+  refused(await addPhotos("design", ["x.jpg"], link("pi-sub", "after")), "NOT_ALLOWED", "designer");
+  expect(rows("ActivityEvent").some((e) => e.recordType === "punchItem" && e.recordId === "pi-sub" && e.action === "afterPhotoAdded"), "history on the punch item");
+  // The other subcontractor never sees the GC's before photo on PI-001; the assigned sub does.
+  expect(names(await call("sub", { action: "list" })).includes("Crack before.jpg"), "sub sees the before photo on their item");
+  expect(!names(await call("sub2", { action: "list" })).includes("Crack before.jpg"), "sub2 doesn't");
+  expect(names(await call("sub2", { action: "list" })).includes("Paint after.jpg"), "sub2 sees the GC's after photo on their item");
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

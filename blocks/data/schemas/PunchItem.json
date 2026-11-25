@@ -1,0 +1,227 @@
+{
+  "schemaName": "PunchItem",
+  "collectionName": "PunchItems",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "number",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "seq",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "clientRequestId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "title",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "description",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "priority",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "trade",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "location",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "dueDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "assigneeCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "assigneeUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "assigneeCompanyName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "assigneeName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "ballInCourtUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "ballInCourtName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "ballInCourtRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "createdByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "createdAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "startedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "readyAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "closedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "readyByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "closedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "reopenCount",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "lastRejectReason",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "afterPhotoSince",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "photoExpected",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "sheetId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "pinId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "notifyPending",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "notifyPendingSince",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "overdueNoticeLastDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "voidedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "voidedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "voidReason",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "searchText",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

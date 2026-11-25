@@ -39,8 +39,23 @@
       "isArray": true
     },
     {
+      "name": "authorUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
       "name": "authorCompanyId",
       "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "authorName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "postedAt",
+      "type": "DateTime",
       "isArray": false
     },
     {

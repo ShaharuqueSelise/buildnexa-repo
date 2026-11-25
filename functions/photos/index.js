@@ -11,7 +11,8 @@
 //   { action: "uploadLinks", projectId, files: [{ name, contentType, sizeBytes, preview?, thumb? }] }
 //                                                                    -> { uploads: [{ fileId, previewFileId, thumbFileId, …, ticket }] }
 //   { action: "add", projectId, photos: [upload + ticket + { takenAt?, width?, height?, caption? }],
-//     locationLabel?, tags?, link?: { type: "rfi", id } }           -> { photos } (the new ones)
+//     locationLabel?, tags?, link?: { type: "rfi", id } | { type: "punchItem", id, role: "before" | "after" } }
+//                                                                    -> { photos } (the new ones)
 //   { action: "update", projectId, photoId, version, caption?, locationLabel?, tags? } -> { photos: [photo] }
 //   { action: "tag", projectId, photoIds, add?, remove? }           -> { photos, skipped }
 //   { action: "remove" | "restore", projectId, photoId, reason? }   -> { photos: [photo] }
@@ -24,9 +25,11 @@
 //   company role.
 // - photo.view (PM, superintendent, document controller, designer, owner) sees every photo.
 //   photo.view_company (subcontractor) sees their own company's photos and photos linked to a
-//   record they can open (today: RFIs, with the RFI page's rules).
+//   record they can open (RFIs with the RFI page's rules, punch items with the punch list's).
 // - photo.upload: everyone except the owner. A photo can be linked to an RFI the caller can open
-//   (not a draft or a voided one).
+//   (not a draft or a voided one), or to a punch item (Phase 3 step 3) with the punch Function's
+//   rules: a before photo by the superintendent or PM while the item is not closed or void; an after
+//   photo while it is open or in progress, by the GC (superintendent, PM) or the assigned company.
 // - The uploader edits caption, location and tags of their own photos; photo.manage (PM, document
 //   controller) edits every photo, and alone sees and restores removed photos.
 // - Remove: photo.manage any photo; the uploader their own, a subcontractor only within 24 h.
@@ -534,6 +537,7 @@ const PROJECT_PERMISSIONS = {
   "punch_item.assign": [PM, SUPT],
   "punch_item.close": [PM, SUPT],
   "punch_item.update_assigned": [SUB],
+  "punch_item.void": [PM], // the creator may also void their own item while it is still open
   // Budget
   "budget.view": [PM],
   "budget.manage": [PM],
@@ -614,6 +618,7 @@ const PHOTO_FIELDS =
   "caption locationLabel tags linkedRecordType linkedRecordId linkedRecordNumber linkedRecordLabel linkRole uploadedByUserId uploaderCompanyId " +
   "uploadedByName isVoided voidedAt voidedByUserId lastChange { kind reason }";
 const RFI_FIELDS = "ItemId number subject status isVoided createdByUserId createdByCompanyId ballInCourtUserId assigneeUserIds distributionUserIds";
+const PUNCH_FIELDS = "ItemId number title status isVoided assigneeCompanyId createdByUserId";
 
 // ---------- who is asking, on which project ----------
 async function projectContext(db, me, projectId, { write = false } = {}) {
@@ -664,12 +669,34 @@ async function loadRfis(db, c) {
 // RFIs a photo can be linked to: open to the caller, not drafts, not voided.
 const linkable = (rfis) => rfis.filter((r) => r.status !== "draft" && !r.isVoided && r.number);
 
+// ---------- punch items the caller can open (same rules as functions/punch canSee) ----------
+const PUNCH_ACTIVE = ["open", "inProgress", "readyForReview"];
+function canSeePunch(i, c) {
+  if (projectCan(c.role, "punch_item.view")) return true;
+  if (projectCan(c.role, "punch_item.view_assigned")) {
+    return (Boolean(i.assigneeCompanyId) && i.assigneeCompanyId === c.mine.companyId) || i.createdByUserId === c.me.userId;
+  }
+  return false;
+}
+async function loadPunch(db, c, where = {}) {
+  const rows = await db.list("PunchItem", PUNCH_FIELDS, c.me.tenantRole, { projectId: c.projectId, ...where }).catch(() => []);
+  return rows.filter((i) => canSeePunch(i, c));
+}
+// May the caller add a before or after photo to this punch item? (functions/punch abilities)
+function punchPhotoAllowed(i, c, role) {
+  const gc = projectCan(c.role, "punch_item.close");
+  if (role === "before") return PUNCH_ACTIVE.includes(i.status) && (projectCan(c.role, "punch_item.create") || projectCan(c.role, "punch_item.assign"));
+  const ownCompany = Boolean(i.assigneeCompanyId) && i.assigneeCompanyId === c.mine.companyId;
+  return (i.status === "open" || i.status === "inProgress") && (gc || (projectCan(c.role, "punch_item.update_assigned") && ownCompany));
+}
+
 // ---------- which photos the caller sees and may change ----------
 function seesPhoto(p, c) {
   if (p.isVoided && !c.manager) return false;
   if (c.all) return true;
   if (p.uploaderCompanyId && p.uploaderCompanyId === c.mine.companyId) return true;
   if (p.linkedRecordType === "rfi") return Boolean(c.rfiIds?.has(p.linkedRecordId));
+  if (p.linkedRecordType === "punchItem") return Boolean(c.punchIds?.has(p.linkedRecordId));
   return false;
 }
 const own = (p, c) => p.uploadedByUserId === c.me.userId;
@@ -684,8 +711,9 @@ function canRemove(p, c) {
 
 async function prepareVisibility(db, c) {
   // Every role needs the RFI list for the upload dialog; subcontractors also to see linked photos.
-  const rfis = await loadRfis(db, c);
+  const [rfis, punch] = await Promise.all([loadRfis(db, c), c.all ? Promise.resolve([]) : loadPunch(db, c)]);
   c.rfiIds = new Set(rfis.map((r) => r.ItemId));
+  c.punchIds = new Set(punch.map((i) => i.ItemId));
 }
 
 async function loadPhotos(db, c, where = {}) {
@@ -964,8 +992,19 @@ async function add(db, me, args) {
   }
 
   let link;
-  if (args.link) {
-    if (args.link.type !== "rfi") throw new Refused("BAD_LINK", "Photos can be linked to RFIs for now.");
+  if (args.link && args.link.type === "punchItem") {
+    const role = String(args.link.role ?? "");
+    if (role !== "before" && role !== "after") throw new Refused("BAD_LINK", "Say whether this is a before or an after photo.");
+    const [item] = await loadPunch(db, c, { ItemId: String(args.link.id ?? "") });
+    if (!item || item.isVoided) throw new Refused("NOT_FOUND", "That punch item doesn't exist, or you can't open it.");
+    if (!punchPhotoAllowed(item, c, role)) {
+      throw new Refused("NOT_ALLOWED", role === "before"
+        ? `Only the superintendent or the project manager adds before photos, while ${item.number} is not closed.`
+        : `After photos go on ${item.number} while it is open or in progress, from the assigned company or the general contractor.`);
+    }
+    link = { linkedRecordType: "punchItem", linkedRecordId: item.ItemId, linkedRecordNumber: item.number, linkedRecordLabel: text(item.title, 120), linkRole: role };
+  } else if (args.link) {
+    if (args.link.type !== "rfi") throw new Refused("BAD_LINK", "Photos can be linked to RFIs and punch items.");
     const rfi = linkable(await loadRfis(db, c)).find((r) => r.ItemId === String(args.link.id ?? ""));
     if (!rfi) throw new Refused("NOT_FOUND", "That RFI doesn't exist, or you can't open it.");
     link = { linkedRecordType: "rfi", linkedRecordId: rfi.ItemId, linkedRecordNumber: rfi.number, linkedRecordLabel: text(rfi.subject, 120), linkRole: "general" };
@@ -1015,7 +1054,19 @@ async function add(db, me, args) {
   const added = rows.filter((r) => !byFile.has(r.fileId));
   if (added.length) {
     await history(db, c, added[0].ItemId, "", "uploaded",
-      `${actorName(c)} added ${plural(added.length, "photo")}${locationLabel ? ` at ${locationLabel}` : ""}${link ? ` to ${link.linkedRecordNumber}` : ""}`);
+      `${actorName(c)} added ${plural(added.length, link?.linkRole === "before" || link?.linkRole === "after" ? `${link.linkRole} photo` : "photo")}${locationLabel ? ` at ${locationLabel}` : ""}${link ? ` to ${link.linkedRecordNumber}` : ""}`);
+  }
+  // The punch item's own history says so too ("Anna added an after photo").
+  if (added.length && link?.linkedRecordType === "punchItem") {
+    await db.audit(me, {
+      projectId: c.projectId,
+      recordType: "punchItem",
+      recordId: link.linkedRecordId,
+      recordNumber: link.linkedRecordNumber,
+      action: link.linkRole === "after" ? "afterPhotoAdded" : "beforePhotoAdded",
+      actorName: actorName(c),
+      summary: `${actorName(c)} added ${added.length === 1 ? `${link.linkRole === "after" ? "an" : "a"} ${link.linkRole} photo` : `${added.length} ${link.linkRole} photos`}`
+    });
   }
   await prepareVisibility(db, c);
   return { ok: true, photos: await presentMany(db, c, rows), linksExpireAt: expiry() };
