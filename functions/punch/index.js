@@ -18,7 +18,11 @@
 //   { action: "bulk", projectId, itemIds (1..50), op: "reassign" | "setDue" | "start" | "markReady" |
 //     "close" | "void", assigneeCompanyId?, assigneeUserId?, dueDate?, reason? }
 //                                                       -> { updated: [itemId], rejected: [{ itemId, number, code, error }] }
-// detail = { item, can, photos, comments, history }. Every change answers with the fresh detail.
+// detail = { item, can, photos, pin, comments, history }. Every change answers with the fresh detail.
+// Pins (part 3): an item's place on a drawing is its live Pin row (not voided, on the sheet's
+// current revision). Pins are placed, moved and removed in the sheet viewer (drawings Function), so
+// `item.sheetId`, `item.pinId` and `item.sheetNumber` are read from the Pin and Sheet rows, and the
+// detail adds `pin` with the sheet's thumbnail and the spot on it.
 //
 // Status flow (06 §5): open -> inProgress -> readyForReview -> closed, plus void.
 // - Start and Mark ready: the general contractor (PM, superintendent) or the assigned company.
@@ -618,6 +622,8 @@ const TEAM_FIELDS = "ItemId userId displayName email companyId companyName compa
 const PHOTO_FIELDS = "ItemId linkedRecordType linkedRecordId linkRole fileId previewFileId thumbFileId caption takenAt uploadedAt uploadedByUserId uploadedByName isVoided";
 const COMMENT_FIELDS = "ItemId recordId body authorUserId authorCompanyId authorName postedAt isVoided";
 const EVENT_FIELDS = "ItemId recordId action actorUserId actorName at summary reason fromStatus toStatus";
+const PIN_FIELDS = "ItemId sheetId x y linkedRecordId toRevisionIndex isVoided createdAt";
+const SHEET_FIELDS = "ItemId sheetNumber title isVoided currentThumbFileId currentRevisionLabel";
 
 // ---------- small helpers ----------
 const text = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -851,6 +857,24 @@ async function loadPhotos(db, c, itemId) {
   return db.list("Photo", PHOTO_FIELDS, c.me.tenantRole, where).catch(() => []);
 }
 
+// Where items are on the drawings: item id -> { pin, sheet } for live pins on sheets that still exist.
+async function placesOf(db, c, itemId) {
+  const pins = await db.list("Pin", PIN_FIELDS, c.me.tenantRole, { projectId: c.projectId, linkedRecordType: "punchItem", ...(itemId ? { linkedRecordId: itemId } : {}) }).catch(() => []);
+  const live = pins.filter((p) => !p.isVoided && !Number(p.toRevisionIndex)).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  if (!live.length) return new Map();
+  const sheetIds = [...new Set(live.map((p) => p.sheetId))];
+  const sheets = sheetIds.length === 1
+    ? await db.list("Sheet", SHEET_FIELDS, c.me.tenantRole, { projectId: c.projectId, ItemId: sheetIds[0] }).catch(() => [])
+    : await db.list("Sheet", SHEET_FIELDS, c.me.tenantRole, { projectId: c.projectId }).catch(() => []);
+  const sheetById = new Map(sheets.filter((x) => !x.isVoided).map((x) => [x.ItemId, x]));
+  const out = new Map();
+  for (const pin of live) {
+    const sheet = sheetById.get(pin.sheetId);
+    if (sheet && !out.has(pin.linkedRecordId)) out.set(pin.linkedRecordId, { pin, sheet });
+  }
+  return out;
+}
+
 // Download links for many files: storage answers in batches.
 async function linksFor(db, fileIds) {
   const ids = [...new Set(fileIds.filter(Boolean))];
@@ -865,17 +889,20 @@ async function linksFor(db, fileIds) {
   return out;
 }
 
-function present(item, c, photos, links = {}) {
+function present(item, c, photos, links = {}, place) {
   const { tenantRole: _t, clientRequestId: _r, notifyPending: _n, notifyPendingSince: _s, ...out } = item;
   const firstBefore = photos.before[photos.before.length - 1];
   const lastAfter = photos.after[0];
   return {
     ...out,
+    sheetId: place?.sheet.ItemId ?? "",
+    pinId: place?.pin.ItemId ?? "",
+    sheetNumber: place?.sheet.sheetNumber ?? "",
     reopenCount: Number(item.reopenCount ?? 0),
     overdue: ACTIVE.includes(item.status) && Boolean(item.dueDate) && item.dueDate < c.today,
     beforePhotos: photos.before.length,
     afterPhotos: photos.after.length,
-    photoMissing: Boolean(item.photoExpected) && !photos.before.length && !item.pinId,
+    photoMissing: Boolean(item.photoExpected) && !photos.before.length && !place,
     beforeThumbUrl: firstBefore ? links[firstBefore.thumbFileId] ?? undefined : undefined,
     afterThumbUrl: lastAfter ? links[lastAfter.thumbFileId] ?? undefined : undefined
   };
@@ -883,14 +910,16 @@ function present(item, c, photos, links = {}) {
 
 async function detail(db, c, itemOrId) {
   const item = typeof itemOrId === "string" ? await loadItem(db, c, itemOrId) : itemOrId;
-  const [photoRows, comments, events] = await Promise.all([
+  const [photoRows, comments, events, places] = await Promise.all([
     loadPhotos(db, c, item.ItemId),
     db.list("Comment", COMMENT_FIELDS, c.me.tenantRole, { projectId: c.projectId, recordId: item.ItemId }).catch(() => []),
-    db.list("ActivityEvent", EVENT_FIELDS, c.me.tenantRole, { projectId: c.projectId, recordId: item.ItemId }).catch(() => [])
+    db.list("ActivityEvent", EVENT_FIELDS, c.me.tenantRole, { projectId: c.projectId, recordId: item.ItemId }).catch(() => []),
+    placesOf(db, c, item.ItemId)
   ]);
+  const place = places.get(item.ItemId);
   const photos = photoSummary(item, photosByItem(photoRows).get(item.ItemId));
   const shown = [...photos.before, ...photos.after];
-  const links = await linksFor(db, shown.flatMap((p) => [p.thumbFileId, p.previewFileId || p.fileId]));
+  const links = await linksFor(db, [...shown.flatMap((p) => [p.thumbFileId, p.previewFileId || p.fileId]), place?.sheet.currentThumbFileId]);
   const photoView = (p, role) => ({
     ItemId: p.ItemId,
     role,
@@ -906,8 +935,20 @@ async function detail(db, c, itemOrId) {
     role: c.role,
     today: c.today,
     linksExpireAt: expiry(),
-    item: present(item, c, photos, links),
+    item: present(item, c, photos, links, place),
     can: abilities(item, c, photos),
+    pin: place
+      ? {
+          pinId: place.pin.ItemId,
+          sheetId: place.sheet.ItemId,
+          sheetNumber: place.sheet.sheetNumber ?? "",
+          sheetTitle: place.sheet.title ?? "",
+          revisionLabel: place.sheet.currentRevisionLabel ?? "",
+          x: Number(place.pin.x),
+          y: Number(place.pin.y),
+          thumbUrl: links[place.sheet.currentThumbFileId] ?? undefined
+        }
+      : null,
     photos: [...photos.before.map((p) => photoView(p, "before")), ...photos.after.map((p) => photoView(p, "after"))],
     comments: comments
       .filter((x) => !x.isVoided)
@@ -932,7 +973,7 @@ function suggestionsOf(items, c) {
 
 async function list(db, me, args) {
   const c = await projectContext(db, me, args.projectId);
-  const [rows, photoRows] = await Promise.all([loadItems(db, c), loadPhotos(db, c)]);
+  const [rows, photoRows, places] = await Promise.all([loadItems(db, c), loadPhotos(db, c), placesOf(db, c)]);
   const visible = rows.filter((i) => canSee(i, c)).sort((a, b) => Number(b.seq ?? 0) - Number(a.seq ?? 0));
   const byItem = photosByItem(photoRows);
   const summaries = new Map(visible.map((i) => [i.ItemId, photoSummary(i, byItem.get(i.ItemId))]));
@@ -956,7 +997,7 @@ async function list(db, me, args) {
     defaultDueDate: defaultDue(c),
     companies: c.creator || c.assigner ? companiesOf(c) : [],
     suggestions: suggestionsOf(visible, c),
-    items: visible.map((i) => present(i, c, summaries.get(i.ItemId), links))
+    items: visible.map((i) => present(i, c, summaries.get(i.ItemId), links, places.get(i.ItemId)))
   };
 }
 

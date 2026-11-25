@@ -5,9 +5,11 @@
 // Every action goes through the punch Function, which decides who may do what; the buttons shown
 // here follow its `can` answers. Photos go up through the app's photo queue (features/photos) and
 // are linked to the item as before or after photos by the photos Function.
-// Not real yet: pins on drawings ("New punch item here" comes with the drawings step), the bell and
-// emails for punch changes and the overdue digest (Part 4), walkthrough mode, the punch report PDF
-// and offline capture (R2).
+// Pins (part 3): "New punch item here" in the sheet viewer opens the same quick-create form with the
+// spot (PunchHereDialog; the photo is optional then); the item panel shows where it is pinned, with a
+// preview of the sheet, and opens the sheet on that pin.
+// Not real yet: the bell and emails for punch changes and the overdue digest (Part 4), walkthrough
+// mode, the punch report PDF and offline capture (R2).
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import {
@@ -32,7 +34,7 @@ import {
   BULK_MAX, PUNCH_ACTIVE, PUNCH_STATUSES, addPunchPhoto, createPunch, dropCreate, refusalText, retryCreate, runBulk, usePendingCreates, usePunchAction,
   usePunchItem, usePunchList, usePunchPhotoQueue
 } from "./punchApi";
-import type { PendingCreate, PunchBulkOp, PunchList, PunchPhoto, PunchPriority, PunchRow, PunchStatus } from "./punchApi";
+import type { PendingCreate, PunchBulkOp, PunchDetail, PunchInput, PunchList, PunchPhoto, PunchPin, PunchPriority, PunchRow, PunchStatus } from "./punchApi";
 import "./PunchPage.css";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
@@ -64,6 +66,9 @@ function StatusPill({ status, t }: { status: PunchStatus; t: T }) {
 function PriorityPill({ priority, t }: { priority: PunchPriority; t: T }) {
   return <Badge tone={PRIORITY_TONE[priority] ?? "gray"}>{t(`punch.priority.${priority}` as TranslationKey)}</Badge>;
 }
+
+/** The sheet viewer on this item's pin. */
+const sheetLink = (p: { sheetId?: string; pinId?: string }) => `/drawings/${encodeURIComponent(p.sheetId ?? "")}${p.pinId ? `?pin=${encodeURIComponent(p.pinId)}` : ""}`;
 
 function Thumb({ url, size = 44, state }: { url?: string; size?: number; state?: "uploading" | "failed" | "missing" | "pin" }) {
   if (url) return <img className="m-punch-thumb" src={url} alt="" width={size} height={size} style={{ width: size, height: size }} loading="lazy" />;
@@ -474,7 +479,7 @@ function TableView({ ctx, items, data, photoQueue }: { ctx: Ctx; items: PunchRow
                   <td><DueLabel due={p.dueDate} done={!isActive(p.status)} today={today} t={t} /></td>
                   <td className="m-hide-mobile" onClick={(e) => e.stopPropagation()}>
                     <div className="m-row">
-                      {p.sheetId ? <button className="m-icon-btn" title={t("punch.openSheet")} onClick={() => onNavigate(`/drawings/${p.sheetId}`)}><MapPin size={15} /></button> : null}
+                      {p.sheetId ? <button className="m-icon-btn" title={p.sheetNumber ? `${t("punch.openSheet")} · ${p.sheetNumber}` : t("punch.openSheet")} onClick={() => onNavigate(sheetLink(p))}><MapPin size={15} /></button> : null}
                       {manage && p.status === "readyForReview" ? (
                         <>
                           <Button small variant="success" disabled={action.isPending} onClick={() => void one({ action: "close", itemId: p.ItemId }, fmt(t("punch.closedToast"), { number: p.number }))}>{t("punch.action.close")}</Button>
@@ -713,7 +718,14 @@ function CompanyView({ ctx, items, onFilter }: { ctx: Ctx; items: PunchRow[]; on
 }
 
 // ---------- quick create ----------
-function QuickCreate({ ctx, data, onClose }: { ctx: Ctx; data: PunchList; onClose: () => void }) {
+type PinSpot = NonNullable<PunchInput["pin"]> & { label: string };
+
+function QuickCreate({ ctx, data, onClose, pin, onSaving }: {
+  ctx: Ctx; data: PunchList; onClose: () => void;
+  /** From the sheet viewer: the item is pinned there, so the photo is optional. */
+  pin?: PinSpot;
+  onSaving?: (saving: Promise<PunchDetail>, title: string) => void;
+}) {
   const { t, projectId, today } = ctx;
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -737,8 +749,8 @@ function QuickCreate({ ctx, data, onClose }: { ctx: Ctx; data: PunchList; onClos
 
   const company = data.companies.find((c) => c.companyId === companyId);
   const titleOk = title.trim().length >= 3;
-  const valid = Boolean(file) && titleOk && Boolean(company);
-  const missing = !file ? t("punch.needPhoto") : !titleOk ? t("punch.needTitle") : !company ? t("punch.needCompany") : "";
+  const valid = Boolean(file || pin) && titleOk && Boolean(company);
+  const missing = !file && !pin ? t("punch.needPhoto") : !titleOk ? t("punch.needTitle") : !company ? t("punch.needCompany") : "";
 
   const pick = (f?: File) => {
     if (!f) return;
@@ -749,17 +761,20 @@ function QuickCreate({ ctx, data, onClose }: { ctx: Ctx; data: PunchList; onClos
   };
 
   const save = () => {
-    if (!valid || !company || !file) return;
-    const input = {
+    if (!valid || !company) return;
+    const input: PunchInput = {
       title: title.trim(),
       description: description.trim() || undefined,
       priority,
       location: location.trim() || undefined,
       dueDate: due || undefined,
       assigneeCompanyId: company.companyId,
-      assigneeUserId: personId || undefined
+      assigneeUserId: personId || undefined,
+      pin: pin ? { sheetId: pin.sheetId, revisionIndex: pin.revisionIndex, x: pin.x, y: pin.y } : undefined
     };
-    createPunch(queryClient, projectId, input, company.companyName, file)
+    const saving = createPunch(queryClient, projectId, input, company.companyName, file ?? undefined);
+    onSaving?.(saving, input.title);
+    saving
       .then((d) => ctx.toast(fmt(t("punch.savedToast"), { number: d.item.number, company: d.item.assigneeCompanyName ?? "" })))
       .catch((e) => ctx.toast(refusalText(e, t("punch.sendFailed")), "warn"));
     ctx.toast(fmt(t("punch.savingToast"), { secs }));
@@ -781,6 +796,7 @@ function QuickCreate({ ctx, data, onClose }: { ctx: Ctx; data: PunchList; onClos
       }
     >
       <div className="m-stack-v">
+        {pin ? <Note tone="info"><MapPin size={13} style={{ display: "inline", verticalAlign: -2 }} /> {pin.label}</Note> : null}
         <input
           ref={fileInput}
           type="file"
@@ -790,9 +806,9 @@ function QuickCreate({ ctx, data, onClose }: { ctx: Ctx; data: PunchList; onClos
           onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }}
         />
         {!file ? (
-          <button type="button" className="m-punch-capture" onClick={() => fileInput.current?.click()}>
-            <Camera size={34} />
-            {t("punch.takePhoto")}
+          <button type="button" className={cx("m-punch-capture", pin && "m-punch-capture-small")} onClick={() => fileInput.current?.click()}>
+            <Camera size={pin ? 24 : 34} />
+            {t(pin ? "punch.addPhotoOptional" : "punch.takePhoto")}
             <span className="m-small m-muted">{t("punch.takePhotoHint")}</span>
           </button>
         ) : (
@@ -843,9 +859,53 @@ function QuickCreate({ ctx, data, onClose }: { ctx: Ctx; data: PunchList; onClos
             <textarea className="m-input" value={description} onChange={(e) => setDescription(e.target.value)} style={{ minHeight: 56 }} maxLength={2000} />
           </Field>
         </div>
-        <p className="m-small m-muted" style={{ margin: 0 }}><MapPin size={12} /> {t("punch.pinLater")}</p>
+        {!pin ? <p className="m-small m-muted" style={{ margin: 0 }}><MapPin size={12} /> {t("punch.pinLater")}</p> : null}
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * "New punch item here" from the sheet viewer: the quick-create form with the spot on the sheet.
+ * Saves in the background like any quick create; `onSaving` lets the viewer show the pin at once.
+ */
+export function PunchHereDialog({ projectId, pin, toast, onNavigate, onClose, onSaving }: {
+  projectId: string;
+  pin: PinSpot;
+  toast: (text: string, tone?: ToastTone) => void;
+  onNavigate: (path: string) => void;
+  onClose: () => void;
+  onSaving: (saving: Promise<PunchDetail>, title: string) => void;
+}) {
+  const { t } = useT();
+  const { project, myUserId } = useProjects();
+  const list = usePunchList(projectId);
+  if (!list.data || !list.data.can.create) {
+    return (
+      <Dialog title={t("punch.new")} onClose={onClose} size="sm">
+        {list.data ? <Note tone="warn">{t("punch.createWhy")}</Note>
+          : list.error ? <Note tone="danger">{refusalText(list.error, t("common.error"))}</Note>
+          : <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>}
+      </Dialog>
+    );
+  }
+  const ctx: Ctx = { t, projectId, projectNumber: project?.number ?? "", myUserId, today: todayIso(), toast, onNavigate };
+  return <QuickCreate ctx={ctx} data={list.data} pin={pin} onClose={onClose} onSaving={onSaving} />;
+}
+
+/** Where the item is pinned: the sheet's thumbnail with the spot, opening the sheet on the pin. */
+function PinPreview({ pin, t, onNavigate }: { pin: PunchPin; t: T; onNavigate: (path: string) => void }) {
+  return (
+    <button type="button" className="m-punch-pinprev" onClick={() => onNavigate(sheetLink(pin))} title={t("punch.openSheet")}>
+      <span className="m-punch-pinprev-img">
+        {pin.thumbUrl ? <img src={pin.thumbUrl} alt="" loading="lazy" /> : <span className="m-punch-pinprev-none"><MapPin size={20} /></span>}
+        {pin.thumbUrl ? <i style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }} /> : null}
+      </span>
+      <span className="m-punch-pinprev-text">
+        <b><span className="m-mono">{pin.sheetNumber}</span>{pin.sheetTitle ? ` · ${pin.sheetTitle}` : ""}</b>
+        <span className="m-small m-muted">{pin.revisionLabel ? `${fmt(t("punch.revShort"), { label: pin.revisionLabel })} · ` : ""}{t("punch.openSheet")}</span>
+      </span>
+    </button>
   );
 }
 
@@ -978,6 +1038,7 @@ function PunchDrawer({ ctx, itemId, list, photoQueue, onClose }: { ctx: Ctx; ite
         {photoColumn("before", before)}
         {photoColumn("after", after)}
       </div>
+      {d.pin ? <PinPreview pin={d.pin} t={t} onNavigate={onNavigate} /> : null}
 
       <div className="m-punch-actions">
         {can.start ? <Button icon={<Play size={15} />} disabled={busy} onClick={() => void run({ action: "start", itemId: p.ItemId }, fmt(t("punch.startedToast"), { number: p.number }))}>{t("punch.action.start")}</Button> : null}
@@ -1018,7 +1079,7 @@ function PunchDrawer({ ctx, itemId, list, photoQueue, onClose }: { ctx: Ctx; ite
         [t("punch.trade"), p.trade || <span className="m-muted">—</span>],
         [t("punch.created"), `${fmtDate(p.createdAt)} · ${p.createdByName ?? ""}`],
         [t("punch.due"), <DueLabel key="d" due={p.dueDate} done={!isActive(p.status)} today={today} t={t} />],
-        [t("punch.sheet"), p.sheetId ? <button key="s" type="button" className="m-link" onClick={() => onNavigate(`/drawings/${p.sheetId}`)}><MapPin size={13} /> {t("punch.openSheet")}</button> : <span className="m-muted">{t("punch.noPin")}</span>]
+        [t("punch.sheet"), p.sheetId ? <button key="s" type="button" className="m-link" onClick={() => onNavigate(sheetLink(p))}><MapPin size={13} /> {p.sheetNumber || t("punch.openSheet")}</button> : <span className="m-muted">{t("punch.noPin")}</span>]
       ]} />
 
       {p.description ? <p style={{ marginTop: 14, whiteSpace: "pre-wrap" }}>{p.description}</p> : null}

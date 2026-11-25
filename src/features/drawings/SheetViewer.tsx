@@ -1,12 +1,13 @@
 // Sheet viewer (DRW-03, DRW-04), built from the demo app's SheetViewer: the PDF drawn by pdf.js on a
-// canvas with zoom and pan (wheel, buttons, drag, pinch, double click), pins of RFIs on it, "Add
-// pin" (New RFI here, or pin an existing RFI), move and remove pins, the revision switcher with the
-// red "Superseded" banner, and the side panel (revisions, pins, info).
+// canvas with zoom and pan (wheel, buttons, drag, pinch, double click), pins of RFIs (blue) and punch
+// items (orange) on it, "Add pin" (New RFI here, New punch item here, or pin an existing RFI or punch
+// item), move and remove pins, the revision switcher with the red "Superseded" banner, and the side
+// panel (revisions, pins, info).
 // The page is drawn again at a higher resolution after zooming in, within a pixel budget that is
 // smaller on phones. Pins sit in page coordinates (0..1), so they stay on the spot at any zoom.
-// Not real yet: compare (R2), markups and offline sheets (R3), punch pins (Phase 3 step 3).
+// Not real yet: compare (R2), markups and offline sheets (R3).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
   AlertTriangle, ArrowLeft, Ban, ClipboardCheck, Cloud, Columns2, Download, FileQuestion, Link2, Loader2, Lock, MapPin, Maximize2, Move,
   MoveUpRight, Pencil, Ruler, Trash, Type, Upload, WifiOff, ZoomIn, ZoomOut
@@ -24,13 +25,20 @@ import { fmtDate, fmtShortDate } from "../projects/ProjectsPage";
 import { fileSize } from "../files/files";
 import { fetchBytes, pdfjs, saveUrlAs } from "../files/FileViewer";
 import { RfiFormDialog, makeRfiCtx } from "../rfis/RfisPage";
-import { addPendingPin, useDrawingAction, useSheet } from "./drawingsApi";
+import { PunchHereDialog } from "../punch/PunchPage";
+import { addPendingPin, refreshDrawings, showSavingPin, useDrawingAction, useSheet } from "./drawingsApi";
 import type { Revision, SheetDetail, SheetPin } from "./drawingsApi";
 import { DEFAULT_SET, UploadDialog, errorText } from "./DrawingsPage";
 import type { T, Toast } from "./DrawingsPage";
 
 const PAPER_W = 1200; // the page's width on the stage at 100 %; its height follows the page size
 const RFI_TONE: Record<string, Tone> = { draft: "gray", open: "blue", answered: "amber", closed: "green" };
+const PUNCH_TONE: Record<string, Tone> = { open: "blue", inProgress: "amber", readyForReview: "purple", closed: "green" };
+const PIN_COLOR = { rfi: "#2563eb", punchItem: "#ea580c" } as const;
+const isPunch = (p: SheetPin) => p.type === "punchItem";
+const toneOf = (p: SheetPin): Tone => (isPunch(p) ? PUNCH_TONE : RFI_TONE)[p.status] ?? "gray";
+const statusOf = (t: T, p: SheetPin) => t((isPunch(p) ? `punch.status.${p.status}` : `rfi.status.${p.status}`) as never) || p.status;
+const labelOf = (t: T, p: SheetPin) => p.number || t(isPunch(p) ? "drw.v.newPunch" : "drw.v.draftRfi");
 
 type View = { s: number; tx: number; ty: number };
 type SideTab = "revisions" | "pins" | "info";
@@ -135,7 +143,7 @@ function PinMarker({ pin, selected, scale, paperW, paperH, warn, onSelect }: {
   return (
     <button
       type="button"
-      className={cx("m-drw-pin", "m-drw-pin-rfi", pin.closed && "m-drw-pin-closed", selected && "m-drw-pin-sel", pin.saving && "m-drw-pin-saving")}
+      className={cx("m-drw-pin", isPunch(pin) ? "m-drw-pin-punch" : "m-drw-pin-rfi", pin.closed && "m-drw-pin-closed", selected && "m-drw-pin-sel", pin.saving && "m-drw-pin-saving")}
       style={{ left: pin.x * paperW, top: pin.y * paperH, transform: `translate(-50%, -100%) scale(${1 / scale})` }}
       onPointerDown={(e) => e.stopPropagation()}
       onPointerUp={(e) => e.stopPropagation()}
@@ -191,8 +199,11 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
   const [selPin, setSelPin] = useState<string | null>(() => query().get("pin"));
   const [tab, setTab] = useState<SideTab>(() => (query().get("pin") ? "pins" : "revisions"));
   const [showClosed, setShowClosed] = useState(true);
-  const [linkRfi, setLinkRfi] = useState("");
+  const [showRfi, setShowRfi] = useState(true);
+  const [showPunch, setShowPunch] = useState(true);
+  const [linkWhat, setLinkWhat] = useState(""); // "rfi:<id>" | "punchItem:<id>"
   const [rfiDialog, setRfiDialog] = useState<{ x: number; y: number } | null>(null);
+  const [punchDialog, setPunchDialog] = useState<{ x: number; y: number } | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [voiding, setVoiding] = useState<Revision>();
@@ -215,7 +226,8 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
   // ----- pins on the revision in view -----
   // A voided revision shows no file, so no pins either (they live on the revisions that are still valid).
   const onThis = viewed?.status === "void" ? [] : data.pins.filter((p) => onRevision(p, R));
-  const shown = onThis.filter((p) => showClosed || !p.closed);
+  const shown = onThis.filter((p) => (showClosed || !p.closed) && (isPunch(p) ? showPunch : showRfi));
+  const punchCount = onThis.filter(isPunch).length;
   const fromAspect = (p: SheetPin) => aspect(revisions.find((r) => r.revisionIndex === p.fromRevisionIndex));
   const outOfPlace = (p: SheetPin) => {
     const a = fromAspect(p);
@@ -224,8 +236,11 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
   };
   const misplaced = onThis.filter(outOfPlace).length;
   const pinnedIds = new Set(data.pins.filter((p) => onRevision(p, current?.revisionIndex ?? 0)).map((p) => p.recordId));
-  // Only open RFIs are offered for a new pin; a closed one keeps the pins it already has.
-  const linkable = data.rfis.filter((r) => r.status !== "closed" && !pinnedIds.has(r.ItemId));
+  // Only open RFIs and active punch items without a pin are offered; a closed one keeps the pins it has.
+  const linkable = [
+    ...data.rfis.filter((r) => r.status !== "closed" && !pinnedIds.has(r.ItemId)).map((r) => ({ value: `rfi:${r.ItemId}`, label: `${r.number} · ${r.subject}` })),
+    ...(data.punchItems ?? []).filter((i) => !pinnedIds.has(i.ItemId)).map((i) => ({ value: `punchItem:${i.ItemId}`, label: `${i.number} · ${i.title}${i.companyName ? ` · ${i.companyName}` : ""}` }))
+  ];
 
   // ----- view maths -----
   const fit = useCallback(() => {
@@ -346,7 +361,7 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
     if (addMode) {
       if (!onSheet) { toast(t("drw.v.onSheet"), "warn"); return; }
       setSelPin(null);
-      setLinkRfi("");
+      setLinkWhat("");
       setDraft({ x, y });
       return;
     }
@@ -378,19 +393,34 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
   });
 
   const pinExisting = () => {
-    if (!draft || !current || !linkRfi) return;
-    const rfi = data.rfis.find((r) => r.ItemId === linkRfi);
-    if (!rfi) return;
+    if (!draft || !current || !linkWhat) return;
+    const [kind, id] = linkWhat.split(":") as ["rfi" | "punchItem", string];
+    const rfi = kind === "rfi" ? data.rfis.find((r) => r.ItemId === id) : undefined;
+    const item = kind === "punchItem" ? data.punchItems?.find((i) => i.ItemId === id) : undefined;
+    const rec = rfi ? { number: rfi.number, title: rfi.subject, status: rfi.status } : item ? { number: item.number, title: item.title, status: item.status } : undefined;
+    if (!rec) return;
     const temp: SheetPin = {
       ItemId: `temp-${Date.now().toString(36)}`, sheetId: sheet.ItemId, x: draft.x, y: draft.y, fromRevisionIndex: current.revisionIndex, toRevisionIndex: 0, version: 0,
-      type: "rfi", recordId: rfi.ItemId, number: rfi.number, title: rfi.subject, status: rfi.status, closed: rfi.status === "closed", dueDate: "", ballInCourtName: "",
+      type: kind, recordId: id, ...rec, closed: rec.status === "closed", dueDate: "", ballInCourtName: "", companyName: item?.companyName,
       createdByName: "", createdAt: new Date().toISOString(), canMove: false, canRemove: false
     };
     setDraft(null);
     setAddMode(false);
-    action.mutateAsync({ action: "pin", sheetId: sheet.ItemId, revisionIndex: current.revisionIndex, x: temp.x, y: temp.y, recordType: "rfi", recordId: rfi.ItemId, temp })
-      .then(() => toast(fmt(t("drw.v.pinned"), { number: rfi.number, sheet: sheet.sheetNumber })))
+    action.mutateAsync({ action: "pin", sheetId: sheet.ItemId, revisionIndex: current.revisionIndex, x: temp.x, y: temp.y, recordType: kind, recordId: id, temp })
+      .then(() => toast(fmt(t("drw.v.pinned"), { number: rec.number, sheet: sheet.sheetNumber })))
       .catch((error) => toast(errorText(t, error), "warn"));
+  };
+
+  // New punch item here: the pin shows at once while the item saves in the background.
+  const punchSaving = (at: { x: number; y: number }, saving: Promise<unknown>, title: string) => {
+    if (!current) return;
+    showSavingPin(queryClient, projectId, {
+      ItemId: `saving-${Date.now().toString(36)}`, sheetId: sheet.ItemId, x: at.x, y: at.y, fromRevisionIndex: current.revisionIndex, toRevisionIndex: 0, version: 0,
+      type: "punchItem", recordId: "", number: "", title, status: "open", closed: false, dueDate: "", ballInCourtName: "", createdByName: "",
+      createdAt: new Date().toISOString(), canMove: false, canRemove: false
+    });
+    setTab("pins");
+    void saving.then(() => undefined, () => undefined).then(() => refreshDrawings(queryClient, projectId, [sheet.ItemId]));
   };
 
   const removePin = (pin: SheetPin) => {
@@ -514,7 +544,8 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
             {addMode && !draft ? <div className="m-drw-hint">{t("drw.v.tapHint")}</div> : null}
             {moving ? <div className="m-drw-hint">{t("drw.v.moveHint")}</div> : null}
             <div className="m-drw-legend">
-              <Badge tone="blue">{fmt(t("drw.v.rfiPins"), { count: onThis.length })}</Badge>
+              <Badge tone="blue">{fmt(t("drw.v.rfiPins"), { count: onThis.length - punchCount })}</Badge>
+              <Badge tone="amber">{fmt(t("drw.v.punchPins"), { count: punchCount })}</Badge>
               {data.hiddenPins ? <Badge tone="gray">{fmt(t("drw.v.hiddenBadge"), { count: data.hiddenPins })}</Badge> : null}
             </div>
             {anchor && popStyle ? (
@@ -522,11 +553,12 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
                 {selected ? (
                   <>
                     <div className="m-drw-pop-head">
-                      <span className="m-row"><FileQuestion size={16} color="#2563eb" /><b>{selected.number || t("drw.v.draftRfi")}</b></span>
-                      <Badge tone={RFI_TONE[selected.status] ?? "gray"}>{t(`rfi.status.${selected.status}` as never) || selected.status}</Badge>
+                      <span className="m-row">{isPunch(selected) ? <ClipboardCheck size={16} color={PIN_COLOR.punchItem} /> : <FileQuestion size={16} color={PIN_COLOR.rfi} />}<b>{labelOf(t, selected)}</b></span>
+                      <Badge tone={toneOf(selected)}>{statusOf(t, selected)}</Badge>
                     </div>
                     <div className="m-strong">{selected.title}</div>
                     <KeyValue items={[
+                      ...(isPunch(selected) ? [[t("drw.v.company"), selected.companyName || <span className="m-muted">—</span>] as [string, ReactNode]] : []),
                       [t("drw.v.ball"), selected.ballInCourtName || <span className="m-muted">—</span>],
                       [t("drw.v.due"), selected.dueDate ? fmtDate(selected.dueDate) : <span className="m-muted">—</span>],
                       [t("drw.v.placedBy"), selected.createdByName ? `${selected.createdByName} · ${fmt(t("drw.rev"), { label: revisions.find((r) => r.revisionIndex === selected.fromRevisionIndex)?.revisionLabel ?? "?" })}` : <span className="m-muted">—</span>]
@@ -545,23 +577,29 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
                         {selected.canMove && isCurrent && !selected.saving && onRevision(selected, R) ? (
                           <Button variant="secondary" small icon={<Move size={13} />} onClick={() => { setMoving(selected.ItemId); setSelPin(null); }}>{t("drw.v.move")}</Button>
                         ) : null}
-                        <Button small onClick={() => onNavigate(`/rfis/${selected.recordId}`)}>{t("drw.v.openRfi")}</Button>
+                        {selected.recordId ? (
+                          <Button small onClick={() => onNavigate(isPunch(selected) ? `/punch/${selected.recordId}` : `/rfis/${selected.recordId}`)}>{t(isPunch(selected) ? "drw.v.openPunch" : "drw.v.openRfi")}</Button>
+                        ) : null}
                       </div>
                     )}
                   </>
                 ) : draft ? (
                   <>
                     <div className="m-drw-pop-head"><b>{t("drw.v.newPin")}</b><button type="button" className="m-link m-small" onClick={() => setDraft(null)}>{t("common.cancel")}</button></div>
-                    {can.createRfi ? (
-                      <Button small icon={<FileQuestion size={14} />} onClick={() => { setRfiDialog(draft); setDraft(null); setAddMode(false); }} disabled={!rfiCtx}>{t("drw.v.newRfiHere")}</Button>
-                    ) : null}
+                    <div className="m-row m-row-wrap">
+                      {can.createPunch ? (
+                        <Button small icon={<ClipboardCheck size={14} />} onClick={() => { setPunchDialog(draft); setDraft(null); setAddMode(false); }}>{t("drw.v.newPunchHere")}</Button>
+                      ) : null}
+                      {can.createRfi ? (
+                        <Button small variant={can.createPunch ? "secondary" : "primary"} icon={<FileQuestion size={14} />} onClick={() => { setRfiDialog(draft); setDraft(null); setAddMode(false); }} disabled={!rfiCtx}>{t("drw.v.newRfiHere")}</Button>
+                      ) : null}
+                    </div>
                     <Field label={t("drw.v.linkExisting")}>
-                      <Select value={linkRfi} onChange={setLinkRfi} placeholder={linkable.length ? t("drw.v.chooseRfi") : t("drw.v.noRfis")} options={linkable.map((r) => ({ value: r.ItemId, label: `${r.number} · ${r.subject}` }))} disabled={!linkable.length} />
+                      <Select value={linkWhat} onChange={setLinkWhat} placeholder={linkable.length ? t("drw.v.chooseRfi") : t("drw.v.noRfis")} options={linkable} disabled={!linkable.length} />
                     </Field>
                     <div className="m-row" style={{ justifyContent: "flex-end" }}>
-                      <Button small variant="secondary" icon={<Link2 size={13} />} onClick={pinExisting} disabled={!linkRfi}>{t("drw.v.pinIt")}</Button>
+                      <Button small variant="secondary" icon={<Link2 size={13} />} onClick={pinExisting} disabled={!linkWhat}>{t("drw.v.pinIt")}</Button>
                     </div>
-                    <span className="m-small m-muted"><ClipboardCheck size={12} style={{ display: "inline", verticalAlign: -2 }} /> {t("drw.v.punchLater")}</span>
                   </>
                 ) : null}
               </div>
@@ -611,19 +649,26 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
 
             {tab === "pins" ? (
               <div className="m-stack-v">
-                <Checkbox checked={showClosed} onChange={setShowClosed} label={<span className="m-small">{t("drw.v.showClosed")}</span>} />
+                <div className="m-row m-row-wrap">
+                  <Checkbox checked={showRfi} onChange={setShowRfi} label={<span className="m-small">{t("drw.v.showRfis")}</span>} />
+                  <Checkbox checked={showPunch} onChange={setShowPunch} label={<span className="m-small">{t("drw.v.showPunch")}</span>} />
+                  <Checkbox checked={showClosed} onChange={setShowClosed} label={<span className="m-small">{t("drw.v.showClosed")}</span>} />
+                </div>
                 {data.hiddenPins > 0 ? <Note tone="info">{fmt(t(data.hiddenPins === 1 ? "drw.v.hiddenOne" : "drw.v.hidden"), { count: data.hiddenPins })}</Note> : null}
                 {misplaced > 0 ? <Note tone="warn"><AlertTriangle size={14} style={{ display: "inline", verticalAlign: -2 }} /> {fmt(t(misplaced === 1 ? "drw.v.misplacedCountOne" : "drw.v.misplaced"), { count: misplaced })}</Note> : null}
                 <Note tone="info">{t("drw.v.carryNote")}</Note>
                 <div className="m-drw-list">
                   {shown.map((p) => (
                     <button key={p.ItemId} type="button" className={cx("m-drw-item", p.ItemId === selPin && "m-drw-item-on")} onClick={() => { setDraft(null); setSelPin(p.ItemId); focusOn(p.x, p.y); }}>
-                      <span className="m-drw-dotpin" style={{ background: "#2563eb", opacity: p.closed ? 0.5 : 1 }} />
+                      <span className="m-drw-dotpin" style={{ background: PIN_COLOR[p.type], opacity: p.closed ? 0.5 : 1 }} />
                       <span style={{ minWidth: 0 }}>
-                        <span className="m-drw-item-title">{p.number || t("drw.v.draftRfi")} · {p.title}</span>
-                        <span className="m-small m-muted">{p.dueDate ? fmt(t("drw.v.dueOn"), { date: fmtShortDate(p.dueDate) }) : p.ballInCourtName}{outOfPlace(p) ? ` · ${t("drw.v.checkSpot")}` : ""}</span>
+                        <span className="m-drw-item-title">{labelOf(t, p)}{p.title ? ` · ${p.title}` : ""}</span>
+                        <span className="m-small m-muted">
+                          {p.saving ? t("drw.v.saving") : [p.dueDate ? fmt(t("drw.v.dueOn"), { date: fmtShortDate(p.dueDate) }) : "", isPunch(p) ? p.companyName ?? "" : p.dueDate ? "" : p.ballInCourtName].filter(Boolean).join(" · ")}
+                          {outOfPlace(p) ? ` · ${t("drw.v.checkSpot")}` : ""}
+                        </span>
                       </span>
-                      <Badge tone={RFI_TONE[p.status] ?? "gray"}>{t(`rfi.status.${p.status}` as never) || p.status}</Badge>
+                      <Badge tone={toneOf(p)}>{statusOf(t, p)}</Badge>
                     </button>
                   ))}
                   {shown.length === 0 ? <span className="m-muted m-small">{onThis.length ? t("drw.v.noPinsMatch") : t("drw.v.noPins")}</span> : null}
@@ -677,6 +722,17 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
             });
             setTab("pins");
           }}
+        />
+      ) : null}
+
+      {punchDialog && current ? (
+        <PunchHereDialog
+          projectId={projectId}
+          pin={{ sheetId: sheet.ItemId, revisionIndex: current.revisionIndex, x: punchDialog.x, y: punchDialog.y, label: fmt(t("drw.v.pinLabel"), { sheet: sheet.sheetNumber, label: current.revisionLabel }) }}
+          toast={toast}
+          onNavigate={onNavigate}
+          onClose={() => setPunchDialog(null)}
+          onSaving={(saving, title) => punchSaving(punchDialog, saving, title)}
         />
       ) : null}
 

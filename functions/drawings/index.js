@@ -8,7 +8,7 @@
 //
 //   { action: "list", projectId }                                    -> register
 //   { action: "links", projectId, revisionIds }                      -> { links: { [revisionId]: { thumb } }, linksExpireAt }
-//   { action: "sheet", projectId, sheetId }                          -> { sheet, revisions, pins, hiddenPins, rfis, can, linksExpireAt }
+//   { action: "sheet", projectId, sheetId }                          -> { sheet, revisions, pins, hiddenPins, rfis, punchItems, can, linksExpireAt }
 //   { action: "uploadLinks", projectId, files: [{ name, sizeBytes, thumb?: { contentType, sizeBytes } }] }
 //                                                                    -> { uploads: [{ fileId, thumbFileId, …, ticket }] }
 //   { action: "publish", projectId, sheets: [upload + ticket + { sheetNumber, title, discipline,
@@ -16,7 +16,7 @@
 //                                                                    -> { results: [{ fileId, ok, sheetId?, code?, error? }], notified }
 //   { action: "updateSheet", projectId, sheetId, version, sheetNumber?, title?, discipline?, setName? } -> { sheet }
 //   { action: "voidRevision", projectId, revisionId, reason }        -> { sheet }
-//   { action: "pin", projectId, sheetId, revisionIndex, x, y, recordType: "rfi", recordId } -> { pin }
+//   { action: "pin", projectId, sheetId, revisionIndex, x, y, recordType: "rfi" | "punchItem", recordId } -> { pin }
 //   { action: "movePin", projectId, pinId, revisionIndex, x, y }    -> { pin }
 //   { action: "removePin", projectId, pinId }                        -> { pinId }
 //
@@ -32,6 +32,10 @@
 //   a record they can open. A pin shows on every later revision until it is moved; moving it on
 //   a newer revision keeps it where it was on the older ones. People move and remove their own pins.
 // - Subcontractors don't see pins of records they can't open; they get a count ("2 pins hidden").
+// - Punch items (Phase 3 step 3): a new item is pinned by the punch Function's create ("New punch
+//   item here"); an existing active item without a pin is pinned here. An item has at most one live
+//   pin. Its history shows when it is pinned, moved or unpinned. A subcontractor sees the pins of
+//   items assigned to their company or created by them (punch_item.view_assigned).
 // - Every sheet change matches the row's `version` (compare-and-set); revisions are never
 //   overwritten, nothing is deleted.
 // Never returns or logs a token; download links only go to people who may open the sheet.
@@ -628,6 +632,8 @@ const TEAM_FIELDS = "ItemId userId displayName email companyId companyName role 
 const RFI_FIELDS =
   "ItemId number subject status isVoided dueDate ballInCourtUserId ballInCourtName createdByUserId createdByCompanyId assigneeUserIds distributionUserIds";
 const PREF_FIELDS = "ItemId userId emailEnabled";
+const PUNCH_FIELDS = "ItemId number title status isVoided dueDate assigneeCompanyId assigneeCompanyName ballInCourtName createdByUserId";
+const PUNCH_ACTIVE = ["open", "inProgress", "readyForReview"];
 
 // ---------- small helpers ----------
 const text = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -698,7 +704,8 @@ const can = (c) => ({
   upload: c.upload && !c.archived,
   manage: c.manager && !c.archived,
   pin: c.pinner && !c.archived,
-  createRfi: projectCan(c.role, "rfi.create") && c.pinner && !c.archived
+  createRfi: projectCan(c.role, "rfi.create") && c.pinner && !c.archived,
+  createPunch: projectCan(c.role, "punch_item.create") && c.pinner && !c.archived
 });
 
 // ---------- RFIs the caller can open (same rules as functions/rfis canSee) ----------
@@ -730,6 +737,25 @@ async function loadRfis(db, c) {
 }
 // RFIs a pin can be placed for: open to the caller, numbered, not a draft or voided.
 const pinnable = (r, c) => r && !r.isVoided && r.status !== "draft" && r.status !== "void" && r.number && canSeeRfi(r, c);
+
+// ---------- punch items the caller can open (same rules as functions/punch canSee) ----------
+function canSeePunch(i, c) {
+  if (projectCan(c.role, "punch_item.view")) return true;
+  if (projectCan(c.role, "punch_item.view_assigned")) {
+    return (Boolean(i.assigneeCompanyId) && i.assigneeCompanyId === c.mine.companyId) || i.createdByUserId === c.me.userId;
+  }
+  return false;
+}
+async function loadPunch(db, c) {
+  if (c.allPunch) return c.allPunch;
+  const rows = await db.list("PunchItem", PUNCH_FIELDS, c.me.tenantRole, { projectId: c.projectId }).catch(() => []);
+  c.allPunch = rows;
+  c.punchById = new Map(rows.map((i) => [i.ItemId, i]));
+  return rows;
+}
+const punchPinnable = (i, c) => i && !i.isVoided && PUNCH_ACTIVE.includes(i.status) && i.number && canSeePunch(i, c);
+// The pin that shows an item on the current revision of its sheet (at most one per item).
+const livePin = (p) => !p.isVoided && !Number(p.toRevisionIndex);
 
 // ---------- reading ----------
 async function loadSheets(db, c, where = {}) {
@@ -764,7 +790,8 @@ async function linksFor(db, fileIds) {
 /** What a pin shows to this caller, or null when they may not see it. `hidden` counts the rest. */
 function pinView(p, c) {
   if (p.isVoided) return null;
-  if (p.linkedRecordType !== "rfi") return null; // punch items arrive in Phase 3 step 3
+  if (p.linkedRecordType === "punchItem") return punchPinView(p, c);
+  if (p.linkedRecordType !== "rfi") return null;
   const r = c.rfiById.get(p.linkedRecordId);
   if (!r || r.isVoided || r.status === "void") return null;
   if (!canSeeRfi(r, c)) return r.status === "draft" ? null : "hidden";
@@ -785,6 +812,35 @@ function pinView(p, c) {
     closed: r.status === "closed",
     dueDate: r.dueDate ?? "",
     ballInCourtName: r.ballInCourtName ?? "",
+    createdByName: p.createdByName ?? "",
+    createdAt: p.createdAt,
+    canMove: !c.archived && (c.manager || (c.pinner && mineToo)),
+    canRemove: !c.archived && (c.manager || (c.pinner && mineToo))
+  };
+}
+
+function punchPinView(p, c) {
+  const i = c.punchById?.get(p.linkedRecordId);
+  if (!i || i.isVoided || i.status === "void") return null;
+  if (!canSeePunch(i, c)) return "hidden";
+  const mineToo = p.createdByUserId === c.me.userId;
+  return {
+    ItemId: p.ItemId,
+    sheetId: p.sheetId,
+    x: Number(p.x),
+    y: Number(p.y),
+    fromRevisionIndex: Number(p.fromRevisionIndex ?? 1),
+    toRevisionIndex: Number(p.toRevisionIndex ?? 0),
+    version: Number(p.version ?? 0),
+    type: "punchItem",
+    recordId: i.ItemId,
+    number: i.number || "",
+    title: i.title ?? "",
+    status: i.status,
+    closed: i.status === "closed",
+    dueDate: i.dueDate ?? "",
+    ballInCourtName: i.ballInCourtName ?? "",
+    companyName: i.assigneeCompanyName ?? "",
     createdByName: p.createdByName ?? "",
     createdAt: p.createdAt,
     canMove: !c.archived && (c.manager || (c.pinner && mineToo)),
@@ -868,7 +924,7 @@ const bySheet = (rows) => {
 // ---------- actions: reading ----------
 async function list(db, me, args) {
   const c = await projectContext(db, me, args.projectId);
-  const [sheets, revisions, pins] = await Promise.all([loadSheets(db, c), loadRevisions(db, c), loadPins(db, c), loadRfis(db, c)]);
+  const [sheets, revisions, pins] = await Promise.all([loadSheets(db, c), loadRevisions(db, c), loadPins(db, c), loadRfis(db, c), loadPunch(db, c)]);
   const live = sheets.filter((s) => !s.isVoided).sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
   const revsBy = bySheet(revisions);
   const pinsBy = bySheet(pins);
@@ -907,7 +963,14 @@ async function links(db, me, args) {
 
 async function sheetDetail(db, c, sheetId) {
   const s = await loadSheet(db, c, sheetId);
-  const [revisions, pins] = await Promise.all([loadRevisions(db, c, { sheetId: s.ItemId }), loadPins(db, c, { sheetId: s.ItemId }), loadRfis(db, c)]);
+  const [revisions, pins, punchPins] = await Promise.all([
+    loadRevisions(db, c, { sheetId: s.ItemId }),
+    loadPins(db, c, { sheetId: s.ItemId }),
+    loadPins(db, c, { linkedRecordType: "punchItem" }),
+    loadRfis(db, c),
+    loadPunch(db, c)
+  ]);
+  const pinnedPunch = new Set(punchPins.filter(livePin).map((p) => p.linkedRecordId));
   const visibleRevs = revisions.filter((r) => !r.isVoided || c.manager).sort((a, b) => b.revisionIndex - a.revisionIndex);
   const urls = await linksFor(db, visibleRevs.filter((r) => !r.isVoided).flatMap((r) => [r.fileId, r.thumbFileId]));
   const { shown, hidden } = pinsFor(pins, c);
@@ -928,6 +991,11 @@ async function sheetDetail(db, c, sheetId) {
     rfis: c.allRfis
       .filter((r) => pinnable(r, c))
       .map((r) => ({ ItemId: r.ItemId, number: r.number, subject: r.subject ?? "", status: r.status }))
+      .sort((a, b) => String(b.number).localeCompare(String(a.number), undefined, { numeric: true })),
+    // Active punch items without a pin yet, for "Link existing".
+    punchItems: c.allPunch
+      .filter((i) => punchPinnable(i, c) && !pinnedPunch.has(i.ItemId))
+      .map((i) => ({ ItemId: i.ItemId, number: i.number, title: i.title ?? "", status: i.status, companyName: i.assigneeCompanyName ?? "" }))
       .sort((a, b) => String(b.number).localeCompare(String(a.number), undefined, { numeric: true }))
   };
 }
@@ -1347,7 +1415,7 @@ function point(v) {
 async function loadPin(db, c, pinId) {
   const [p] = await loadPins(db, c, { ItemId: String(pinId ?? "") });
   if (!p || p.isVoided) throw new Refused("NOT_FOUND", "This pin doesn't exist any more.");
-  await loadRfis(db, c);
+  await Promise.all([loadRfis(db, c), loadPunch(db, c)]);
   const v = pinView(p, c);
   if (!v || v === "hidden") throw new Refused("NOT_FOUND", "This pin doesn't exist any more.");
   return { p, v };
@@ -1365,7 +1433,8 @@ async function pin(db, me, args) {
   const s = await loadSheet(db, c, args.sheetId);
   if (s.isVoided) throw new Refused("NOT_FOUND", "This sheet was removed.");
   onCurrent(s, args.revisionIndex);
-  if (args.recordType !== "rfi") throw new Refused("BAD_LINK", "Pins link to RFIs for now; punch items come next.");
+  if (args.recordType === "punchItem") return pinPunch(db, me, c, s, args);
+  if (args.recordType !== "rfi") throw new Refused("BAD_LINK", "A pin links to an RFI or a punch item.");
   await loadRfis(db, c);
   const r = c.rfiById.get(String(args.recordId ?? ""));
   if (!pinnable(r, c)) throw new Refused("NOT_FOUND", "That RFI doesn't exist, or you can't open it.");
@@ -1395,6 +1464,51 @@ async function pin(db, me, args) {
   const itemId = await db.insert("Pin", row);
   await history(db, c, "sheet", s.ItemId, s.sheetNumber, "pinned", `${actorName(c)} pinned ${r.number} on ${s.sheetNumber} rev ${s.currentRevisionLabel}`);
   return { ok: true, pin: pinView({ ...row, ItemId: itemId }, c) };
+}
+
+// Pins an existing punch item that has no pin yet (a new one is pinned by the punch Function's create).
+async function pinPunch(db, me, c, s, args) {
+  await loadPunch(db, c);
+  const i = c.punchById.get(String(args.recordId ?? ""));
+  if (!i || i.isVoided || !canSeePunch(i, c)) throw new Refused("NOT_FOUND", "That punch item doesn't exist, or you can't open it.");
+  if (!PUNCH_ACTIVE.includes(i.status)) throw new Refused("NOT_ACTIVE", `${i.number} is ${i.status === "closed" ? "closed" : "void"}. Only open items get a pin.`);
+  const x = point(args.x);
+  const y = point(args.y);
+  const already = (await loadPins(db, c, { linkedRecordId: i.ItemId })).find((p) => livePin(p));
+  if (already) {
+    const [where] = await loadSheets(db, c, { ItemId: already.sheetId });
+    throw new Refused("ALREADY_PINNED", `${i.number} is already pinned${where ? ` on ${where.sheetNumber}` : ""}. Move that pin instead.`);
+  }
+  const row = {
+    tenantRole: me.tenantRole,
+    projectId: c.projectId,
+    sheetId: s.ItemId,
+    fromRevisionIndex: Number(s.currentRevisionIndex),
+    toRevisionIndex: 0,
+    version: 0,
+    x,
+    y,
+    linkedRecordType: "punchItem",
+    linkedRecordId: i.ItemId,
+    linkedRecordNumber: i.number,
+    createdByUserId: me.userId,
+    createdByCompanyId: c.mine.companyId ?? "",
+    createdByName: actorName(c),
+    createdAt: new Date().toISOString(),
+    isVoided: false,
+    lastChange: { kind: "created", nonce: crypto.randomUUID(), actorUserId: me.userId }
+  };
+  const itemId = await db.insert("Pin", row);
+  await Promise.all([
+    history(db, c, "sheet", s.ItemId, s.sheetNumber, "pinned", `${actorName(c)} pinned ${i.number} on ${s.sheetNumber} rev ${s.currentRevisionLabel}`),
+    punchHistory(db, c, i.ItemId, i.number, "pinned", `${actorName(c)} pinned it on ${s.sheetNumber}`)
+  ]);
+  return { ok: true, pin: pinView({ ...row, ItemId: itemId }, c) };
+}
+
+// The punch item's own history (the punch Function shows it in the item panel).
+function punchHistory(db, c, itemId, number, action, summary) {
+  return history(db, c, "punchItem", itemId, number, action, summary);
 }
 
 async function movePin(db, me, args) {
@@ -1441,6 +1555,7 @@ async function movePin(db, me, args) {
     saved = { ...p, x, y, version: Number(p.version ?? 0) + 1 };
   }
   await history(db, c, "sheet", s.ItemId, s.sheetNumber, "pinMoved", `${actorName(c)} moved the pin of ${p.linkedRecordNumber} on ${s.sheetNumber}`);
+  if (p.linkedRecordType === "punchItem") await punchHistory(db, c, p.linkedRecordId, p.linkedRecordNumber, "pinMoved", `${actorName(c)} moved its pin on ${s.sheetNumber}`);
   return { ok: true, pin: pinView(saved, c), replacedPinId: saved.ItemId !== p.ItemId ? p.ItemId : undefined };
 }
 
@@ -1458,6 +1573,7 @@ async function removePin(db, me, args) {
   });
   if (n !== 1) throw new Refused("STATE_CHANGED", "Someone else just changed this pin. The sheet has been reloaded.");
   await history(db, c, "sheet", s.ItemId, s.sheetNumber, "unpinned", `${actorName(c)} removed the pin of ${p.linkedRecordNumber} from ${s.sheetNumber}`);
+  if (p.linkedRecordType === "punchItem") await punchHistory(db, c, p.linkedRecordId, p.linkedRecordNumber, "unpinned", `${actorName(c)} removed its pin from ${s.sheetNumber}`);
   return { ok: true, pinId: p.ItemId };
 }
 

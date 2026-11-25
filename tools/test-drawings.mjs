@@ -102,6 +102,13 @@ rows("Rfi").push(
   { ItemId: "rfi-draft", tenantRole: T, projectId: P, number: "", subject: "Draft", status: "draft", createdByUserId: "supt", createdByCompanyId: "gc", assigneeUserIds: [], distributionUserIds: [] },
   { ItemId: "rfi-void", tenantRole: T, projectId: P, number: "RFI-003", subject: "Voided", status: "open", isVoided: true, createdByUserId: "pm", createdByCompanyId: "gc", assigneeUserIds: [], distributionUserIds: [] }
 );
+// Punch items: one for the subcontractor's company, one for another company, a closed and a voided one.
+rows("PunchItem").push(
+  { ItemId: "pi-sub", tenantRole: T, projectId: P, number: "PI-001", title: "Paint run", status: "open", assigneeCompanyId: "sub-co", assigneeCompanyName: "Sub Co", ballInCourtName: "SUB", createdByUserId: "supt", dueDate: "2026-12-04" },
+  { ItemId: "pi-other", tenantRole: T, projectId: P, number: "PI-002", title: "Loose tile", status: "inProgress", assigneeCompanyId: "other-co", assigneeCompanyName: "Other Co", createdByUserId: "pm" },
+  { ItemId: "pi-closed", tenantRole: T, projectId: P, number: "PI-003", title: "Done", status: "closed", assigneeCompanyId: "sub-co", createdByUserId: "pm" },
+  { ItemId: "pi-void", tenantRole: T, projectId: P, number: "PI-004", title: "Wrong", status: "void", isVoided: true, assigneeCompanyId: "sub-co", createdByUserId: "pm" }
+);
 // Another company's sheet with the same project id must never show.
 rows("Sheet").push({ ItemId: "foreign", tenantRole: "company-other", projectId: P, sheetNumber: "X-999", sheetNumberKey: "X-999", sortKey: "X-000999", title: "Not yours", isVoided: false, currentRevisionIndex: 1 });
 
@@ -163,10 +170,10 @@ await test("company admin not on the team gets nothing; what each role may do", 
   expect(r.sheets.length === 0, "foreign sheet hidden");
   expect(r.disciplines.some((d) => d.name === "Architectural"), "default disciplines");
   const want = {
-    pm: "upload manage pin createRfi",
+    pm: "upload manage pin createRfi createPunch",
     dc: "upload manage",
     design: "upload",
-    supt: "pin createRfi",
+    supt: "pin createRfi createPunch",
     sub: "pin createRfi",
     owner: ""
   };
@@ -301,6 +308,39 @@ await test("moving a pin keeps it on the older revisions; only the placer or a m
   ok(await call("dc", { action: "removePin", pinId: m.pin.ItemId }), "dc removes any");
   const forPm = await call("pm", { action: "sheet", sheetId: a101.ItemId });
   expect(forPm.pins.length === 1 && forPm.pins[0].toRevisionIndex === 3, `left: the old placement only (${forPm.pins.length})`);
+});
+
+await test("punch pins: existing active items, one live pin each; subs see their company's; history on the item", async () => {
+  const at = { sheetId: a101.ItemId, revisionIndex: 4, recordType: "punchItem" };
+  const forPm = await call("pm", { action: "sheet", sheetId: a101.ItemId });
+  expect(forPm.punchItems.map((i) => i.number).join(",") === "PI-002,PI-001", `pinnable ${forPm.punchItems.map((i) => i.number)}`);
+  const r = await call("supt", { action: "pin", ...at, x: 0.6, y: 0.6, recordId: "pi-sub" });
+  ok(r, "supt pins PI-001");
+  expect(r.pin.type === "punchItem" && r.pin.number === "PI-001" && r.pin.companyName === "Sub Co" && r.pin.canMove, JSON.stringify(r.pin));
+  refused(await call("supt", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "pi-sub" }), "ALREADY_PINNED", "one live pin per item");
+  refused(await call("supt", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "pi-closed" }), "NOT_ACTIVE", "closed item");
+  refused(await call("supt", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "pi-void" }), "NOT_FOUND", "voided item");
+  refused(await call("sub", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "pi-other" }), "NOT_FOUND", "sub on another company's item");
+  refused(await call("owner", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "pi-other" }), "NOT_ALLOWED", "owner");
+  const o = await call("pm", { action: "pin", ...at, x: 0.2, y: 0.8, recordId: "pi-other" });
+  ok(o, "pm pins PI-002");
+  const forSub = await call("sub", { action: "sheet", sheetId: a101.ItemId });
+  const subPunch = forSub.pins.filter((p) => p.type === "punchItem").map((p) => p.number).join(",");
+  expect(subPunch === "PI-001" && forSub.hiddenPins >= 1, `sub sees ${subPunch}, hidden ${forSub.hiddenPins}`);
+  expect(forSub.punchItems.length === 0, "nothing left for the sub to pin");
+  expect(!forSub.can.createPunch, "subs don't create punch items");
+  expect(mine("ActivityEvent").some((e) => e.recordType === "punchItem" && e.recordId === "pi-sub" && e.action === "pinned"), "item history: pinned");
+  refused(await call("supt", { action: "removePin", pinId: o.pin.ItemId }), "NOT_ALLOWED", "supt removes the PM's pin");
+  ok(await call("pm", { action: "removePin", pinId: o.pin.ItemId }), "pm removes own");
+  expect(mine("ActivityEvent").some((e) => e.recordType === "punchItem" && e.recordId === "pi-other" && e.action === "unpinned"), "item history: unpinned");
+  const after = await call("pm", { action: "sheet", sheetId: a101.ItemId });
+  expect(after.punchItems.map((i) => i.number).join(",") === "PI-002", `pinnable again ${after.punchItems.map((i) => i.number)}`);
+  expect(after.pins.some((p) => p.number === "PI-001") && !after.pins.some((p) => p.number === "PI-002"), "PI-001 stays, PI-002 gone");
+  const m = await call("supt", { action: "movePin", pinId: r.pin.ItemId, revisionIndex: 4, x: 0.65, y: 0.6 });
+  ok(m, "supt moves own punch pin");
+  expect(mine("ActivityEvent").some((e) => e.recordType === "punchItem" && e.recordId === "pi-sub" && e.action === "pinMoved"), "item history: moved");
+  const reg = await call("pm", { action: "list" });
+  expect(reg.sheets.find((x) => x.sheetNumber === "A-101").pins === 1, "register counts the punch pin (the RFI pins were removed)");
 });
 
 await test("void: managers only, with a reason; the previous revision is current again; last one removes the sheet", async () => {

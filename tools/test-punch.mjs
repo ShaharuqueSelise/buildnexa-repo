@@ -208,6 +208,31 @@ await test("create from a sheet pin: the pin links to the item, on the current r
   expect(r.item.photoMissing === false, "a pinned item without a photo is fine");
 });
 
+await test("the item follows its live pin: moved to another sheet, removed, or on a removed sheet", async () => {
+  const r = await create("supt", { withPhoto: false, title: "Pin follower", pin: { sheetId: "sheet-a", revisionIndex: 2, x: 0.4, y: 0.6 } });
+  ok(r, "pinned create");
+  expect(r.pin && r.pin.sheetNumber === "A-101" && r.pin.x === 0.4 && r.item.sheetNumber === "A-101", `detail pin ${JSON.stringify(r.pin)}`);
+  const id = r.item.ItemId;
+  const first = mine("Pin").find((p) => p.linkedRecordId === id);
+  // The drawings Function moved it to another sheet: the old row ends, a new one starts there.
+  rows("Sheet").push({ ItemId: "sheet-b", tenantRole: T, projectId: P, sheetNumber: "A-102", title: "Level 2", currentRevisionIndex: 1, currentRevisionLabel: "A", isVoided: false });
+  first.toRevisionIndex = 1;
+  rows("Pin").push({ ItemId: "pin-b", tenantRole: T, projectId: P, sheetId: "sheet-b", fromRevisionIndex: 1, toRevisionIndex: 0, x: 0.1, y: 0.2, linkedRecordType: "punchItem", linkedRecordId: id, isVoided: false, createdAt: new Date().toISOString() });
+  let d = await call("pm", { action: "get", itemId: id });
+  expect(d.item.sheetId === "sheet-b" && d.item.pinId === "pin-b" && d.pin.sheetNumber === "A-102" && d.pin.sheetTitle === "Level 2", `moved ${JSON.stringify(d.pin)}`);
+  const l = await call("pm", { action: "list" });
+  expect(l.items.find((i) => i.ItemId === id).sheetNumber === "A-102", "list row shows the sheet");
+  // Removed: no pin any more.
+  mine("Pin").find((p) => p.ItemId === "pin-b").isVoided = true;
+  d = await call("pm", { action: "get", itemId: id });
+  expect(!d.item.sheetId && !d.item.pinId && d.pin === null, "no pin after removal");
+  // A pin on a sheet that was removed doesn't count either.
+  rows("Pin").push({ ItemId: "pin-c", tenantRole: T, projectId: P, sheetId: "sheet-gone", fromRevisionIndex: 1, toRevisionIndex: 0, x: 0.5, y: 0.5, linkedRecordType: "punchItem", linkedRecordId: id, isVoided: false, createdAt: new Date().toISOString() });
+  rows("Sheet").push({ ItemId: "sheet-gone", tenantRole: T, projectId: P, sheetNumber: "A-999", isVoided: true });
+  d = await call("pm", { action: "get", itemId: id });
+  expect(d.pin === null, "removed sheet ignored");
+});
+
 await test("subcontractors see only their company's items; owners and designers see all but change nothing", async () => {
   const s = await call("sub", { action: "list" });
   ok(s, "sub list");

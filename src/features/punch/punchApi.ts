@@ -52,8 +52,10 @@ export type PunchRow = {
   reopenCount: number;
   lastRejectReason?: string;
   photoExpected?: boolean;
+  /** Its live pin on a drawing (moved or removed in the sheet viewer), else empty. */
   sheetId?: string;
   pinId?: string;
+  sheetNumber?: string;
   isVoided?: boolean;
   voidReason?: string;
   // Worked out by the Function:
@@ -100,12 +102,16 @@ export type PunchPhoto = { ItemId: string; role: "before" | "after"; caption: st
 export type PunchComment = { ItemId: string; body: string; authorUserId: string; authorName: string; postedAt: string };
 export type PunchHistory = { ItemId: string; action: string; actorName?: string; at: string; summary?: string; reason?: string; fromStatus?: string; toStatus?: string };
 
+/** Where the item is pinned: the sheet's current thumbnail and the spot on it (0..1). */
+export type PunchPin = { pinId: string; sheetId: string; sheetNumber: string; sheetTitle: string; revisionLabel: string; x: number; y: number; thumbUrl?: string };
+
 export type PunchDetail = {
   role: string;
   today: string;
   linksExpireAt: string;
   item: PunchRow;
   can: PunchCan;
+  pin?: PunchPin | null;
   photos: PunchPhoto[];
   comments: PunchComment[];
   history: PunchHistory[];
@@ -120,6 +126,8 @@ export type PunchInput = {
   dueDate?: string;
   assigneeCompanyId: string;
   assigneeUserId?: string;
+  /** "New punch item here" in the sheet viewer: the spot on the current revision. */
+  pin?: { sheetId: string; revisionIndex: number; x: number; y: number };
 };
 
 export type PunchBulkOp = "reassign" | "setDue" | "start" | "markReady" | "close" | "void";

@@ -11,7 +11,7 @@ import { FUNCTIONS, callFunction } from "../../lib/blocks/functions";
 import { MAX_FILE_BYTES, put } from "../files/files";
 import { pdfjs } from "../files/FileViewer";
 
-export type DrawingCan = { upload: boolean; manage: boolean; pin: boolean; createRfi: boolean };
+export type DrawingCan = { upload: boolean; manage: boolean; pin: boolean; createRfi: boolean; createPunch?: boolean };
 export type Discipline = { code: string; name: string };
 
 export type RevisionStatus = "current" | "superseded" | "void";
@@ -66,7 +66,7 @@ export type SheetPin = {
   /** 0 = still shown on the newest revision. */
   toRevisionIndex: number;
   version: number;
-  type: "rfi";
+  type: "rfi" | "punchItem";
   recordId: string;
   number: string;
   title: string;
@@ -74,6 +74,8 @@ export type SheetPin = {
   closed: boolean;
   dueDate: string;
   ballInCourtName: string;
+  /** Punch pins: the company that fixes it. */
+  companyName?: string;
   createdByName: string;
   createdAt: string;
   canMove: boolean;
@@ -83,10 +85,12 @@ export type SheetPin = {
 };
 
 export type PinnableRfi = { ItemId: string; number: string; subject: string; status: string };
+/** Active punch items without a pin yet. */
+export type PinnablePunch = { ItemId: string; number: string; title: string; status: string; companyName: string };
 
 type Common = { role: string; archived: boolean; can: DrawingCan; today: string; disciplines: Discipline[]; linksExpireAt: string };
 export type Register = Common & { sets: string[]; sheets: SheetRow[] };
-export type SheetDetail = Common & { sheet: SheetRow; revisions: Revision[]; pins: SheetPin[]; hiddenPins: number; rfis: PinnableRfi[] };
+export type SheetDetail = Common & { sheet: SheetRow; revisions: Revision[]; pins: SheetPin[]; hiddenPins: number; rfis: PinnableRfi[]; punchItems?: PinnablePunch[] };
 
 const call = <T,>(body: Record<string, unknown>) => callFunction<T>(FUNCTIONS.drawings, body);
 const listKey = (projectId?: string) => ["drawings", projectId ?? "", "list"];
@@ -131,7 +135,7 @@ export function revisionLinks(projectId: string, revisionIds: string[]) {
 type SheetAction =
   | { action: "updateSheet"; sheetId: string; version: number; sheetNumber?: string; title?: string; discipline?: string; setName?: string }
   | { action: "voidRevision"; sheetId: string; revisionId: string; reason: string }
-  | { action: "pin"; sheetId: string; revisionIndex: number; x: number; y: number; recordType: "rfi"; recordId: string; temp: SheetPin }
+  | { action: "pin"; sheetId: string; revisionIndex: number; x: number; y: number; recordType: "rfi" | "punchItem"; recordId: string; temp: SheetPin }
   | { action: "movePin"; sheetId: string; pinId: string; revisionIndex: number; x: number; y: number }
   | { action: "removePin"; sheetId: string; pinId: string };
 
@@ -191,7 +195,13 @@ export function useDrawingAction(projectId?: string) {
       void queryClient.invalidateQueries({ queryKey: k });
     },
     onSettled: (_a, _e, body) => {
-      if (body.action === "pin" || body.action === "movePin" || body.action === "removePin") void queryClient.invalidateQueries({ queryKey: listKey(projectId) });
+      if (body.action === "pin" || body.action === "movePin" || body.action === "removePin") {
+        void queryClient.invalidateQueries({ queryKey: listKey(projectId) });
+        // A punch item shows where it is pinned, and the sheet offers only unpinned items to link.
+        void queryClient.invalidateQueries({ queryKey: ["punch", projectId ?? ""] });
+        void queryClient.invalidateQueries({ queryKey: ["punchItem", projectId ?? ""] });
+        if (body.action !== "movePin") void queryClient.invalidateQueries({ queryKey: sheetKey(projectId, body.sheetId) });
+      }
     }
   });
 }
@@ -201,6 +211,11 @@ export function addPendingPin(queryClient: ReturnType<typeof useQueryClient>, pr
   queryClient.setQueryData<SheetDetail>(sheetKey(projectId, pin.sheetId), (old) => (old ? { ...old, pins: [...old.pins, { ...pin, saving: true }] } : old));
   void queryClient.invalidateQueries({ queryKey: sheetKey(projectId, pin.sheetId) });
   void queryClient.invalidateQueries({ queryKey: listKey(projectId) });
+}
+
+/** A pin whose record is still being saved (New punch item here): shown at once, replaced on the next read. */
+export function showSavingPin(queryClient: ReturnType<typeof useQueryClient>, projectId: string, pin: SheetPin) {
+  queryClient.setQueryData<SheetDetail>(sheetKey(projectId, pin.sheetId), (old) => (old ? { ...old, pins: [...old.pins, { ...pin, saving: true }] } : old));
 }
 
 export function refreshDrawings(queryClient: ReturnType<typeof useQueryClient>, projectId: string, sheetIds: string[] = []) {
