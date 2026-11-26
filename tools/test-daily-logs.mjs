@@ -317,6 +317,19 @@ await test("a subcontractor sees the day's header and their own crew, nothing el
   expect(m.days.find((x) => x.date === today).headcount === null, "no totals in the calendar");
 });
 
+await test("photos on the log: the whole team sees all, a subcontractor their own company's; added on drafts only", async () => {
+  const id = logsOn(today)[0].ItemId;
+  const photo = (ItemId, uploaderCompanyId, extra = {}) => ({ ItemId, tenantRole: T, projectId: P, linkedRecordType: "dailyLog", linkedRecordId: id, fileName: `${ItemId}.jpg`, uploadedAt: "2026-11-26T09:00:00Z", takenAt: "2026-11-26T08:30:00Z", uploadedByName: "X", uploaderCompanyId, thumbFileId: `${ItemId}-t`, isVoided: false, ...extra });
+  rows("Photo").push(photo("ph-gc", "gc"), photo("ph-sub", "sub-co"), photo("ph-gone", "gc", { isVoided: true }), { ...photo("ph-other-log", "gc"), linkedRecordId: "another-log" });
+  const pm = await call("pm", { action: "get", date: today });
+  expect(pm.photos.map((p) => p.ItemId).sort().join() === "ph-gc,ph-sub" && pm.photos.find((p) => p.ItemId === "ph-sub").companyName === "Dry Walls Ltd", JSON.stringify(pm.photos));
+  expect(pm.can.addPhotos === true, "GC adds photos to a draft");
+  const sub = await call("sub", { action: "get", date: today });
+  expect(sub.photos.map((p) => p.ItemId).join() === "ph-sub" && sub.can.addPhotos === true, `sub: own company's only: ${JSON.stringify(sub.photos)}`);
+  const dc = await call("dc", { action: "get", date: today });
+  expect(dc.photos.length === 2 && dc.can.addPhotos === false, "DC reads all, adds none");
+});
+
 await test("the owner sees a draft only as pending; the document controller reads everything", async () => {
   const o = await call("owner", { action: "get", date: today });
   ok(o, "owner get");

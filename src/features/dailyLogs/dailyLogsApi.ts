@@ -5,7 +5,10 @@
 // A day is addressed by its date ("yyyy-MM-dd" in the project's timezone).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { FUNCTIONS, FunctionRefused, callFunction } from "../../lib/blocks/functions";
+import { enqueuePhotos, usePhotoQueue } from "../photos/photosApi";
+import type { QueueItem } from "../photos/photosApi";
 
 export type LogStatus = "draft" | "submitted";
 export type DayStatus = LogStatus | "pending";
@@ -92,7 +95,10 @@ export type CrewCompany = { companyId: string; companyName: string; own: boolean
 
 export type LogHistory = { id: string; action: string; actorName?: string; at: string; summary?: string; reason?: string; before?: unknown; after?: unknown };
 
-export type LogCan = { open: boolean; editSections: boolean; editAnyCrew: boolean; editOwnCrew: boolean; submit: boolean; correct: boolean };
+export type LogCan = { open: boolean; editSections: boolean; editAnyCrew: boolean; editOwnCrew: boolean; submit: boolean; correct: boolean; addPhotos: boolean };
+
+/** A photo on the log (a subcontractor gets their own company's only). Image links are short-lived. */
+export type LogPhoto = { ItemId: string; caption: string; takenAt: string; uploadedByName: string; companyName: string; thumbUrl?: string; previewUrl?: string };
 
 export type LogDetail = {
   date: string;
@@ -111,6 +117,7 @@ export type LogDetail = {
   /** Subcontractor companies on the team that haven't added a crew yet. */
   missingCrews: CrewCompany[];
   history: LogHistory[];
+  photos: LogPhoto[];
   can: LogCan;
 };
 
@@ -161,6 +168,29 @@ export function useLogAction(projectId?: string, date?: string) {
       void queryClient.invalidateQueries({ queryKey: dayKey(projectId, date) });
     }
   });
+}
+
+/** Photos for the day's log go through the app's photo queue (functions/photos `add`, linked to the log). */
+export function addLogPhotos(projectId: string, logId: string, files: File[]) {
+  enqueuePhotos(projectId, files, { tags: ["daily-log"], link: { type: "dailyLog", id: logId } });
+}
+
+/**
+ * This log's photos in the queue: still going up, or failed. When one is saved the day is read
+ * again, so its thumbnail shows in the card.
+ */
+export function useLogPhotoQueue(projectId: string | undefined, logId: string | undefined, date: string) {
+  const queryClient = useQueryClient();
+  const { items } = usePhotoQueue();
+  const seen = useRef(new Set<string>());
+  const mine: QueueItem[] = items.filter((x) => x.projectId === projectId && x.options.link?.type === "dailyLog" && x.options.link.id === logId);
+  useEffect(() => {
+    const done = mine.filter((x) => x.state === "done" && !seen.current.has(x.id));
+    if (!done.length || !projectId) return;
+    for (const x of done) seen.current.add(x.id);
+    void queryClient.invalidateQueries({ queryKey: dayKey(projectId, date) });
+  }, [mine, projectId, date, queryClient]);
+  return { busy: mine.filter((x) => x.state !== "done" && x.state !== "failed"), failed: mine.filter((x) => x.state === "failed") };
 }
 
 export const refusalText = (error: unknown, fallback: string) => (error instanceof FunctionRefused ? error.message : fallback);

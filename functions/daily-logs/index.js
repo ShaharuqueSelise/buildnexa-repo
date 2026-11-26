@@ -16,7 +16,8 @@
 //   { action: "submit", projectId, date }              -> detail (the day's weather is read again)
 //   { action: "refreshWeather", projectId, date }      -> detail (GC, draft only)
 //   { action: "correct", projectId, date, reason, section + value | crewCompanyId + manpower + notes } -> detail
-// detail = { date, today, role, archived, log, crews, companies, missingCrews, can, history }.
+// detail = { date, today, role, archived, log, crews, companies, missingCrews, can, history, photos }.
+// Photos are added through the photos Function (link { type: "dailyLog", id }); `can.addPhotos` says when.
 //
 // Who (05 §3, decisions of 2026-11-26):
 // - PM, superintendent (daily_log.create): open any day up to tomorrow, fill every section and
@@ -688,6 +689,7 @@ const LOG_FIELDS = [
 const CREW_FIELDS = `ItemId CreatedDate projectId dailyLogId logDate companyId companyName status version ${ROWS("manpower", ROW_FIELDS.manpower)} notes lastEditedByUserId lastEditedByName lastEditedAt duplicateOf`;
 const MONTH_FIELDS = `ItemId CreatedDate logDate status isWorkingDay totalHeadcount correctionCount duplicateOf weather { condition } weatherOverride { source condition }`;
 const TEAM_FIELDS = "ItemId userId displayName email companyId companyName companyRelation trade role status joinedAt";
+const PHOTO_FIELDS = "ItemId fileName caption takenAt uploadedAt uploadedByName uploaderCompanyId thumbFileId previewFileId isVoided";
 const EVENT_FIELDS = "ItemId recordId action actorUserId actorName at summary reason fromStatus toStatus beforeJson afterJson";
 
 // ---------- small helpers ----------
@@ -958,6 +960,8 @@ function abilities(c, log, date) {
     editAnyCrew: open && draft && c.writer,
     editOwnCrew: open && draft && (c.writer || c.crewOwn),
     submit: open && draft && c.writer,
+    // Photos go on a draft log, added through the photos Function (which checks the same).
+    addPhotos: open && draft && (c.writer || c.crewOwn),
     correct: open && isSubmitted(log) && c.corrector
   };
 }
@@ -967,13 +971,14 @@ async function detail(db, c, date, known) {
   const base = { ok: true, date, today: c.today, role: c.role, archived: c.archived, place: c.project.address?.city || "" };
   // Owners see a draft only as "not submitted yet".
   if (!log || (!c.seesAll && !c.crewOwn && !c.writer && !isSubmitted(log))) {
-    return { ...base, log: null, pending: Boolean(log), crews: [], companies: [], missingCrews: [], history: [], can: abilities(c, null, date) };
+    return { ...base, log: null, pending: Boolean(log), crews: [], companies: [], missingCrews: [], history: [], photos: [], can: abilities(c, null, date) };
   }
   const crews = (await loadCrews(db, c, log)).map(presentCrew);
   const full = fullView(c, log);
   const visibleCrews = full ? crews : crews.filter((x) => x.companyId === c.mine.companyId);
   const companies = c.writer ? crewCompanies(c) : [];
   const withRows = new Set(crews.filter((x) => x.manpower.length).map((x) => x.companyId));
+  const [history, photos] = await Promise.all([full ? loadHistory(db, c, log) : [], loadPhotos(db, c, log, full)]);
   return {
     ...base,
     log: presentLog(c, log),
@@ -983,9 +988,33 @@ async function detail(db, c, date, known) {
     ownCompanyName: c.mine.companyName || "",
     companies,
     missingCrews: c.writer ? companies.filter((x) => !x.own && !withRows.has(x.companyId)) : [],
-    history: full ? await loadHistory(db, c, log) : [],
+    history,
+    photos,
     can: abilities(c, log, date)
   };
+}
+
+// The log's photos (Photo records linked to it, written by the photos Function): everyone who sees
+// the whole log sees all of them; a subcontractor only their own company's. Newest first, with
+// short-lived image links (none when storage doesn't answer; the page shows a placeholder).
+async function loadPhotos(db, c, log, full) {
+  const rows = (await db.list("Photo", PHOTO_FIELDS, c.me.tenantRole, { projectId: c.projectId, linkedRecordType: "dailyLog", linkedRecordId: log.ItemId }).catch(() => []))
+    .filter((p) => !p.isVoided && (full || (Boolean(p.uploaderCompanyId) && p.uploaderCompanyId === c.mine.companyId)))
+    .sort((a, b) => String(b.takenAt || b.uploadedAt).localeCompare(String(a.takenAt || a.uploadedAt)));
+  if (!rows.length) return [];
+  const ids = [...new Set(rows.flatMap((p) => [p.thumbFileId, p.previewFileId]).filter(Boolean))];
+  const urls = {};
+  for (let i = 0; i < ids.length; i += 100) Object.assign(urls, await db.downloadUrls(ids.slice(i, i + 100)).catch(() => ({})));
+  const companies = new Map(c.active.map((m) => [m.companyId, m.companyName]));
+  return rows.map((p) => ({
+    ItemId: p.ItemId,
+    caption: p.caption || "",
+    takenAt: p.takenAt || p.uploadedAt,
+    uploadedByName: p.uploadedByName || "",
+    companyName: companies.get(p.uploaderCompanyId) || "",
+    thumbUrl: urls[p.thumbFileId] ?? urls[p.previewFileId],
+    previewUrl: urls[p.previewFileId] ?? urls[p.thumbFileId]
+  }));
 }
 
 // ---------- checking what people send ----------

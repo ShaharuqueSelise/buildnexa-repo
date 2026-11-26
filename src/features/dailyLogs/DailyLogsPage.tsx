@@ -8,13 +8,14 @@
 // on different cards never block each other).
 // The weather is the day's Open-Meteo forecast for the project's city, fetched by the Function when
 // the day is opened and again at submit; the superintendent can refresh it or type over it.
-// Not real yet: photos on a log (Part 4), the bell and emails on submit and correction and the
+// Photos on a log go through the app's photo queue and the photos Function (Part 4).
+// Not real yet: the bell and emails on submit and correction and the
 // "remind a company" button (Part 5); copy yesterday and the weekly / monthly PDF (R2), offline
 // entry (R3).
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  AlertTriangle, CalendarDays, Camera, CheckCircle2, ChevronLeft, ChevronRight, CloudSun, Copy, Download, FileText, HardHat, History, List, Loader2,
+  AlertTriangle, CalendarDays, Camera, CheckCircle2, ChevronLeft, ChevronRight, CloudSun, Copy, Download, FileText, HardHat, History, ImageOff, List, Loader2,
   Lock, Pencil, Plus, RefreshCw, Send, ShieldCheck, StickyNote, Trash2, Truck, UserCheck, Users, Wifi, Wind, Wrench
 } from "lucide-react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
@@ -28,9 +29,10 @@ import {
 import type { Tone, ToastTone } from "../../shared/m/ui";
 import { useProjects } from "../projects/projectsApi";
 import {
-  CONDITIONS, DELAY_TYPES, EQUIPMENT_STATUS, SAFETY_TYPES, SITE_CONDITIONS, refusalText, totalsOf, useLogAction, useLogDay, useLogMonth
+  CONDITIONS, DELAY_TYPES, EQUIPMENT_STATUS, SAFETY_TYPES, SITE_CONDITIONS, addLogPhotos, refusalText, totalsOf, useLogAction, useLogDay, useLogMonth, useLogPhotoQueue
 } from "./dailyLogsApi";
-import type { Crew, CrewCompany, LogAction, LogDetail, LogView, ManpowerRow, RowSectionKey, SectionKey, Weather } from "./dailyLogsApi";
+import type { Crew, CrewCompany, LogAction, LogDetail, LogPhoto, LogView, ManpowerRow, RowSectionKey, SectionKey, Weather } from "./dailyLogsApi";
+import { photoRefusal, retryPhoto } from "../photos/photosApi";
 import "./DailyLogsPage.css";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
@@ -456,9 +458,7 @@ function LogDetailView({ ctx, detail, log }: { ctx: Ctx; detail: LogDetail; log:
             />
             <NotesCard ctx={ctx} log={log} editable={can.editSections} busy={busy} onSave={saveSection} />
 
-            <Panel className="m-dlog-wide" title={<><Camera size={16} /> {t("dlog.photos")}</>}>
-              <p className="m-small m-muted" style={{ marginTop: 0 }}>{t("dlog.photosLater")}</p>
-            </Panel>
+            <PhotosCard ctx={ctx} logId={log.id} date={log.date} photos={detail.photos ?? []} canAdd={Boolean(can.addPhotos)} own={false} />
 
             <Panel className="m-dlog-wide" title={<><Pencil size={16} /> {t("dlog.corrections")}</>} actions={<Badge tone="purple">{t("dlog.audited")}</Badge>}>
               {corrections.length ? (
@@ -468,7 +468,7 @@ function LogDetailView({ ctx, detail, log }: { ctx: Ctx; detail: LogDetail; log:
 
             {detail.history.length ? <HistoryCard t={t} history={detail.history} /> : null}
           </>
-        ) : null}
+        ) : <PhotosCard ctx={ctx} logId={log.id} date={log.date} photos={detail.photos ?? []} canAdd={Boolean(can.addPhotos)} own />}
       </div>
 
       {submitOpen ? (
@@ -595,6 +595,56 @@ function WeatherForm({ t, initial, busy, onSave, onCancel }: { t: T; initial?: W
         <Button small type="submit" disabled={busy || (!v.condition && !v.tempMaxC && !v.tempMinC)}>{t("common.save")}</Button>
       </div>
     </form>
+  );
+}
+
+// ---------- photos on the log ----------
+// Added through the app's photo queue (functions/photos, linked to this log); they also show in
+// Photos. A subcontractor sees and adds their own company's (`own`).
+function PhotosCard({ ctx, logId, date, photos, canAdd, own }: { ctx: Ctx; logId: string; date: string; photos: LogPhoto[]; canAdd: boolean; own: boolean }) {
+  const { t, projectId } = ctx;
+  const input = useRef<HTMLInputElement>(null);
+  const queue = useLogPhotoQueue(projectId, logId, date);
+  const add = (files: FileList | null) => {
+    const list = [...(files ?? [])];
+    const good = list.filter((f) => !photoRefusal(f));
+    if (good.length < list.length) ctx.toast(t("dlog.notAPhoto"), "warn");
+    if (!good.length) return;
+    addLogPhotos(projectId, logId, good);
+    ctx.toast(fmt(t(good.length === 1 ? "dlog.photoUploading1" : "dlog.photosUploading"), { count: good.length }));
+  };
+  const count = photos.length + queue.busy.length;
+  return (
+    <Panel className="m-dlog-wide" title={<><Camera size={16} /> {t("dlog.photos")} {count ? <Badge>{count}</Badge> : null}</>}
+      actions={canAdd ? <Button small variant="secondary" icon={<Camera size={14} />} onClick={() => input.current?.click()}>{t("dlog.addPhotos")}</Button> : null}>
+      <input ref={input} type="file" accept="image/*" capture="environment" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
+      {photos.length || queue.busy.length ? (
+        <div className="m-dlog-photos">
+          {queue.busy.map((x) => (
+            <div key={x.id} className="m-dlog-photo m-dlog-photo-busy">
+              {x.localUrl ? <img src={x.localUrl} alt="" /> : <span className="m-dlog-nophoto"><Camera size={20} /></span>}
+              <small><Loader2 className="spin" size={11} /> {t("dlog.photoSending")}</small>
+            </div>
+          ))}
+          {photos.map((ph) => (
+            <button key={ph.ItemId} type="button" className="m-dlog-photo" onClick={() => ctx.onNavigate(`/photos/${ph.ItemId}`)} title={ph.caption || undefined}>
+              {ph.thumbUrl || ph.previewUrl ? <img src={ph.thumbUrl ?? ph.previewUrl} alt={ph.caption} loading="lazy" /> : <span className="m-dlog-nophoto"><ImageOff size={20} /></span>}
+              <small>{ph.uploadedByName}{ph.companyName ? ` · ${ph.companyName}` : ""} · {fmtDateTime(ph.takenAt)}</small>
+            </button>
+          ))}
+        </div>
+      ) : <p className="m-muted" style={{ margin: 0 }}>{own ? t("dlog.noPhotosOwn") : t("dlog.noPhotos")}</p>}
+      {queue.failed.length ? (
+        <div style={{ marginTop: 10 }}>
+          <Note tone="warn">
+            <div className="m-row m-row-wrap" style={{ justifyContent: "space-between" }}>
+              <span>{fmt(t(queue.failed.length === 1 ? "dlog.photoFailed1" : "dlog.photosFailed"), { count: queue.failed.length })}{queue.failed[0]?.error ? ` ${queue.failed[0].error}` : ""}</span>
+              <Button small variant="secondary" icon={<RefreshCw size={13} />} onClick={() => queue.failed.forEach((x) => retryPhoto(x.id))}>{t("dlog.retryPhotos")}</Button>
+            </div>
+          </Note>
+        </div>
+      ) : null}
+    </Panel>
   );
 }
 

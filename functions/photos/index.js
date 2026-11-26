@@ -11,7 +11,8 @@
 //   { action: "uploadLinks", projectId, files: [{ name, contentType, sizeBytes, preview?, thumb? }] }
 //                                                                    -> { uploads: [{ fileId, previewFileId, thumbFileId, …, ticket }] }
 //   { action: "add", projectId, photos: [upload + ticket + { takenAt?, width?, height?, caption? }],
-//     locationLabel?, tags?, link?: { type: "rfi", id } | { type: "punchItem", id, role: "before" | "after" } }
+//     locationLabel?, tags?, link?: { type: "rfi", id } | { type: "punchItem", id, role: "before" | "after" }
+//                                    | { type: "dailyLog", id } }
 //                                                                    -> { photos } (the new ones)
 //   { action: "update", projectId, photoId, version, caption?, locationLabel?, tags? } -> { photos: [photo] }
 //   { action: "tag", projectId, photoIds, add?, remove? }           -> { photos, skipped }
@@ -30,6 +31,11 @@
 //   (not a draft or a voided one), or to a punch item (Phase 3 step 3) with the punch Function's
 //   rules: a before photo by the superintendent or PM while the item is not closed or void; an after
 //   photo while it is open or in progress, by the GC (superintendent, PM) or the assigned company.
+// - Daily log photos (Phase 3 daily logs part 4) follow the daily log's rules, here and in the gallery:
+//   added to a DRAFT log by the PM, the superintendent or a subcontractor; seen by whoever sees that
+//   part of the log: PM, superintendent and document controller all of them, a subcontractor their
+//   own company's, the owner once the log is submitted, designers none. A photo on a submitted log
+//   is removed only by the PM or the document controller (the log is a record).
 // - The uploader edits caption, location and tags of their own photos; photo.manage (PM, document
 //   controller) edits every photo, and alone sees and restores removed photos.
 // - Remove: photo.manage any photo; the uploader their own, a subcontractor only within 24 h.
@@ -678,6 +684,7 @@ const PHOTO_FIELDS =
   "uploadedByName isVoided voidedAt voidedByUserId lastChange { kind reason }";
 const RFI_FIELDS = "ItemId number subject status isVoided createdByUserId createdByCompanyId ballInCourtUserId assigneeUserIds distributionUserIds";
 const PUNCH_FIELDS = "ItemId number title status isVoided assigneeCompanyId createdByUserId";
+const LOG_FIELDS = "ItemId logDate status duplicateOf";
 
 // ---------- who is asking, on which project ----------
 async function projectContext(db, me, projectId, { write = false } = {}) {
@@ -749,9 +756,24 @@ function punchPhotoAllowed(i, c, role) {
   return (i.status === "open" || i.status === "inProgress") && (gc || (projectCan(c.role, "punch_item.update_assigned") && ownCompany));
 }
 
+// ---------- daily logs (same rules as functions/daily-logs) ----------
+const logsAll = (c) => projectCan(c.role, "daily_log.view") || projectCan(c.role, "daily_log.create");
+const logPhotoAllowed = (c) => projectCan(c.role, "daily_log.create") || projectCan(c.role, "daily_log.crew_own");
+const logDay = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+async function loadLogs(db, c, where = {}) {
+  return db.list("DailyLog", LOG_FIELDS, c.me.tenantRole, { projectId: c.projectId, ...where }).catch(() => []);
+}
+function seesLogPhoto(p, c) {
+  if (logsAll(c)) return true;
+  if (projectCan(c.role, "daily_log.crew_own")) return Boolean(p.uploaderCompanyId) && p.uploaderCompanyId === c.mine.companyId;
+  if (projectCan(c.role, "daily_log.view_submitted")) return Boolean(c.submittedLogIds?.has(p.linkedRecordId));
+  return false;
+}
+
 // ---------- which photos the caller sees and may change ----------
 function seesPhoto(p, c) {
   if (p.isVoided && !c.manager) return false;
+  if (p.linkedRecordType === "dailyLog") return seesLogPhoto(p, c);
   if (c.all) return true;
   if (p.uploaderCompanyId && p.uploaderCompanyId === c.mine.companyId) return true;
   if (p.linkedRecordType === "rfi") return Boolean(c.rfiIds?.has(p.linkedRecordId));
@@ -764,15 +786,17 @@ function canRemove(p, c) {
   if (c.archived || p.isVoided) return false;
   if (c.manager) return true;
   if (!own(p, c)) return false;
+  if (p.linkedRecordType === "dailyLog" && c.submittedLogIds?.has(p.linkedRecordId)) return false;
   if (projectCan(c.role, "photo.view_company")) return Date.now() - Date.parse(p.uploadedAt) <= SUB_REMOVE_HOURS * 3600_000;
   return true;
 }
 
 async function prepareVisibility(db, c) {
   // Every role needs the RFI list for the upload dialog; subcontractors also to see linked photos.
-  const [rfis, punch] = await Promise.all([loadRfis(db, c), c.all ? Promise.resolve([]) : loadPunch(db, c)]);
+  const [rfis, punch, logs] = await Promise.all([loadRfis(db, c), c.all ? Promise.resolve([]) : loadPunch(db, c), loadLogs(db, c)]);
   c.rfiIds = new Set(rfis.map((r) => r.ItemId));
   c.punchIds = new Set(punch.map((i) => i.ItemId));
+  c.submittedLogIds = new Set(logs.filter((l) => l.status === "submitted").map((l) => l.ItemId));
 }
 
 async function loadPhotos(db, c, where = {}) {
@@ -1062,8 +1086,13 @@ async function add(db, me, args) {
         : `After photos go on ${item.number} while it is open or in progress, from the assigned company or the general contractor.`);
     }
     link = { linkedRecordType: "punchItem", linkedRecordId: item.ItemId, linkedRecordNumber: item.number, linkedRecordLabel: text(item.title, 120), linkRole: role };
+  } else if (args.link && args.link.type === "dailyLog") {
+    const [log] = await loadLogs(db, c, { ItemId: String(args.link.id ?? "") });
+    if (!log || log.duplicateOf || !logPhotoAllowed(c)) throw new Refused("NOT_FOUND", "That daily log doesn't exist, or you can't add photos to it.");
+    if (log.status !== "draft") throw new Refused("LOG_SUBMITTED", `The log for ${logDay(log.logDate)} is submitted: it is a read-only record and takes no new photos.`);
+    link = { linkedRecordType: "dailyLog", linkedRecordId: log.ItemId, linkedRecordNumber: log.logDate, linkedRecordLabel: `Daily log ${logDay(log.logDate)}`, linkRole: "general" };
   } else if (args.link) {
-    if (args.link.type !== "rfi") throw new Refused("BAD_LINK", "Photos can be linked to RFIs and punch items.");
+    if (args.link.type !== "rfi") throw new Refused("BAD_LINK", "Photos can be linked to RFIs, punch items and daily logs.");
     const rfi = linkable(await loadRfis(db, c)).find((r) => r.ItemId === String(args.link.id ?? ""));
     if (!rfi) throw new Refused("NOT_FOUND", "That RFI doesn't exist, or you can't open it.");
     link = { linkedRecordType: "rfi", linkedRecordId: rfi.ItemId, linkedRecordNumber: rfi.number, linkedRecordLabel: text(rfi.subject, 120), linkRole: "general" };
@@ -1114,6 +1143,18 @@ async function add(db, me, args) {
   if (added.length) {
     await history(db, c, added[0].ItemId, "", "uploaded",
       `${actorName(c)} added ${plural(added.length, link?.linkRole === "before" || link?.linkRole === "after" ? `${link.linkRole} photo` : "photo")}${locationLabel ? ` at ${locationLabel}` : ""}${link ? ` to ${link.linkedRecordNumber}` : ""}`);
+  }
+  // The daily log's history says so too.
+  if (added.length && link?.linkedRecordType === "dailyLog") {
+    await db.audit(me, {
+      projectId: c.projectId,
+      recordType: "dailyLog",
+      recordId: link.linkedRecordId,
+      recordNumber: link.linkedRecordNumber,
+      action: "photoAdded",
+      actorName: actorName(c),
+      summary: `${actorName(c)} added ${plural(added.length, "photo")}`
+    });
   }
   // The punch item's own history says so too ("Anna added an after photo").
   if (added.length && link?.linkedRecordType === "punchItem") {
@@ -1197,6 +1238,9 @@ async function remove(db, me, args) {
   const p = await loadPhoto(db, c, args.photoId);
   if (p.isVoided) return { ok: true, photos: await presentMany(db, c, [p]) };
   if (!canRemove(p, c)) {
+    if (own(p, c) && p.linkedRecordType === "dailyLog" && c.submittedLogIds?.has(p.linkedRecordId)) {
+      throw new Refused("NOT_ALLOWED", "This photo is on a submitted daily log. Only the project manager or the document controller removes it.");
+    }
     const sub = own(p, c) && projectCan(c.role, "photo.view_company");
     throw new Refused("NOT_ALLOWED", sub
       ? `You can remove your own photos for ${SUB_REMOVE_HOURS} hours after upload. Ask the project manager to remove this one.`

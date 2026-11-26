@@ -112,6 +112,12 @@ rows("PunchItem").push(
   { ItemId: "pi-ready", tenantRole: T, projectId: P, number: "PI-004", title: "Ready one", status: "readyForReview", isVoided: false, assigneeCompanyId: "sub-co", createdByUserId: "supt" },
   { ItemId: "pi-void", tenantRole: T, projectId: P, number: "PI-005", title: "Void one", status: "void", isVoided: true, assigneeCompanyId: "sub-co", createdByUserId: "supt" }
 );
+// Daily logs: today's draft, an older submitted one, and a duplicate that lost the race.
+rows("DailyLog").push(
+  { ItemId: "log-draft", tenantRole: T, projectId: P, logDate: "2026-11-25", status: "draft" },
+  { ItemId: "log-done", tenantRole: T, projectId: P, logDate: "2026-11-24", status: "submitted" },
+  { ItemId: "log-dup", tenantRole: T, projectId: P, logDate: "2026-11-25", status: "draft", duplicateOf: "log-draft" }
+);
 // Another company's photo with the same project id must never show.
 rows("Photo").push({ ItemId: "foreign", tenantRole: "company-other", projectId: P, fileId: "f", fileName: "Not yours.jpg", uploadedAt: new Date().toISOString(), isVoided: false });
 
@@ -335,6 +341,36 @@ await test("punch photos: before by the GC, after by the GC or the assigned comp
   expect(names(await call("sub", { action: "list" })).includes("Crack before.jpg"), "sub sees the before photo on their item");
   expect(!names(await call("sub2", { action: "list" })).includes("Crack before.jpg"), "sub2 doesn't");
   expect(names(await call("sub2", { action: "list" })).includes("Paint after.jpg"), "sub2 sees the GC's after photo on their item");
+});
+
+await test("daily log photos: GC and subs on a draft log; seen as the log is; a submitted log's photos stay", async () => {
+  const link = (id) => ({ link: { type: "dailyLog", id } });
+  const a = await addPhotos("supt", ["Log crane.jpg"], link("log-draft"));
+  ok(a, "supt adds to the draft log");
+  expect(a.photos[0].link.type === "dailyLog" && a.photos[0].link.number === "2026-11-25" && a.photos[0].link.label === "Daily log Wed, 25 Nov 2026", JSON.stringify(a.photos[0].link));
+  ok(await addPhotos("sub", ["Log drywall.jpg"], link("log-draft")), "sub adds their company's photo");
+  refused(await addPhotos("dc", ["x.jpg"], link("log-draft")), "NOT_FOUND", "document controller (reads logs only)");
+  refused(await addPhotos("design", ["x.jpg"], link("log-draft")), "NOT_FOUND", "designer (no daily logs)");
+  refused(await addPhotos("pm", ["x.jpg"], link("log-done")), "LOG_SUBMITTED", "submitted log");
+  refused(await addPhotos("pm", ["x.jpg"], link("log-dup")), "NOT_FOUND", "a duplicate log");
+  refused(await addPhotos("pm", ["x.jpg"], link("nope")), "NOT_FOUND", "no such log");
+  expect(rows("ActivityEvent").some((e) => e.recordType === "dailyLog" && e.recordId === "log-draft" && e.action === "photoAdded"), "history on the log");
+  const sees = async (user) => names(await call(user, { action: "list" }));
+  const dc = await sees("dc");
+  expect(dc.includes("Log crane.jpg") && dc.includes("Log drywall.jpg"), "DC sees every log photo");
+  const sub = await sees("sub");
+  expect(!sub.includes("Log crane.jpg") && sub.includes("Log drywall.jpg"), "sub: own company's only");
+  expect(!(await sees("sub2")).includes("Log drywall.jpg"), "another sub: none");
+  expect(!(await sees("design")).includes("Log crane.jpg"), "designer: none");
+  expect(!(await sees("owner")).includes("Log crane.jpg"), "owner: not while the log is a draft");
+  const leak = await call("design", { action: "links", photoIds: [named("Log crane.jpg").ItemId] });
+  expect(leak.ok && Object.keys(leak.links).length === 0, "designer gets no image link");
+  // Submitted: the owner sees them; the uploader can no longer remove theirs, the PM can.
+  rows("DailyLog").find((l) => l.ItemId === "log-draft").status = "submitted";
+  expect((await sees("owner")).includes("Log crane.jpg"), "owner sees them once submitted");
+  refused(await call("supt", { action: "remove", photoId: named("Log crane.jpg").ItemId }), "NOT_ALLOWED", "uploader on a submitted log");
+  ok(await call("pm", { action: "remove", photoId: named("Log crane.jpg").ItemId, reason: "TEST" }), "PM removes");
+  rows("DailyLog").find((l) => l.ItemId === "log-draft").status = "draft";
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

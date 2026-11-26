@@ -355,7 +355,8 @@ export function usePunchPhotoQueue(projectId?: string) {
   for (const x of mine) {
     if (x.state === "done" && !settling.has(x.id)) continue;
     const id = x.options.link!.id;
-    const role = x.options.link!.type === "punchItem" ? x.options.link!.role : "before";
+    const link = x.options.link!;
+    const role = link.type === "punchItem" ? link.role : "before";
     const s = byItem.get(id) ?? { uploading: 0, failed: [], before: 0, after: 0 };
     if (x.state === "failed") s.failed.push(x.id);
     else s.uploading += 1;
