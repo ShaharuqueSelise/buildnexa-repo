@@ -9,13 +9,13 @@
 // The weather is the day's Open-Meteo forecast for the project's city, fetched by the Function when
 // the day is opened and again at submit; the superintendent can refresh it or type over it.
 // Photos on a log go through the app's photo queue and the photos Function (Part 4).
-// Not real yet: the bell and emails on submit and correction and the
-// "remind a company" button (Part 5); copy yesterday and the weekly / monthly PDF (R2), offline
-// entry (R3).
+// Submit tells the PMs, a correction tells whoever submitted, and "Remind" asks a subcontractor
+// for their crew (bell + email, Part 5). Not real yet: the 18:00 "log missing" reminder, copy
+// yesterday and the weekly / monthly PDF (R2), offline entry (R3).
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import {
-  AlertTriangle, CalendarDays, Camera, CheckCircle2, ChevronLeft, ChevronRight, CloudSun, Copy, Download, FileText, HardHat, History, ImageOff, List, Loader2,
+  AlertTriangle, CalendarDays, Camera, CheckCircle2, ChevronLeft, ChevronRight, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSun, Copy, Snowflake, Sun, BellRing, Download, FileText, HardHat, History, ImageOff, List, Loader2,
   Lock, Pencil, Plus, RefreshCw, Send, ShieldCheck, StickyNote, Trash2, Truck, UserCheck, Users, Wifi, Wind, Wrench
 } from "lucide-react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
@@ -48,6 +48,8 @@ const monthLabel = (ym: string) => new Date(`${ym}-01T12:00:00Z`).toLocaleDateSt
 const fmtDateTime = (iso?: string) =>
   iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const nowTime = () => new Date().toTimeString().slice(0, 5);
+const workersText = (t: T, n: number) => fmt(t(n === 1 ? "dlog.worker1" : "dlog.workersN"), { count: n });
+const totalsText = (t: T, x: { headcount: number; hours: number }) => fmt(t("dlog.totals"), { workers: workersText(t, x.headcount), hours: fmt(t(x.hours === 1 ? "dlog.hour1" : "dlog.hoursN"), { count: x.hours }) });
 
 function monthDays(ym: string): string[] {
   const out: string[] = [];
@@ -184,49 +186,26 @@ function LogsView({ ctx, projectName, wanted }: { ctx: Ctx; projectName: string;
             title={<><CalendarDays size={16} /> {monthLabel(ym)}</>}
             actions={<Segmented options={[{ key: "calendar", label: <CalendarDays size={14} /> }, { key: "list", label: <List size={14} /> }]} value={view} onChange={setView} />}
           >
-            <div className="m-dlog-cal-head">
-              <button className="m-icon-btn" onClick={() => setYm(shiftMonth(ym, -1))} aria-label={t("dlog.prevMonth")}><ChevronLeft size={18} /></button>
-              <div style={{ flex: 1 }}>
-                <div className="m-row" style={{ justifyContent: "space-between" }}>
-                  <span className="m-small m-muted">{t("dlog.completion")}</span>
-                  <strong>{month.isFetching && !month.data ? "…" : `${completion} %`}</strong>
-                </div>
-                <ProgressBar value={completion} tone={completion >= 90 ? "green" : completion >= 60 ? "amber" : "red"} />
-                <span className="m-small m-muted">{fmt(t("dlog.completionHint"), { done: submitted, total: elapsedWork.length })}</span>
-              </div>
-              <button className="m-icon-btn" onClick={() => setYm(shiftMonth(ym, 1))} aria-label={t("dlog.nextMonth")} disabled={ym >= today.slice(0, 7)}><ChevronRight size={18} /></button>
-            </div>
-
             {view === "calendar" ? (
-              <>
-                <div className={cx("m-dlog-cal", month.isFetching && "m-dlog-busy")}>
-                  {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => <div key={d} className="m-dlog-dow">{d}</div>)}
-                  {Array.from({ length: (new Date(`${ym}-01T12:00:00Z`).getUTCDay() + 6) % 7 }, (_, i) => <span key={`pad-${i}`} />)}
-                  {days.map((d) => {
-                    const s = stateOf(d);
-                    const row = byDate.get(d);
-                    const openable = s !== "future" || d === addDays(today, 1);
-                    return (
-                      <button
-                        key={d}
-                        className={cx("m-dlog-day", `m-dlog-${s}`, d === today && "m-dlog-today", d === selected && "m-dlog-sel")}
-                        disabled={!openable}
-                        onClick={() => go(d)}
-                        title={`${fmtDate(d)} · ${t(`dlog.day.${s}` as TranslationKey)}${row?.headcount != null ? ` · ${fmt(t("dlog.workersN"), { count: row.headcount })}` : ""}`}
-                      >
-                        {Number(d.slice(8))}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="m-dlog-legend">
-                  <span><i className="m-fill-green" />{t("dlog.day.submitted")}</span>
-                  <span><i className={ownerOnly ? "m-fill-gray" : "m-fill-amber"} />{ownerOnly ? t("dlog.day.pending") : t("dlog.day.draft")}</span>
-                  <span><i className="m-fill-red" />{t("dlog.day.missing")}</span>
-                  <span><i style={{ boxShadow: "inset 0 0 0 2px hsl(var(--primary))" }} />{t("dlog.today")}</span>
-                </div>
-              </>
+              <MonthCalendar
+                t={t} ym={ym} setYm={setYm} today={today} selected={selected} days={days} byDate={byDate} stateOf={stateOf}
+                ownerOnly={ownerOnly} busy={month.isFetching} loading={month.isFetching && !month.data}
+                completion={completion} submitted={submitted} total={elapsedWork.length} onOpen={go}
+              />
             ) : (
+              <>
+              <div className="m-dlog-cal-head">
+                <button className="m-icon-btn" onClick={() => setYm(shiftMonth(ym, -1))} aria-label={t("dlog.prevMonth")}><ChevronLeft size={18} /></button>
+                <div style={{ flex: 1 }}>
+                  <div className="m-row" style={{ justifyContent: "space-between" }}>
+                    <span className="m-small m-muted">{t("dlog.completion")}</span>
+                    <strong>{month.isFetching && !month.data ? "…" : `${completion} %`}</strong>
+                  </div>
+                  <ProgressBar value={completion} tone={completion >= 90 ? "green" : completion >= 60 ? "amber" : "red"} />
+                  <span className="m-small m-muted">{fmt(t("dlog.completionHint"), { done: submitted, total: elapsedWork.length })}</span>
+                </div>
+                <button className="m-icon-btn" onClick={() => setYm(shiftMonth(ym, 1))} aria-label={t("dlog.nextMonth")} disabled={ym >= today.slice(0, 7)}><ChevronRight size={18} /></button>
+              </div>
               <div className="m-table-wrap">
                 <table className="m-table">
                   <thead><tr><th>{t("dlog.day")}</th><th>{t("dlog.status")}</th><th className="m-num">{t("dlog.workers")}</th></tr></thead>
@@ -245,10 +224,11 @@ function LogsView({ ctx, projectName, wanted }: { ctx: Ctx; projectName: string;
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </Panel>
 
-          {day.data?.log && writer ? <Contributors detail={day.data} t={t} /> : null}
+          {day.data?.log && writer ? <Contributors ctx={ctx} detail={day.data} /> : null}
         </div>
 
         <div>
@@ -309,10 +289,175 @@ function NoLog({ ctx, detail, date }: { ctx: Ctx; detail: LogDetail; date: strin
   );
 }
 
+// ---------- the month calendar ----------
+// Tiles tinted by status, with the day's weather and a mark for PM corrections. Tap a status chip
+// to highlight those days; hover (or focus) a day to preview it below the grid; arrow keys move
+// between days, Enter opens one, and a month change slides in from the side it came from.
+const COND_ICON: Record<string, typeof Sun> = {
+  clear: Sun, partlyCloudy: CloudSun, cloudy: Cloud, fog: CloudFog, drizzle: CloudDrizzle, rain: CloudRain, snow: Snowflake, thunderstorm: CloudLightning
+};
+type DayRowLike = { status: string; condition?: string; headcount?: number | null; corrections?: number };
+type Highlight = "submitted" | "draft" | "missing" | null;
+
+function Ring({ value, tone }: { value: number; tone: Tone }) {
+  const r = 22;
+  const len = 2 * Math.PI * r;
+  return (
+    <svg className={`m-dlog-ring m-dlog-ring-${tone}`} viewBox="0 0 52 52" width="52" height="52" aria-hidden="true">
+      <circle cx="26" cy="26" r={r} className="m-dlog-ring-bg" />
+      <circle cx="26" cy="26" r={r} className="m-dlog-ring-fg" strokeDasharray={len} strokeDashoffset={len * (1 - Math.min(100, Math.max(0, value)) / 100)} />
+    </svg>
+  );
+}
+
+function MonthCalendar({ t, ym, setYm, today, selected, days, byDate, stateOf, ownerOnly, busy, loading, completion, submitted, total, onOpen }: {
+  t: T; ym: string; setYm: (ym: string) => void; today: string; selected: string; days: string[]; byDate: Map<string, DayRowLike>;
+  stateOf: (d: string) => DayState; ownerOnly: boolean; busy: boolean; loading: boolean; completion: number; submitted: number; total: number; onOpen: (d: string) => void;
+}) {
+  const [hover, setHover] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState<Highlight>(null);
+  const [slide, setSlide] = useState<"left" | "right" | "">("");
+  const grid = useRef<HTMLDivElement>(null);
+  const lastMonth = today.slice(0, 7);
+  const move = (by: number) => {
+    const next = shiftMonth(ym, by);
+    if (next > lastMonth) return;
+    setSlide(by > 0 ? "left" : "right");
+    setHighlight(null);
+    setYm(next);
+  };
+  const toToday = () => {
+    if (ym !== lastMonth) setSlide(ym < lastMonth ? "left" : "right");
+    setYm(lastMonth);
+    onOpen(today);
+  };
+  const draftKey = ownerOnly ? "pending" : "draft";
+  const count = (k: DayState) => days.filter((d) => stateOf(d) === k).length;
+  const chips: { key: Exclude<Highlight, null>; state: DayState; label: string; tone: string; n: number }[] = [
+    { key: "submitted", state: "submitted", label: t("dlog.day.submitted"), tone: "green", n: count("submitted") },
+    { key: "draft", state: draftKey, label: t(`dlog.day.${draftKey}` as TranslationKey), tone: ownerOnly ? "gray" : "amber", n: count(draftKey) },
+    { key: "missing", state: "missing", label: t("dlog.day.missing"), tone: "red", n: count("missing") }
+  ];
+  const openable = (d: string) => stateOf(d) !== "future" || d === addDays(today, 1);
+  const focusDay = (d: string) => {
+    if (d.slice(0, 7) !== ym) {
+      if (d.slice(0, 7) > lastMonth) return;
+      setSlide(d > ym ? "left" : "right");
+      setYm(d.slice(0, 7));
+    }
+    setHover(d);
+    requestAnimationFrame(() => grid.current?.querySelector<HTMLButtonElement>(`[data-date="${d}"]`)?.focus());
+  };
+  const onKey = (e: KeyboardEvent<HTMLButtonElement>, d: string) => {
+    const by = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+    if (by === undefined) return;
+    e.preventDefault();
+    const next = addDays(d, by);
+    if (next > addDays(today, 1)) return;
+    focusDay(next);
+  };
+
+  const shown = hover && hover.slice(0, 7) === ym ? hover : selected;
+  const shownState = stateOf(shown);
+  const shownRow = byDate.get(shown);
+  const ShownIcon = shownRow?.condition ? COND_ICON[shownRow.condition] : null;
+  const lead = (new Date(`${ym}-01T12:00:00Z`).getUTCDay() + 6) % 7;
+
+  return (
+    <div className="m-dlog-calendar">
+      <div className="m-dlog-cal-top">
+        <div className="m-dlog-cal-score">
+          <div className="m-dlog-ring-wrap">
+            <Ring value={completion} tone={completion >= 90 ? "green" : completion >= 60 ? "amber" : "red"} />
+            <b>{loading ? "…" : `${completion}%`}</b>
+          </div>
+          <div>
+            <div className="m-small m-muted">{t("dlog.completion")}</div>
+            <div className="m-small"><b>{fmt(t("dlog.completionHint"), { done: submitted, total })}</b></div>
+          </div>
+        </div>
+        <div className="m-dlog-cal-nav">
+          <button className="m-icon-btn" onClick={() => move(-1)} aria-label={t("dlog.prevMonth")}><ChevronLeft size={18} /></button>
+          <button className="m-dlog-today-btn" onClick={toToday} disabled={selected === today && ym === lastMonth}>{t("dlog.today")}</button>
+          <button className="m-icon-btn" onClick={() => move(1)} aria-label={t("dlog.nextMonth")} disabled={ym >= lastMonth}><ChevronRight size={18} /></button>
+        </div>
+      </div>
+
+      <div className="m-dlog-chips" role="group" aria-label={t("dlog.highlightDays")}>
+        {chips.map((c) => (
+          <button key={c.key} type="button" className={cx("m-dlog-chip", `m-dlog-chip-${c.tone}`, highlight === c.key && "m-on")} aria-pressed={highlight === c.key}
+            onClick={() => setHighlight(highlight === c.key ? null : c.key)}>
+            <i />{c.label}<b>{c.n}</b>
+          </button>
+        ))}
+      </div>
+
+      <div className="m-dlog-dows">
+        {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d, i) => <div key={d} className={cx("m-dlog-dow", i > 4 && "m-dlog-dow-we")}>{d}</div>)}
+      </div>
+      <div ref={grid} key={ym} className={cx("m-dlog-cal", slide && `m-dlog-slide-${slide}`, busy && "m-dlog-busy")} onMouseLeave={() => setHover(null)}>
+        {Array.from({ length: lead }, (_, i) => <span key={`pad-${i}`} />)}
+        {days.map((d) => {
+          const st = stateOf(d);
+          const row = byDate.get(d);
+          const Icon = row?.condition ? COND_ICON[row.condition] : null;
+          const hl = highlight ? chips.find((c) => c.key === highlight)!.state : null;
+          return (
+            <button
+              key={d}
+              data-date={d}
+              className={cx("m-dlog-day", `m-dlog-${st}`, d === today && "m-dlog-today", d === selected && "m-dlog-sel", hl && st !== hl && "m-dlog-dim", hl && st === hl && "m-dlog-glow", isWeekend(d) && "m-dlog-we")}
+              disabled={!openable(d)}
+              tabIndex={d === selected ? 0 : -1}
+              onClick={() => onOpen(d)}
+              onMouseEnter={() => setHover(d)}
+              onFocus={() => setHover(d)}
+              onKeyDown={(e) => onKey(e, d)}
+              aria-current={d === selected ? "date" : undefined}
+              aria-label={`${fmtDate(d)} · ${t(`dlog.day.${st}` as TranslationKey)}`}
+            >
+              <span className="m-dlog-day-n">{Number(d.slice(8))}</span>
+              {Icon ? <Icon className="m-dlog-day-wx" size={12} /> : null}
+              {row?.corrections ? <span className="m-dlog-day-fix" /> : null}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className={cx("m-dlog-peek", `m-dlog-peek-${shownState}`)} aria-live="polite">
+        <span className="m-dlog-peek-bar" />
+        <div className="m-dlog-peek-main">
+          <strong>{weekdayName(shown).slice(0, 3)}, {fmtShort(shown)}</strong>
+          <span className="m-dlog-peek-meta">
+            <span>{t(`dlog.day.${shownState}` as TranslationKey)}</span>
+            {ShownIcon ? <span><ShownIcon size={13} /> {label(t, "dlog.cond", shownRow?.condition)}</span> : null}
+            {shownRow?.headcount != null ? <span><Users size={13} /> {workersText(t, shownRow.headcount)}</span> : null}
+            {shownRow?.corrections ? <span><Pencil size={12} /> {fmt(t(shownRow.corrections === 1 ? "dlog.correction1" : "dlog.correctionN"), { count: shownRow.corrections })}</span> : null}
+          </span>
+        </div>
+        {shown !== selected && openable(shown) ? <button className="m-dlog-peek-go" onClick={() => onOpen(shown)} aria-label={t("dlog.openDay")}><ChevronRight size={16} /></button> : null}
+      </div>
+    </div>
+  );
+}
+
 // ---------- contributors ----------
-function Contributors({ detail, t }: { detail: LogDetail; t: T }) {
+// "Remind" sends the company's people on the project a bell + email (the server allows one an hour).
+const REMIND_EVERY_MS = 60 * 60 * 1000;
+function Contributors({ ctx, detail }: { ctx: Ctx; detail: LogDetail }) {
+  const { t } = ctx;
+  const action = useLogAction(ctx.projectId, detail.date);
+  const [sending, setSending] = useState("");
   const subs = detail.companies.filter((c) => !c.own);
   if (!subs.length) return null;
+  const remind = (c: CrewCompany) => {
+    setSending(c.companyId);
+    action.mutate({ action: "remind", companyId: c.companyId }, {
+      onSuccess: (d) => ctx.toast(fmt(t(d.reminded?.people === 1 ? "dlog.reminded1" : "dlog.reminded"), { company: c.companyName, count: d.reminded?.people ?? 0 })),
+      onError: (e) => ctx.toast(refusalText(e, t("common.error")), "warn"),
+      onSettled: () => setSending("")
+    });
+  };
   const done = subs.length - detail.missingCrews.length;
   return (
     <Panel title={<><UserCheck size={16} /> {t("dlog.contributors")}</>} actions={<Badge tone={done === subs.length ? "green" : "amber"}>{fmt(t("dlog.subsDone"), { done, total: subs.length })}</Badge>}>
@@ -326,7 +471,13 @@ function Contributors({ detail, t }: { detail: LogDetail; t: T }) {
               {crew ? <Badge tone="green"><CheckCircle2 size={12} />{fmt(t("dlog.crewN"), { count: crew.headcount })}</Badge> : (
                 <span className="m-row" style={{ gap: 6 }}>
                   <Badge>{t("dlog.notAdded")}</Badge>
-                  {detail.log?.status === "draft" ? <Button small variant="ghost" disabled title={t("dlog.remindLater")}>{t("dlog.remind")}</Button> : null}
+                  {detail.can.remind ? (() => {
+                    const at = detail.remindedAt?.[c.companyId];
+                    const recent = Boolean(at) && Date.now() - Date.parse(at!) < REMIND_EVERY_MS;
+                    return recent
+                      ? <span className="m-small m-muted" title={fmtDateTime(at)}><BellRing size={12} /> {fmt(t("dlog.remindedAt"), { time: new Date(at!).toTimeString().slice(0, 5) })}</span>
+                      : <Button small variant="ghost" icon={sending === c.companyId ? <Loader2 className="spin" size={13} /> : <BellRing size={13} />} disabled={Boolean(sending)} onClick={() => remind(c)}>{t("dlog.remind")}</Button>;
+                  })() : null}
                 </span>
               )}
             </div>
@@ -403,7 +554,7 @@ function LogDetailView({ ctx, detail, log }: { ctx: Ctx; detail: LogDetail; log:
         <Panel
           className="m-dlog-wide m-panel-flush"
           title={<><Users size={16} /> {t("dlog.manpower")}</>}
-          actions={<span className="m-small m-muted">{fmt(t("dlog.totals"), { workers: totals.headcount, hours: totals.hours })}</span>}
+          actions={<span className="m-small m-muted">{totalsText(t, totals)}</span>}
         >
           {crews.length ? (
             <div className="m-table-wrap" style={{ border: 0, borderRadius: 0 }}>
@@ -429,7 +580,7 @@ function LogDetailView({ ctx, detail, log }: { ctx: Ctx; detail: LogDetail; log:
                     ));
                   })}
                 </tbody>
-                <tfoot><tr><td>{fmt(t("dlog.crewsN"), { count: crews.length })}</td><td /><td className="m-num">{totals.headcount}</td><td className="m-num">{totals.hours} h</td><td colSpan={2} /></tr></tfoot>
+                <tfoot><tr><td>{crews.length === 1 ? t("dlog.crews1") : fmt(t("dlog.crewsN"), { count: crews.length })}</td><td /><td className="m-num">{totals.headcount}</td><td className="m-num">{totals.hours} h</td><td colSpan={2} /></tr></tfoot>
               </table>
             </div>
           ) : <p className="m-muted" style={{ margin: 12 }}>{t("dlog.noCrew")}</p>}
@@ -633,7 +784,7 @@ function PhotosCard({ ctx, logId, date, photos, canAdd, own }: { ctx: Ctx; logId
             </button>
           ))}
         </div>
-      ) : <p className="m-muted" style={{ margin: 0 }}>{own ? t("dlog.noPhotosOwn") : t("dlog.noPhotos")}</p>}
+      ) : <p className="m-muted" style={{ margin: 0 }}>{own ? t("dlog.noPhotosOwn") : canAdd ? t("dlog.noPhotos") : t("dlog.noPhotosRead")}</p>}
       {queue.failed.length ? (
         <div style={{ marginTop: 10 }}>
           <Note tone="warn">
@@ -843,7 +994,7 @@ function CrewDialog({ t, company, crew, busy, onSave, onClose }: { t: T; company
   return (
     <Dialog size="lg" title={<><HardHat size={18} /> {fmt(t("dlog.crewTitle"), { company: company.companyName })}</>} onClose={onClose}
       footer={<>
-        <span className="m-small m-muted" style={{ marginRight: "auto" }}>{fmt(t("dlog.totals"), { workers: total.headcount, hours: total.hours })}</span>
+        <span className="m-small m-muted" style={{ marginRight: "auto" }}>{totalsText(t, total)}</span>
         <Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button>
         <Button disabled={busy} icon={busy ? <Loader2 className="spin" size={15} /> : undefined} onClick={() => onSave(rows.map(fromDraft), notes.trim())}>{t("common.save")}</Button>
       </>}>

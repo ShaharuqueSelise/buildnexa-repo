@@ -3,23 +3,86 @@
 .m-dlog-side { position: sticky; top: 0; }
 .m-dlog-cal-head { align-items: center; display: flex; gap: 6px; justify-content: space-between; margin-bottom: 10px; }
 .m-dlog-cal-head strong { font-size: 15px; }
-.m-dlog-cal { display: grid; gap: 4px; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.m-dlog-cal { display: grid; gap: 6px; grid-template-columns: repeat(7, minmax(0, 1fr)); padding: 4px 2px 6px; }
 .m-dlog-dow { color: hsl(var(--muted-foreground)); font-size: 11px; font-weight: 600; padding: 2px 0 4px; text-align: center; }
-.m-dlog-day { align-items: center; aspect-ratio: 1 / 1; background: transparent; border: 1px solid transparent; border-radius: 8px; color: inherit; display: grid; font-size: 13px; font-weight: 600; justify-items: center; padding: 2px; position: relative; }
-.m-dlog-day i { border-radius: 999px; display: block; height: 6px; width: 6px; }
-.m-dlog-day:not(:disabled):hover { border-color: hsl(var(--border)); }
-.m-dlog-day:disabled { cursor: default; opacity: .4; }
+.m-dlog-day { --lift: 0 6px 14px -6px hsl(var(--foreground) / .35); align-items: center; aspect-ratio: 1 / 1; background: hsl(var(--secondary) / .45); border: 1px solid transparent; box-shadow: var(--lift); transform: translateY(-2px); border-radius: 10px; color: inherit; cursor: pointer; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; gap: 1px; justify-content: center; overflow: hidden; padding: 2px; position: relative; transition: transform .12s ease, box-shadow .12s ease, opacity .15s ease, background-color .15s ease; }
+.m-dlog-day::after { border-radius: 0 0 10px 10px; bottom: 0; content: ""; height: 3px; left: 0; position: absolute; right: 0; }
+/* Every tile sits raised (the look it used to get only on hover); hover lifts it a little more. */
+.m-dlog-day:not(:disabled):hover, .m-dlog-day:focus-visible { --lift: 0 12px 20px -8px hsl(var(--foreground) / .45); outline: none; transform: translateY(-4px); }
+.m-dlog-day:focus-visible { box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--primary)), var(--lift); }
+.m-dlog-day:disabled { background: transparent; box-shadow: none; cursor: default; opacity: .35; transform: none; }
+.m-dlog-day.m-dlog-off { background: hsl(var(--card)); border-color: hsl(var(--border)); color: hsl(var(--muted-foreground)); }
 .m-dlog-day.m-dlog-submitted { background: hsl(var(--m-green-bg)); color: hsl(var(--m-green-fg)); }
+.m-dlog-day.m-dlog-submitted::after { background: hsl(var(--m-green-fg)); }
 .m-dlog-day.m-dlog-draft { background: hsl(var(--m-amber-bg)); color: hsl(var(--m-amber-fg)); }
+.m-dlog-day.m-dlog-draft::after { background: hsl(var(--m-amber-fg)); }
 .m-dlog-day.m-dlog-missing { background: hsl(var(--m-red-bg)); color: hsl(var(--m-red-fg)); }
+.m-dlog-day.m-dlog-missing::after { background: hsl(var(--m-red-fg)); }
 .m-dlog-day.m-dlog-pending { background: hsl(var(--m-gray-bg)); color: hsl(var(--m-gray-fg)); }
-.m-dlog-day.m-dlog-today { box-shadow: inset 0 0 0 2px hsl(var(--primary)); }
-.m-dlog-day.m-dlog-sel { border-color: hsl(var(--foreground)); border-width: 2px; }
+.m-dlog-day-n { line-height: 1; }
+.m-dlog-day-wx { opacity: .85; }
+.m-dlog-day-fix { background: hsl(var(--m-purple-fg, 271 60% 45%)); border-radius: 999px; height: 6px; position: absolute; right: 4px; top: 4px; width: 6px; }
+.m-dlog-day.m-dlog-today { box-shadow: inset 0 0 0 2px hsl(var(--primary)), var(--lift); }
+.m-dlog-day.m-dlog-sel { --lift: 0 8px 18px -6px hsl(var(--primary) / .8); background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); box-shadow: var(--lift); }
+.m-dlog-day.m-dlog-sel::after { background: hsl(var(--primary-foreground) / .6); }
+.m-dlog-day.m-dlog-sel .m-dlog-day-fix { background: hsl(var(--primary-foreground)); }
+.m-dlog-day.m-dlog-dim { box-shadow: none; opacity: .22; transform: none; }
+.m-dlog-day.m-dlog-glow { box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 3px currentColor, var(--lift); }
+.m-dlog-busy { opacity: .6; transition: opacity .2s; }
+.m-dlog-slide-left { animation: m-dlog-in-left .22s ease; }
+.m-dlog-slide-right { animation: m-dlog-in-right .22s ease; }
+@keyframes m-dlog-in-left { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+@keyframes m-dlog-in-right { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .m-dlog-day, .m-dlog-slide-left, .m-dlog-slide-right { animation: none; transition: none; }
+  .m-dlog-day, .m-dlog-day:not(:disabled):hover { transform: none; }
+}
+.m-dlog-dows { display: grid; gap: 5px; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.m-dlog-dow-we { opacity: .6; }
+.m-dlog-cal-top { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-bottom: 12px; }
+.m-dlog-cal-score { align-items: center; display: flex; gap: 10px; min-width: 0; }
+.m-dlog-ring-wrap { flex: none; height: 52px; position: relative; width: 52px; }
+.m-dlog-ring-wrap b { font-size: 12px; inset: 0; position: absolute; display: grid; place-items: center; }
+.m-dlog-ring { transform: rotate(-90deg); }
+.m-dlog-ring circle { fill: none; stroke-width: 6; }
+.m-dlog-ring-bg { stroke: hsl(var(--secondary)); }
+.m-dlog-ring-fg { stroke-linecap: round; transition: stroke-dashoffset .5s ease; }
+.m-dlog-ring-green .m-dlog-ring-fg { stroke: hsl(var(--m-green-fg)); }
+.m-dlog-ring-amber .m-dlog-ring-fg { stroke: hsl(var(--m-amber-fg)); }
+.m-dlog-ring-red .m-dlog-ring-fg { stroke: hsl(var(--m-red-fg)); }
+.m-dlog-cal-nav { align-items: center; display: flex; gap: 4px; }
+.m-dlog-today-btn { background: hsl(var(--secondary)); border: 1px solid hsl(var(--border)); border-radius: 999px; color: inherit; cursor: pointer; font-size: 12px; font-weight: 600; padding: 4px 12px; }
+.m-dlog-today-btn:disabled { cursor: default; opacity: .5; }
+.m-dlog-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.m-dlog-chip { align-items: center; background: transparent; border: 1px solid hsl(var(--border)); border-radius: 999px; color: inherit; cursor: pointer; display: inline-flex; font-size: 12px; gap: 6px; padding: 3px 10px 3px 8px; transition: background-color .15s, border-color .15s; }
+.m-dlog-chip i { border-radius: 999px; height: 8px; width: 8px; }
+.m-dlog-chip b { font-variant-numeric: tabular-nums; }
+.m-dlog-chip-green i { background: hsl(var(--m-green-fg)); }
+.m-dlog-chip-amber i { background: hsl(var(--m-amber-fg)); }
+.m-dlog-chip-red i { background: hsl(var(--m-red-fg)); }
+.m-dlog-chip-gray i { background: hsl(var(--m-gray-fg)); }
+.m-dlog-chip-green.m-on { background: hsl(var(--m-green-bg)); border-color: hsl(var(--m-green-fg)); color: hsl(var(--m-green-fg)); }
+.m-dlog-chip-amber.m-on { background: hsl(var(--m-amber-bg)); border-color: hsl(var(--m-amber-fg)); color: hsl(var(--m-amber-fg)); }
+.m-dlog-chip-red.m-on { background: hsl(var(--m-red-bg)); border-color: hsl(var(--m-red-fg)); color: hsl(var(--m-red-fg)); }
+.m-dlog-chip-gray.m-on { background: hsl(var(--m-gray-bg)); border-color: hsl(var(--m-gray-fg)); color: hsl(var(--m-gray-fg)); }
+.m-dlog-peek { align-items: center; background: hsl(var(--secondary) / .5); border-radius: 12px; display: flex; gap: 10px; margin-top: 12px; min-height: 52px; overflow: hidden; padding: 8px 10px 8px 0; }
+.m-dlog-peek-bar { align-self: stretch; background: hsl(var(--border)); border-radius: 0 3px 3px 0; flex: none; width: 4px; }
+.m-dlog-peek-submitted .m-dlog-peek-bar { background: hsl(var(--m-green-fg)); }
+.m-dlog-peek-draft .m-dlog-peek-bar { background: hsl(var(--m-amber-fg)); }
+.m-dlog-peek-missing .m-dlog-peek-bar { background: hsl(var(--m-red-fg)); }
+.m-dlog-peek-pending .m-dlog-peek-bar { background: hsl(var(--m-gray-fg)); }
+.m-dlog-peek-main { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.m-dlog-peek-main strong { font-size: 14px; }
+.m-dlog-peek-meta { color: hsl(var(--muted-foreground)); display: flex; flex-wrap: wrap; font-size: 12px; gap: 4px 12px; }
+.m-dlog-peek-meta span { align-items: center; display: inline-flex; gap: 4px; }
+.m-dlog-peek-go { background: hsl(var(--background)); border: 1px solid hsl(var(--border)); border-radius: 999px; color: inherit; cursor: pointer; display: grid; flex: none; height: 30px; place-items: center; width: 30px; }
 .m-dlog-legend { color: hsl(var(--muted-foreground)); display: flex; flex-wrap: wrap; font-size: 12px; gap: 10px; margin-top: 10px; }
 .m-dlog-legend span { align-items: center; display: inline-flex; gap: 5px; }
 .m-dlog-legend i { border-radius: 3px; display: inline-block; height: 10px; width: 10px; }
 .m-dlog-head { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin-bottom: 14px; }
 .m-dlog-head h2 { font-size: 20px; margin: 0 0 4px; }
+.m-dlog-head > * { max-width: 100%; min-width: 0; }
+.m-dlog-head .m-btn { height: auto; max-width: 100%; min-height: 36px; text-align: left; white-space: normal; }
 .m-dlog-sections { display: grid; gap: 0 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .m-dlog-sections > .m-dlog-wide { grid-column: 1 / -1; }
 .m-dlog-weather { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -31,9 +94,12 @@
 .m-dlog-list { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
 .m-dlog-list li { align-items: flex-start; border: 1px solid hsl(var(--border)); border-radius: 10px; display: flex; gap: 10px; justify-content: space-between; padding: 8px 10px; }
 .m-dlog-contrib { display: grid; gap: 6px; }
-.m-dlog-contrib div { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
+.m-dlog-contrib div { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 8px; justify-content: space-between; }
+.m-dlog-contrib div > * { min-width: 0; }
 @media (max-width: 1100px) {
-  .m-dlog-layout { grid-template-columns: 1fr; }
+  .m-dlog-layout { grid-template-columns: minmax(0, 1fr); }
+  /* One column: the calendar spans the page, so tiles keep a fixed height instead of squares. */
+  .m-dlog-day { aspect-ratio: auto; height: 56px; }
   .m-dlog-side { position: static; }
 }
 @media (max-width: 760px) {
@@ -42,7 +108,6 @@
 }
 /* Added in the app (not in the mock). */
 .m-dlog-alert { margin-bottom: 14px; }
-.m-dlog-busy { opacity: .6; transition: opacity .2s; }
 .m-dlog-wx-wide { grid-column: span 2; }
 .m-dlog-site { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
 .m-dlog-site .m-input { width: auto; min-width: 180px; }
@@ -64,3 +129,9 @@
 .m-dlog-photo small { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.3; }
 .m-dlog-photo-busy { cursor: default; opacity: 0.7; }
 .m-dlog-photo-busy small { align-items: center; display: flex; gap: 4px; }
+
+/* Phones: a card's buttons drop under its title instead of squeezing beside it. */
+@media (max-width: 560px) {
+  .m-dlog-layout .m-panel-head { flex-wrap: wrap; }
+  .m-dlog-layout .m-panel-head > .m-actions { gap: 6px; }
+}

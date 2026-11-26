@@ -95,7 +95,9 @@ export type CrewCompany = { companyId: string; companyName: string; own: boolean
 
 export type LogHistory = { id: string; action: string; actorName?: string; at: string; summary?: string; reason?: string; before?: unknown; after?: unknown };
 
-export type LogCan = { open: boolean; editSections: boolean; editAnyCrew: boolean; editOwnCrew: boolean; submit: boolean; correct: boolean; addPhotos: boolean };
+export type LogCan = { open: boolean; editSections: boolean; editAnyCrew: boolean; editOwnCrew: boolean; submit: boolean; correct: boolean; addPhotos: boolean; remind?: boolean };
+/** Who was told about a submit, correction or reminder (bell and email counts; failures in `failed`). */
+export type Notified = { bell: number; email: number; failed: string[] };
 
 /** A photo on the log (a subcontractor gets their own company's only). Image links are short-lived. */
 export type LogPhoto = { ItemId: string; caption: string; takenAt: string; uploadedByName: string; companyName: string; thumbUrl?: string; previewUrl?: string };
@@ -116,9 +118,15 @@ export type LogDetail = {
   companies: CrewCompany[];
   /** Subcontractor companies on the team that haven't added a crew yet. */
   missingCrews: CrewCompany[];
+  /** When each subcontractor was last reminded to add their crew (companyId -> time; GC only). */
+  remindedAt?: Record<string, string>;
   history: LogHistory[];
   photos: LogPhoto[];
   can: LogCan;
+  /** Only in the answer to submit and correct. */
+  notified?: Notified;
+  /** Only in the answer to remind. */
+  reminded?: Notified & { companyName: string; people: number };
 };
 
 export const monthKey = (projectId?: string, month?: string) => ["dailyLogMonth", projectId ?? "", month ?? ""];
@@ -155,7 +163,8 @@ export type LogAction =
   | { action: "saveCrew"; companyId?: string; manpower: ManpowerRow[]; notes: string; version?: number }
   | { action: "submit" }
   | { action: "refreshWeather" }
-  | { action: "correct"; reason: string; section?: SectionKey; value?: unknown; crewCompanyId?: string; manpower?: ManpowerRow[]; notes?: string };
+  | { action: "correct"; reason: string; section?: SectionKey; value?: unknown; crewCompanyId?: string; manpower?: ManpowerRow[]; notes?: string }
+  | { action: "remind"; companyId: string };
 
 /** Runs one action on the day; the answer (the day's full detail) replaces the cached copy. */
 export function useLogAction(projectId?: string, date?: string) {

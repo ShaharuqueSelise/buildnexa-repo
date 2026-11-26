@@ -35,11 +35,21 @@ function fakeProxy(url) {
   return { ok: false, status: 403, json: async () => ({}) };
 }
 
+// The bell (Notifier) and email (Mail): recorded in `sent` instead of going anywhere. `bellDown`
+// makes both fail.
+const sent = [];
+let bellDown = false;
 globalThis.fetch = async (url, init) => {
   const json = (body) => ({ ok: true, status: 200, json: async () => body });
   if (String(url).includes("/oidc/token")) return json({ access_token: "test-token" });
   if (String(url).includes("/proxy/gateway/")) return fakeProxy(String(url));
-  if (String(url).includes("/logic/v4/")) return json({ isSuccess: true });
+  if (String(url).includes("/logic/v4/")) {
+    if (bellDown) return { ok: false, status: 503, json: async () => ({ isSuccess: false }) };
+    const b = JSON.parse(init.body);
+    if (String(url).includes("Notifier")) sent.push({ type: "bell", userIds: b.userIds, payload: JSON.parse(b.denormalizedPayload) });
+    else if (String(url).includes("Mail")) sent.push({ type: "mail", to: b.to, subject: b.subjectDataContext.Subject, data: b.bodyDataContext });
+    return json({ isSuccess: true });
+  }
   const { query, variables } = JSON.parse(init.body);
   let m;
   if ((m = /\{\s*get(\w+)s\(/.exec(query))) {
@@ -139,6 +149,8 @@ const logsOn = (date) => mine("DailyLog").filter((l) => l.projectId === P && l.l
 const events = (logId) => mine("ActivityEvent").filter((e) => e.recordId === logId).map((e) => e.action);
 const truck = { supplier: "Beton Nord", material: "C30/37 concrete", quantity: "12 m³", time: "07:30", deliveryNoteNo: "LS-4711" };
 const crane = { name: "Mobile crane 50 t", quantity: 1, hoursUsed: 6.5, status: "working" };
+const bellsTo = (u) => sent.filter((x) => x.type === "bell" && x.userIds.includes(u));
+const mailsTo = (u) => sent.filter((x) => x.type === "mail" && x.to.includes(`${u}@test.example`));
 
 console.log("daily-logs Function");
 let logId;
@@ -345,8 +357,12 @@ await test("submit: the GC only, from a started day; crews are locked and totals
   refused(await call("dc", { action: "submit", date: today }), "NOT_ALLOWED", "dc");
   refused(await call("pm", { action: "submit", date: dayPlus(1) }), "FUTURE_DATE", "tomorrow");
   refused(await call("pm", { action: "submit", date: dayPlus(-3) }), "NO_LOG", "no log");
+  sent.length = 0;
   const r = await call("supt", { action: "submit", date: today });
   ok(r, "submit");
+  expect(bellsTo("pm").length === 1 && bellsTo("pm")[0].payload.kind === "dailyLog.submitted" && bellsTo("pm")[0].payload.link === `/daily-logs/${today}?project=${P}`, `PM told ${JSON.stringify(sent)}`);
+  expect(bellsTo("pm")[0].payload.body.startsWith("8 workers, 3 companies · 65 h · by SUPT"), bellsTo("pm")[0].payload.body);
+  expect(sent.length === 1 && mailsTo("pm").length === 0 && r.notified.bell === 1 && r.notified.email === 0, "bell only, nobody else (not the submitter)");
   expect(r.log.status === "submitted" && r.log.submittedByName === "SUPT" && r.log.submittedAt, "submitted");
   expect(r.log.totalHeadcount === 8 && r.log.totalHours === 65 && r.log.manpowerSummary.length === 3, `totals ${r.log.totalHeadcount} / ${r.log.totalHours}`);
   expect(r.log.manpowerSummary.some((x) => x.companyName === "Dry Walls Ltd" && x.headcount === 5), "company on each row");
@@ -371,17 +387,54 @@ await test("corrections: the PM only, submitted logs only, with a reason; histor
   refused(await call("pm", { action: "correct", date: today, section: "notes", value: "x", reason: "no" }), "REASON_REQUIRED", "short reason");
   refused(await call("pm", { action: "correct", date: dayPlus(1), section: "notes", value: "x", reason: "draft day" }), "INVALID_TRANSITION", "a draft");
   refused(await call("pm", { action: "correct", date: today, section: "equipment", value: (await call("pm", { action: "get", date: today })).log.equipment, reason: "nothing really" }), "NO_CHANGE", "same rows");
+  sent.length = 0;
   const r = await call("pm", { action: "correct", date: today, section: "notes", value: "Concrete pour moved to Friday.", reason: "Notes were missing" });
   ok(r, "correct notes");
+  expect(bellsTo("supt").length === 1 && bellsTo("supt")[0].payload.kind === "dailyLog.corrected" && mailsTo("supt").length === 1, `submitter told ${JSON.stringify(sent)}`);
+  expect(bellsTo("supt")[0].payload.body === "Notes corrected · by PM · “Notes were missing”", bellsTo("supt")[0].payload.body);
+  expect(mailsTo("supt")[0].subject.startsWith("[PRJ-001] The daily log for") && mailsTo("supt")[0].data.ButtonLabel === "Open the daily log", "email");
+  expect(bellsTo("pm").length === 0 && r.notified.bell === 1 && r.notified.email === 1, "the corrector isn't told");
   expect(r.log.notes === "Concrete pour moved to Friday." && r.log.correctionCount === 1 && r.log.status === "submitted", "corrected");
   const h = r.history.find((x) => x.action === "corrected");
   expect(h && h.reason === "Notes were missing" && h.before === "" && h.after === "Concrete pour moved to Friday.", JSON.stringify(h));
   const c = await call("pm", { action: "correct", date: today, crewCompanyId: "paint-co", manpower: [{ trade: "Painting", headcount: 3, hours: 24 }], reason: "One painter was missed" });
   ok(c, "correct a crew");
+  expect(bellsTo("supt").at(-1).payload.body.startsWith("Paint & Co's crew corrected · by PM"), "crew correction told");
   expect(c.log.totalHeadcount === 9 && c.log.totalHours === 73 && c.log.correctionCount === 2, `totals ${c.log.totalHeadcount} / ${c.log.totalHours}`);
   const ch = c.history.find((x) => x.summary.includes("Paint & Co"));
   expect(ch && ch.before.manpower[0].headcount === 2 && ch.after.manpower[0].headcount === 3, JSON.stringify(ch));
   expect(mine("DailyLogCrew").filter((x) => x.dailyLogId === logId).every((x) => x.status === "locked"), "still locked");
+});
+
+await test("remind: the GC asks a subcontractor with no crew yet; bell + email, once an hour", async () => {
+  const day = dayPlus(-12);
+  ok(await call("supt", { action: "open", date: day }), "open");
+  refused(await call("sub", { action: "remind", date: day, companyId: "sub-co" }), "NOT_ALLOWED", "sub");
+  refused(await call("dc", { action: "remind", date: day, companyId: "sub-co" }), "NOT_ALLOWED", "dc");
+  refused(await call("supt", { action: "remind", date: dayPlus(-13), companyId: "sub-co" }), "NO_LOG", "no log");
+  refused(await call("supt", { action: "remind", date: today, companyId: "sub-co" }), "LOG_SUBMITTED", "submitted");
+  refused(await call("supt", { action: "remind", date: day, companyId: "gc" }), "NOT_FOUND", "own company");
+  refused(await call("supt", { action: "remind", date: day, companyId: "design-co" }), "NOT_FOUND", "not a crew company");
+  const d0 = await call("supt", { action: "get", date: day });
+  expect(d0.can.remind === true && Object.keys(d0.remindedAt).length === 0, "can remind");
+  expect((await call("sub", { action: "get", date: dayPlus(0) })).can.remind === false, "sub can't");
+  rows("NotificationPreference").push({ ItemId: "np-sub2", tenantRole: T, userId: "sub2", reminderEmails: false });
+  bellDown = true;
+  refused(await call("supt", { action: "remind", date: day, companyId: "sub-co" }), "NOT_SENT", "bell down");
+  bellDown = false;
+  expect(!events(d0.log.id).includes("reminded"), "a failed reminder isn't in the history");
+  sent.length = 0;
+  const r = await call("supt", { action: "remind", date: day, companyId: "sub-co" });
+  ok(r, "remind");
+  expect(bellsTo("sub").length === 1 && bellsTo("sub2").length === 1 && bellsTo("sub")[0].payload.kind === "dailyLog.remind", `bells ${JSON.stringify(sent)}`);
+  expect(bellsTo("sub")[0].payload.body === "SUPT asked Dry Walls Ltd to enter the day's manpower" && bellsTo("other").length === 0, "the one company only");
+  expect(mailsTo("sub").length === 1 && mailsTo("sub2").length === 0, "sub2 turned reminder emails off");
+  expect(r.reminded.companyName === "Dry Walls Ltd" && r.reminded.people === 2 && r.reminded.bell === 2 && r.reminded.email === 1, JSON.stringify(r.reminded));
+  expect(r.remindedAt["sub-co"] && r.history.some((h) => h.action === "reminded" && h.summary === "SUPT reminded Dry Walls Ltd to add their crew"), "history");
+  refused(await call("pm", { action: "remind", date: day, companyId: "sub-co" }), "ALREADY_REMINDED", "within the hour");
+  ok(await call("supt", { action: "saveCrew", date: day, companyId: "paint-co", manpower: [{ trade: "Painting", headcount: 1, hours: 8 }] }), "GC adds paint crew");
+  refused(await call("supt", { action: "remind", date: day, companyId: "paint-co" }), "CREW_ADDED", "crew already there");
+  expect((await call("sub", { action: "get", date: day })).remindedAt && Object.keys((await call("sub", { action: "get", date: day })).remindedAt).length === 0, "subs don't see reminders");
 });
 
 await test("the month: one row per day, newest data, owners and subs see less", async () => {

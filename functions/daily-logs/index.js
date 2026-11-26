@@ -16,7 +16,9 @@
 //   { action: "submit", projectId, date }              -> detail (the day's weather is read again)
 //   { action: "refreshWeather", projectId, date }      -> detail (GC, draft only)
 //   { action: "correct", projectId, date, reason, section + value | crewCompanyId + manpower + notes } -> detail
-// detail = { date, today, role, archived, log, crews, companies, missingCrews, can, history, photos }.
+//   { action: "remind", projectId, date, companyId }   -> detail + reminded (GC, draft, a sub with no crew yet)
+// detail = { date, today, role, archived, log, crews, companies, missingCrews, remindedAt, can, history, photos }.
+// submit and correct also answer `notified` ({ bell, email, failed }): who was told (part 5).
 // Photos are added through the photos Function (link { type: "dailyLog", id }); `can.addPhotos` says when.
 //
 // Who (05 §3, decisions of 2026-11-26):
@@ -696,7 +698,7 @@ const EVENT_FIELDS = "ItemId recordId action actorUserId actorName at summary re
 const text = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 const longText = (v, max) => String(v ?? "").trim().slice(0, max);
 const actor = (c) => c.mine.displayName || "Someone";
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const plural = (n, word) => `${n} ${n === 1 ? word : word.endsWith("y") ? `${word.slice(0, -1)}ies` : `${word}s`}`;
 const oneOf = (v, list, fallback = "") => (list.includes(v) ? v : fallback);
 const first = (rows) => [...rows].sort((a, b) => String(a.CreatedDate ?? "").localeCompare(String(b.CreatedDate ?? "")) || String(a.ItemId).localeCompare(String(b.ItemId)))[0];
 // A number within limits, or undefined when empty (never "" into a number field).
@@ -962,7 +964,9 @@ function abilities(c, log, date) {
     submit: open && draft && c.writer,
     // Photos go on a draft log, added through the photos Function (which checks the same).
     addPhotos: open && draft && (c.writer || c.crewOwn),
-    correct: open && isSubmitted(log) && c.corrector
+    correct: open && isSubmitted(log) && c.corrector,
+    // Remind a subcontractor who hasn't added their crew (bell + email).
+    remind: open && draft && c.writer
   };
 }
 
@@ -971,7 +975,7 @@ async function detail(db, c, date, known) {
   const base = { ok: true, date, today: c.today, role: c.role, archived: c.archived, place: c.project.address?.city || "" };
   // Owners see a draft only as "not submitted yet".
   if (!log || (!c.seesAll && !c.crewOwn && !c.writer && !isSubmitted(log))) {
-    return { ...base, log: null, pending: Boolean(log), crews: [], companies: [], missingCrews: [], history: [], photos: [], can: abilities(c, null, date) };
+    return { ...base, log: null, pending: Boolean(log), crews: [], companies: [], missingCrews: [], remindedAt: {}, history: [], photos: [], can: abilities(c, null, date) };
   }
   const crews = (await loadCrews(db, c, log)).map(presentCrew);
   const full = fullView(c, log);
@@ -988,6 +992,7 @@ async function detail(db, c, date, known) {
     ownCompanyName: c.mine.companyName || "",
     companies,
     missingCrews: c.writer ? companies.filter((x) => !x.own && !withRows.has(x.companyId)) : [],
+    remindedAt: c.writer ? remindersOf(history) : {},
     history,
     photos,
     can: abilities(c, log, date)
@@ -1349,8 +1354,10 @@ async function submit(db, me, args, ctx) {
   const weather = await forecastFor(ctx, c, date);
   const now = new Date().toISOString();
   const saved = await saveLog(db, c, log, { status: "submitted", submittedAt: now, submittedByUserId: me.userId, submittedByName: actor(c), ...sum, ...(weather ? { weather } : {}) }, "statusChanged");
-  await history(db, c, saved, "submitted", `${actor(c)} submitted the log for ${niceDate(date)} (${plural(sum.totalHeadcount, "worker")}, ${plural(crews.filter((x) => rowsOf(x.manpower).length).length, "company")})`, { fromStatus: "draft", toStatus: "submitted" });
-  return detail(db, c, date, saved);
+  const companies = crews.filter((x) => rowsOf(x.manpower).length).length;
+  await history(db, c, saved, "submitted", `${actor(c)} submitted the log for ${niceDate(date)} (${plural(sum.totalHeadcount, "worker")}, ${plural(companies, "company")})`, { fromStatus: "draft", toStatus: "submitted" });
+  const notified = await tellSubmitted(db, c, saved, sum, companies);
+  return { ...(await detail(db, c, date, saved)), notified };
 }
 
 // "Refresh forecast" on a draft: the GC reads the day's weather again (the morning forecast for a
@@ -1392,7 +1399,8 @@ async function correct(db, me, args) {
     // A crew added by correction stays locked like the others.
     const added = (await loadCrews(db, c, log)).find((x) => x.companyId === co.companyId && x.status !== "locked");
     if (added) await db.updateWhere("DailyLogCrew", { ItemId: { eq: added.ItemId } }, me.tenantRole, { status: "locked" }).catch(() => 0);
-    return detail(db, c, date);
+    const notified = await tellCorrected(db, c, saved, `${co.companyName || "A company"}'s crew corrected`, reason);
+    return { ...(await detail(db, c, date)), notified };
   }
   const section = String(args.section ?? "");
   if (!SECTIONS.includes(section)) throw new Refused("BAD_SECTION", "Choose what to correct.");
@@ -1402,7 +1410,111 @@ async function correct(db, me, args) {
   await history(db, c, saved, "corrected", `${actor(c)} corrected the ${SECTION_LABEL[section]}`, {
     reason, before: clip(log[section]), after: clip(value)
   });
-  return detail(db, c, date, saved);
+  const label = SECTION_LABEL[section];
+  const notified = await tellCorrected(db, c, saved, `${label.charAt(0).toUpperCase()}${label.slice(1)} corrected`, reason);
+  return { ...(await detail(db, c, date, saved)), notified };
+}
+
+// ---------- telling people (part 5; 05 §7) ----------
+// - submitted -> the project's PMs (not the one who submitted): bell only.
+// - corrected -> the person who submitted the log (unless they made the correction): bell + email,
+//   with what was corrected and why.
+// - "Remind" (GC, draft log) -> one subcontractor's people on the project: bell + email ("reminder
+//   emails" setting), at most once an hour per company and day; the log's history keeps it.
+// A notice that can't be sent never fails the change; the answer says how many went out.
+// Not here: the 18:00 "log missing" reminder (needs a scheduled job, see 05 §7).
+const PREF_FIELDS = "ItemId userId emailEnabled reminderEmails";
+const REMIND_EVERY_MS = 60 * 60 * 1000;
+const html = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const logLink = (c, date) => `/daily-logs/${date}?project=${c.projectId}`;
+const shortDay = (iso) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+
+// messages = [{ m: team member, kind, title, body, link, email }]; one bell call per identical
+// message, one email per person (never a shared "to" list).
+async function deliver(db, c, messages, { reminder = false } = {}) {
+  const result = { bell: 0, email: 0, failed: [] };
+  try {
+    const list = messages.filter((x) => x.m && x.m.userId !== c.me.userId);
+    if (!list.length) return result;
+    const prefs = await db.list("NotificationPreference", PREF_FIELDS, c.me.tenantRole).catch(() => []);
+    const firstPref = new Map();
+    for (const x of [...prefs].sort((a, b) => String(a.ItemId).localeCompare(String(b.ItemId)))) if (!firstPref.has(x.userId)) firstPref.set(x.userId, x);
+    const emailsOn = (u) => firstPref.get(u)?.emailEnabled !== false && (!reminder || firstPref.get(u)?.reminderEmails !== false);
+    const groups = new Map();
+    for (const x of list) {
+      const key = `${x.kind}\n${x.title}\n${x.body}\n${x.link}`;
+      if (!groups.has(key)) groups.set(key, { x, users: [] });
+      groups.get(key).users.push(x.m.userId);
+    }
+    const tasks = [];
+    for (const { x, users } of groups.values()) {
+      tasks.push(db.notify(users, { title: x.title, body: x.body, link: x.link, projectId: c.projectId, kind: `dailyLog.${x.kind}` }).then(() => { result.bell += users.length; }));
+    }
+    for (const x of list) {
+      if (!x.email || !x.m.email || !emailsOn(x.m.userId)) continue;
+      tasks.push(db.mail(x.m.email, `${c.project.number ? `[${c.project.number}] ` : ""}${x.title}`, {
+        DisplayName: html(x.m.displayName || ""),
+        Heading: html(x.title),
+        Text: html(x.body),
+        ProjectName: html(c.project.name || ""),
+        ButtonLabel: "Open the daily log",
+        ButtonUrl: `${db.appUrl}${x.link}`,
+        SettingsUrl: `${db.appUrl}/inbox?tab=settings`
+      }).then(() => { result.email += 1; }));
+    }
+    for (const r of await Promise.allSettled(tasks)) if (r.status === "rejected") result.failed.push(String(r.reason?.message ?? r.reason).slice(0, 200));
+  } catch (error) {
+    result.failed.push(String(error?.message ?? error).slice(0, 200));
+  }
+  return result;
+}
+
+function tellSubmitted(db, c, log, sum, companies) {
+  const pms = c.active.filter((m) => m.role === PM);
+  const title = `Daily log for ${shortDay(log.logDate)} submitted`;
+  const body = `${plural(sum.totalHeadcount, "worker")}, ${plural(companies, "company")} · ${sum.totalHours} h · by ${actor(c)}`;
+  return deliver(db, c, pms.map((m) => ({ m, kind: "submitted", title, body, link: logLink(c, log.logDate), email: false })));
+}
+
+function tellCorrected(db, c, log, what, reason) {
+  const to = c.active.find((m) => m.userId === log.submittedByUserId);
+  const title = `The daily log for ${shortDay(log.logDate)} was corrected`;
+  const body = `${what} · by ${actor(c)} · “${String(reason).slice(0, 200)}”`;
+  return deliver(db, c, [{ m: to, kind: "corrected", title, body, link: logLink(c, log.logDate), email: true }]);
+}
+
+// When each company was last reminded on this log (from the history), for the Remind buttons.
+function remindersOf(history) {
+  const out = {};
+  for (const h of history) {
+    const id = h.action === "reminded" ? h.after?.companyId : "";
+    if (id && !out[id]) out[id] = h.at; // the history is newest first
+  }
+  return out;
+}
+
+async function remind(db, me, args) {
+  const c = await projectContext(db, me, args.projectId, { write: true });
+  const date = validDate(args.date);
+  if (!c.writer) throw new Refused("NOT_ALLOWED", "Only the superintendent and the project manager send reminders.");
+  const log = await loadLog(db, c, date);
+  if (!log) throw new Refused("NO_LOG", "There is no log for this day yet.");
+  if (log.status !== "draft") throw new Refused("LOG_SUBMITTED", `The log for ${niceDate(date)} is submitted. Crews can only be added by correction.`);
+  const co = crewCompanies(c).find((x) => x.companyId === text(args.companyId, 64) && !x.own);
+  if (!co) throw new Refused("NOT_FOUND", "That subcontractor has nobody on this project's team.");
+  const crew = (await loadCrews(db, c, log)).find((x) => x.companyId === co.companyId);
+  if (crew && rowsOf(crew.manpower).length) throw new Refused("CREW_ADDED", `${co.companyName || "This company"} has already added their crew for ${niceDate(date)}.`);
+  const last = remindersOf(await loadHistory(db, c, log))[co.companyId];
+  if (last && Date.now() - Date.parse(last) < REMIND_EVERY_MS) {
+    throw new Refused("ALREADY_REMINDED", `${co.companyName || "This company"} was reminded less than an hour ago.`);
+  }
+  const people = c.active.filter((m) => m.companyId === co.companyId && m.role === SUB);
+  const title = `Add your crew to the daily log for ${shortDay(date)}`;
+  const body = `${actor(c)} asked ${co.companyName || "your company"} to enter the day's manpower`;
+  const sent = await deliver(db, c, people.map((m) => ({ m, kind: "remind", title, body, link: logLink(c, date), email: true })), { reminder: true });
+  if (!sent.bell && !sent.email) throw new Refused("NOT_SENT", `The reminder to ${co.companyName || "this company"} couldn't be sent. Try again in a moment.`);
+  await history(db, c, log, "reminded", `${actor(c)} reminded ${co.companyName || "a company"} to add their crew`, { after: { companyId: co.companyId } });
+  return { ...(await detail(db, c, date, log)), reminded: { companyName: co.companyName || "", people: people.length, ...sent } };
 }
 
 export default async function handler(input, ctx) {
@@ -1414,6 +1526,7 @@ export default async function handler(input, ctx) {
     saveCrew: (args, { db, me }) => saveCrew(db, me, args),
     submit: (args, { ctx, db, me }) => submit(db, me, args, ctx),
     refreshWeather: (args, { ctx, db, me }) => refreshWeather(db, me, args, ctx),
-    correct: (args, { db, me }) => correct(db, me, args)
+    correct: (args, { db, me }) => correct(db, me, args),
+    remind: (args, { db, me }) => remind(db, me, args)
   });
 }
