@@ -1,15 +1,15 @@
 // Sheet viewer (DRW-03, DRW-04), built from the demo app's SheetViewer: the PDF drawn by pdf.js on a
 // canvas with zoom and pan (wheel, buttons, drag, pinch, double click), pins of RFIs (blue) and punch
-// items (orange) on it, "Add pin" (New RFI here, New punch item here, or pin an existing RFI or punch
+// items (orange) and daily log photos (teal, camera) on it, "Add pin" (New RFI here, New punch item here, or pin an existing RFI or punch
 // item), move and remove pins, the revision switcher with the red "Superseded" banner, and the side
-// panel (revisions, pins, info).
+// panel (revisions, pins, info). ?placePhoto=<photoId> (from "Pin on a drawing" on a log photo) makes the next tap pin that photo.
 // The page is drawn again at a higher resolution after zooming in, within a pixel budget that is
 // smaller on phones. Pins sit in page coordinates (0..1), so they stay on the spot at any zoom.
 // Not real yet: compare (R2), markups and offline sheets (R3).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
-  AlertTriangle, ArrowLeft, Ban, ClipboardCheck, Cloud, Columns2, Download, FileQuestion, Link2, Loader2, Lock, MapPin, Maximize2, Move,
+  AlertTriangle, ArrowLeft, Ban, Camera, ClipboardCheck, Cloud, Columns2, Download, FileQuestion, Link2, Loader2, Lock, MapPin, Maximize2, Move,
   MoveUpRight, Pencil, Ruler, Trash, Type, Upload, WifiOff, ZoomIn, ZoomOut
 } from "lucide-react";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
@@ -34,11 +34,16 @@ import type { T, Toast } from "./DrawingsPage";
 const PAPER_W = 1200; // the page's width on the stage at 100 %; its height follows the page size
 const RFI_TONE: Record<string, Tone> = { draft: "gray", open: "blue", answered: "amber", closed: "green" };
 const PUNCH_TONE: Record<string, Tone> = { open: "blue", inProgress: "amber", readyForReview: "purple", closed: "green" };
-const PIN_COLOR = { rfi: "#2563eb", punchItem: "#ea580c" } as const;
+const PIN_COLOR = { rfi: "#2563eb", punchItem: "#ea580c", photo: "#0d9488" } as const;
 const isPunch = (p: SheetPin) => p.type === "punchItem";
-const toneOf = (p: SheetPin): Tone => (isPunch(p) ? PUNCH_TONE : RFI_TONE)[p.status] ?? "gray";
-const statusOf = (t: T, p: SheetPin) => t((isPunch(p) ? `punch.status.${p.status}` : `rfi.status.${p.status}`) as never) || p.status;
-const labelOf = (t: T, p: SheetPin) => p.number || t(isPunch(p) ? "drw.v.newPunch" : "drw.v.draftRfi");
+const isPhoto = (p: SheetPin) => p.type === "photo";
+const toneOf = (p: SheetPin): Tone => (isPhoto(p) ? "teal" : (isPunch(p) ? PUNCH_TONE : RFI_TONE)[p.status] ?? "gray");
+const statusOf = (t: T, p: SheetPin) => (isPhoto(p) ? t("drw.photo.badge") : t((isPunch(p) ? `punch.status.${p.status}` : `rfi.status.${p.status}`) as never) || p.status);
+const labelOf = (t: T, p: SheetPin) => (isPhoto(p) ? t("drw.photo.label") : p.number || t(isPunch(p) ? "drw.v.newPunch" : "drw.v.draftRfi"));
+/** "a site photo" for photo pins in toasts, the record number for the rest. */
+const nameOf = (t: T, p: SheetPin) => (isPhoto(p) ? t("drw.photo.aPhoto") : p.number);
+const dayOf = (iso?: string) => (iso ? new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) : "");
+const whenOf = (iso?: string) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
 
 type View = { s: number; tx: number; ty: number };
 type SideTab = "revisions" | "pins" | "info";
@@ -143,16 +148,16 @@ function PinMarker({ pin, selected, scale, paperW, paperH, warn, onSelect }: {
   return (
     <button
       type="button"
-      className={cx("m-drw-pin", isPunch(pin) ? "m-drw-pin-punch" : "m-drw-pin-rfi", pin.closed && "m-drw-pin-closed", selected && "m-drw-pin-sel", pin.saving && "m-drw-pin-saving")}
+      className={cx("m-drw-pin", isPhoto(pin) ? "m-drw-pin-photo" : isPunch(pin) ? "m-drw-pin-punch" : "m-drw-pin-rfi", pin.closed && "m-drw-pin-closed", selected && "m-drw-pin-sel", pin.saving && "m-drw-pin-saving")}
       style={{ left: pin.x * paperW, top: pin.y * paperH, transform: `translate(-50%, -100%) scale(${1 / scale})` }}
       onPointerDown={(e) => e.stopPropagation()}
       onPointerUp={(e) => e.stopPropagation()}
       onClick={(e) => { e.stopPropagation(); onSelect(); }}
-      title={`${pin.number} · ${pin.title}`}
-      aria-label={`${pin.number} ${pin.title}`}
+      title={isPhoto(pin) ? `${pin.title || "Photo"} · ${dayOf(pin.logDate)}` : `${pin.number} · ${pin.title}`}
+      aria-label={isPhoto(pin) ? `Photo ${pin.title}` : `${pin.number} ${pin.title}`}
     >
       <svg width={28} height={34} viewBox="0 0 28 34"><path d="M14 33 C14 33 2 20 2 12 A12 12 0 0 1 26 12 C26 20 14 33 14 33 Z" fill="currentColor" stroke="#fff" strokeWidth={2} /></svg>
-      <b>{digitsOf(pin.number)}</b>
+      {isPhoto(pin) ? <Camera size={12} className="m-drw-pin-icon" /> : <b>{digitsOf(pin.number)}</b>}
       {warn ? <i className="m-drw-pin-warn">!</i> : null}
     </button>
   );
@@ -201,6 +206,9 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
   const [showClosed, setShowClosed] = useState(true);
   const [showRfi, setShowRfi] = useState(true);
   const [showPunch, setShowPunch] = useState(true);
+  const [showPhoto, setShowPhoto] = useState(true);
+  // "Pin on a drawing" from a daily log photo: the next tap on the sheet pins that photo.
+  const [placePhoto, setPlacePhoto] = useState<string | null>(() => query().get("placePhoto"));
   const [linkWhat, setLinkWhat] = useState(""); // "rfi:<id>" | "punchItem:<id>"
   const [rfiDialog, setRfiDialog] = useState<{ x: number; y: number } | null>(null);
   const [punchDialog, setPunchDialog] = useState<{ x: number; y: number } | null>(null);
@@ -226,8 +234,10 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
   // ----- pins on the revision in view -----
   // A voided revision shows no file, so no pins either (they live on the revisions that are still valid).
   const onThis = viewed?.status === "void" ? [] : data.pins.filter((p) => onRevision(p, R));
-  const shown = onThis.filter((p) => (showClosed || !p.closed) && (isPunch(p) ? showPunch : showRfi));
+  const shown = onThis.filter((p) => (showClosed || !p.closed) && (isPhoto(p) ? showPhoto : isPunch(p) ? showPunch : showRfi));
   const punchCount = onThis.filter(isPunch).length;
+  const photoCount = onThis.filter(isPhoto).length;
+  const rfiCount = onThis.length - punchCount - photoCount;
   const fromAspect = (p: SheetPin) => aspect(revisions.find((r) => r.revisionIndex === p.fromRevisionIndex));
   const outOfPlace = (p: SheetPin) => {
     const a = fromAspect(p);
@@ -299,12 +309,12 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
   }, [zoomAt, fit]);
 
   useEffect(() => {
-    if (!addMode && !draft && !moving && !selPin) return;
-    // Esc backs out of whatever is open on the sheet: add mode, a draft pin, a move, or an open pin menu.
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") { setAddMode(false); setDraft(null); setMoving(undefined); setSelPin(null); setConfirmRemove(false); } };
+    if (!addMode && !draft && !moving && !selPin && !placePhoto) return;
+    // Esc backs out of whatever is open on the sheet: add mode, a draft pin, a move, placing a photo, or an open pin menu.
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") { setAddMode(false); setDraft(null); setMoving(undefined); setSelPin(null); setConfirmRemove(false); setPlacePhoto(null); } };
     document.addEventListener("keydown", h);
     return () => document.removeEventListener("keydown", h);
-  }, [addMode, draft, moving, selPin]);
+  }, [addMode, draft, moving, selPin, placePhoto]);
 
   const zoomCenter = (f: number) => zoomAt(size.w / 2, size.h / 2, f);
 
@@ -354,7 +364,25 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
       setMoving(undefined);
       if (!pin || !current) return;
       action.mutateAsync({ action: "movePin", sheetId: sheet.ItemId, pinId: pin.ItemId, revisionIndex: current.revisionIndex, x, y })
-        .then(() => toast(fmt(t("drw.v.moved"), { number: pin.number })))
+        .then(() => toast(fmt(t("drw.v.moved"), { number: nameOf(t, pin) })))
+        .catch((error) => toast(errorText(t, error), "warn"));
+      return;
+    }
+    if (placePhoto) {
+      if (!onSheet) { toast(t("drw.v.onSheet"), "warn"); return; }
+      if (!current || !can.pin || !isCurrent) return;
+      const photoId = placePhoto;
+      setPlacePhoto(null);
+      const temp: SheetPin = {
+        ItemId: `temp-${Date.now().toString(36)}`, sheetId: sheet.ItemId, x, y, fromRevisionIndex: current.revisionIndex, toRevisionIndex: 0, version: 0,
+        type: "photo", recordId: photoId, number: "", title: "", status: "", closed: false, dueDate: "", ballInCourtName: "",
+        createdByName: "", createdAt: new Date().toISOString(), canMove: false, canRemove: false
+      };
+      action.mutateAsync({ action: "pin", sheetId: sheet.ItemId, revisionIndex: current.revisionIndex, x, y, recordType: "photo", recordId: photoId, temp })
+        .then((answer) => {
+          toast(fmt(t("drw.photo.pinned"), { sheet: sheet.sheetNumber }));
+          if (answer.pin) { setSelPin(answer.pin.ItemId); setTab("pins"); }
+        })
         .catch((error) => toast(errorText(t, error), "warn"));
       return;
     }
@@ -427,7 +455,7 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
     setSelPin(null);
     setConfirmRemove(false);
     action.mutateAsync({ action: "removePin", sheetId: sheet.ItemId, pinId: pin.ItemId })
-      .then(() => toast(fmt(t("drw.v.unpinned"), { number: pin.number })))
+      .then(() => toast(fmt(t("drw.v.unpinned"), { number: nameOf(t, pin) })))
       .catch((error) => toast(errorText(t, error), "warn"));
   };
 
@@ -519,7 +547,7 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
 
           <div
             ref={canvasRef}
-            className={cx("m-drw-canvas", (addMode || moving) && "m-drw-adding")}
+            className={cx("m-drw-canvas", (addMode || moving || placePhoto) && "m-drw-adding")}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -543,14 +571,59 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
             </div>
             {addMode && !draft ? <div className="m-drw-hint">{t("drw.v.tapHint")}</div> : null}
             {moving ? <div className="m-drw-hint">{t("drw.v.moveHint")}</div> : null}
+            {placePhoto ? (
+              <div className="m-drw-hint m-drw-hint-photo" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
+                <Camera size={15} />
+                <span>{!can.pin ? t("drw.v.pinWho") : !isCurrent ? t("drw.v.pinCurrentOnly") : t("drw.photo.tapHint")}</span>
+                <button type="button" className="m-link m-small" onClick={() => setPlacePhoto(null)}>{t("common.cancel")}</button>
+              </div>
+            ) : null}
             <div className="m-drw-legend">
-              <Badge tone="blue">{fmt(t("drw.v.rfiPins"), { count: onThis.length - punchCount })}</Badge>
-              <Badge tone="amber">{fmt(t("drw.v.punchPins"), { count: punchCount })}</Badge>
+              <Badge tone="blue">{rfiCount === 1 ? t("drw.v.rfiPin1") : fmt(t("drw.v.rfiPins"), { count: rfiCount })}</Badge>
+              <Badge tone="amber">{punchCount === 1 ? t("drw.v.punchPin1") : fmt(t("drw.v.punchPins"), { count: punchCount })}</Badge>
+              {photoCount ? <Badge tone="teal">{photoCount === 1 ? t("drw.photo.pin1") : fmt(t("drw.photo.pins"), { count: photoCount })}</Badge> : null}
               {data.hiddenPins ? <Badge tone="gray">{fmt(t("drw.v.hiddenBadge"), { count: data.hiddenPins })}</Badge> : null}
             </div>
             {anchor && popStyle ? (
               <div ref={popRef} className="m-drw-pop" style={popStyle}onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
-                {selected ? (
+                {selected && isPhoto(selected) ? (
+                  <>
+                    <div className="m-drw-pop-head">
+                      <span className="m-row"><Camera size={16} color={PIN_COLOR.photo} /><b>{labelOf(t, selected)}</b></span>
+                      <Badge tone="teal">{dayOf(selected.logDate)}</Badge>
+                    </div>
+                    {selected.thumbUrl || selected.previewUrl ? (
+                      <button type="button" className="m-drw-pop-photo" onClick={() => onNavigate(`/photos/${encodeURIComponent(selected.recordId)}`)} aria-label={t("drw.photo.open")}>
+                        <img src={selected.previewUrl ?? selected.thumbUrl} alt={selected.title} />
+                      </button>
+                    ) : selected.saving ? null : <span className="m-muted m-small">{t("drw.photo.noImage")}</span>}
+                    {selected.title ? <div className="m-strong">{selected.title}</div> : null}
+                    <KeyValue items={[
+                      [t("drw.photo.takenBy"), selected.takenByName ? `${selected.takenByName}${selected.takenAt ? ` · ${whenOf(selected.takenAt)}` : ""}` : <span className="m-muted">—</span>],
+                      [t("drw.v.placedBy"), selected.createdByName ? `${selected.createdByName} · ${fmt(t("drw.rev"), { label: revisions.find((r) => r.revisionIndex === selected.fromRevisionIndex)?.revisionLabel ?? "?" })}` : <span className="m-muted">—</span>]
+                    ]} />
+                    {outOfPlace(selected) ? <Note tone="warn">{t("drw.v.misplacedOne")}</Note> : null}
+                    {selected.saving ? <span className="m-small m-muted"><Loader2 className="spin" size={12} /> {t("drw.v.saving")}</span> : null}
+                    {confirmRemove ? (
+                      <div className="m-drw-pop-confirm">
+                        <span className="m-small">{t("drw.photo.removeAsk")}</span>
+                        <div className="m-row" style={{ justifyContent: "flex-end" }}>
+                          <Button variant="ghost" small onClick={() => setConfirmRemove(false)}>{t("common.cancel")}</Button>
+                          <Button variant="danger" small icon={<Trash size={13} />} onClick={() => removePin(selected)}>{t("drw.v.remove")}</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="m-row m-row-wrap" style={{ justifyContent: "flex-end" }}>
+                        {selected.canRemove && !selected.saving ? <Button variant="ghost" small icon={<Trash size={13} />} onClick={() => setConfirmRemove(true)}>{t("drw.v.remove")}</Button> : null}
+                        {selected.canMove && isCurrent && !selected.saving && onRevision(selected, R) ? (
+                          <Button variant="secondary" small icon={<Move size={13} />} onClick={() => { setMoving(selected.ItemId); setSelPin(null); }}>{t("drw.v.move")}</Button>
+                        ) : null}
+                        {selected.logDate && !selected.saving ? <Button variant="secondary" small onClick={() => onNavigate(`/daily-logs/${encodeURIComponent(selected.logDate!)}`)}>{t("drw.photo.openLog")}</Button> : null}
+                        {!selected.saving ? <Button small onClick={() => onNavigate(`/photos/${encodeURIComponent(selected.recordId)}`)}>{t("drw.photo.open")}</Button> : null}
+                      </div>
+                    )}
+                  </>
+                ) : selected ? (
                   <>
                     <div className="m-drw-pop-head">
                       <span className="m-row">{isPunch(selected) ? <ClipboardCheck size={16} color={PIN_COLOR.punchItem} /> : <FileQuestion size={16} color={PIN_COLOR.rfi} />}<b>{labelOf(t, selected)}</b></span>
@@ -566,10 +639,12 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
                     {outOfPlace(selected) ? <Note tone="warn">{t("drw.v.misplacedOne")}</Note> : null}
                     {selected.saving ? <span className="m-small m-muted"><Loader2 className="spin" size={12} /> {t("drw.v.saving")}</span> : null}
                     {confirmRemove ? (
-                      <div className="m-row" style={{ justifyContent: "flex-end" }}>
-                        <span className="m-small" style={{ marginRight: "auto" }}>{fmt(t("drw.v.removeAsk"), { number: selected.number })}</span>
-                        <Button variant="ghost" small onClick={() => setConfirmRemove(false)}>{t("common.cancel")}</Button>
-                        <Button variant="danger" small icon={<Trash size={13} />} onClick={() => removePin(selected)}>{t("drw.v.remove")}</Button>
+                      <div className="m-drw-pop-confirm">
+                        <span className="m-small">{fmt(t("drw.v.removeAsk"), { number: selected.number })}</span>
+                        <div className="m-row" style={{ justifyContent: "flex-end" }}>
+                          <Button variant="ghost" small onClick={() => setConfirmRemove(false)}>{t("common.cancel")}</Button>
+                          <Button variant="danger" small icon={<Trash size={13} />} onClick={() => removePin(selected)}>{t("drw.v.remove")}</Button>
+                        </div>
                       </div>
                     ) : (
                       <div className="m-row m-row-wrap" style={{ justifyContent: "flex-end" }}>
@@ -652,6 +727,7 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
                 <div className="m-row m-row-wrap">
                   <Checkbox checked={showRfi} onChange={setShowRfi} label={<span className="m-small">{t("drw.v.showRfis")}</span>} />
                   <Checkbox checked={showPunch} onChange={setShowPunch} label={<span className="m-small">{t("drw.v.showPunch")}</span>} />
+                  {photoCount ? <Checkbox checked={showPhoto} onChange={setShowPhoto} label={<span className="m-small">{t("drw.photo.show")}</span>} /> : null}
                   <Checkbox checked={showClosed} onChange={setShowClosed} label={<span className="m-small">{t("drw.v.showClosed")}</span>} />
                 </div>
                 {data.hiddenPins > 0 ? <Note tone="info">{fmt(t(data.hiddenPins === 1 ? "drw.v.hiddenOne" : "drw.v.hidden"), { count: data.hiddenPins })}</Note> : null}
@@ -664,7 +740,9 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
                       <span style={{ minWidth: 0 }}>
                         <span className="m-drw-item-title">{labelOf(t, p)}{p.title ? ` · ${p.title}` : ""}</span>
                         <span className="m-small m-muted">
-                          {p.saving ? t("drw.v.saving") : [p.dueDate ? fmt(t("drw.v.dueOn"), { date: fmtShortDate(p.dueDate) }) : "", isPunch(p) ? p.companyName ?? "" : p.dueDate ? "" : p.ballInCourtName].filter(Boolean).join(" · ")}
+                          {p.saving ? t("drw.v.saving")
+                            : isPhoto(p) ? [fmt(t("drw.photo.logOf"), { date: dayOf(p.logDate) }), p.takenByName ?? ""].filter(Boolean).join(" · ")
+                            : [p.dueDate ? fmt(t("drw.v.dueOn"), { date: fmtShortDate(p.dueDate) }) : "", isPunch(p) ? p.companyName ?? "" : p.dueDate ? "" : p.ballInCourtName].filter(Boolean).join(" · ")}
                           {outOfPlace(p) ? ` · ${t("drw.v.checkSpot")}` : ""}
                         </span>
                       </span>
@@ -687,7 +765,7 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
                   [t("drw.v.fileSize"), current ? `${fileSize(current.sizeBytes)} (${t("drw.v.limit")})` : "—"],
                   [t("drw.v.uploadedBy"), current?.uploadedByName || "—"],
                   [t("drw.v.pageSize"), current ? `${Math.round(current.pageWidthPt / 72 * 25.4)} × ${Math.round(current.pageHeightPt / 72 * 25.4)} mm` : "—"],
-                  [t("drw.v.tab.pins"), fmt(t("drw.v.pinsCount"), { count: onThis.length, open: onThis.filter((p) => !p.closed).length })]
+                  [t("drw.v.tab.pins"), fmt(t("drw.v.pinsCount"), { count: onThis.length, open: onThis.filter((p) => !p.closed && !isPhoto(p)).length })]
                 ]} />
                 <hr className="m-sep" />
                 <div className="m-row m-row-wrap">

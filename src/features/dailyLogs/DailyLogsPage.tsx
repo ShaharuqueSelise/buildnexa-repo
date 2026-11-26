@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import {
   AlertTriangle, CalendarDays, Camera, CheckCircle2, ChevronLeft, ChevronRight, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudRain, CloudSun, Copy, Snowflake, Sun, BellRing, Download, FileText, HardHat, History, ImageOff, List, Loader2,
-  Lock, Pencil, Plus, RefreshCw, Send, ShieldCheck, StickyNote, Trash2, Truck, UserCheck, Users, Wifi, Wind, Wrench
+  Lock, MapPin, Pencil, Plus, RefreshCw, Send, ShieldCheck, StickyNote, Trash2, Truck, UserCheck, Users, Wifi, Wind, Wrench
 } from "lucide-react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import type { TranslationKey } from "../../lib/i18n/dictionary";
@@ -33,6 +33,9 @@ import {
 } from "./dailyLogsApi";
 import type { Crew, CrewCompany, LogAction, LogDetail, LogPhoto, LogView, ManpowerRow, RowSectionKey, SectionKey, Weather } from "./dailyLogsApi";
 import { photoRefusal, retryPhoto } from "../photos/photosApi";
+import { projectCan } from "../../lib/permissions";
+import { usePhotoPins } from "../drawings/drawingsApi";
+import { PinPhotoDialog, PinnedChip } from "../drawings/PhotoPin";
 import "./DailyLogsPage.css";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
@@ -609,7 +612,7 @@ function LogDetailView({ ctx, detail, log }: { ctx: Ctx; detail: LogDetail; log:
             />
             <NotesCard ctx={ctx} log={log} editable={can.editSections} busy={busy} onSave={saveSection} />
 
-            <PhotosCard ctx={ctx} logId={log.id} date={log.date} photos={detail.photos ?? []} canAdd={Boolean(can.addPhotos)} own={false} />
+            <PhotosCard ctx={ctx} logId={log.id} date={log.date} photos={detail.photos ?? []} canAdd={Boolean(can.addPhotos)} canPin={projectCan(detail.role, "drawing.pin") && !detail.archived} own={false} />
 
             <Panel className="m-dlog-wide" title={<><Pencil size={16} /> {t("dlog.corrections")}</>} actions={<Badge tone="purple">{t("dlog.audited")}</Badge>}>
               {corrections.length ? (
@@ -619,7 +622,7 @@ function LogDetailView({ ctx, detail, log }: { ctx: Ctx; detail: LogDetail; log:
 
             {detail.history.length ? <HistoryCard t={t} history={detail.history} /> : null}
           </>
-        ) : <PhotosCard ctx={ctx} logId={log.id} date={log.date} photos={detail.photos ?? []} canAdd={Boolean(can.addPhotos)} own />}
+        ) : <PhotosCard ctx={ctx} logId={log.id} date={log.date} photos={detail.photos ?? []} canAdd={Boolean(can.addPhotos)} canPin={projectCan(detail.role, "drawing.pin") && !detail.archived} own />}
       </div>
 
       {submitOpen ? (
@@ -751,10 +754,13 @@ function WeatherForm({ t, initial, busy, onSave, onCancel }: { t: T; initial?: W
 
 // ---------- photos on the log ----------
 // Added through the app's photo queue (functions/photos, linked to this log); they also show in
-// Photos. A subcontractor sees and adds their own company's (`own`).
-function PhotosCard({ ctx, logId, date, photos, canAdd, own }: { ctx: Ctx; logId: string; date: string; photos: LogPhoto[]; canAdd: boolean; own: boolean }) {
+// Photos. A subcontractor sees and adds their own company's (`own`). Each photo can be pinned on a
+// drawing where it was taken (`canPin`: whoever places pins; the drawings Function checks again).
+function PhotosCard({ ctx, logId, date, photos, canAdd, canPin, own }: { ctx: Ctx; logId: string; date: string; photos: LogPhoto[]; canAdd: boolean; canPin: boolean; own: boolean }) {
   const { t, projectId } = ctx;
   const input = useRef<HTMLInputElement>(null);
+  const pins = usePhotoPins(projectId, photos.map((p) => p.ItemId));
+  const [pinning, setPinning] = useState<string>();
   const queue = useLogPhotoQueue(projectId, logId, date);
   const add = (files: FileList | null) => {
     const list = [...(files ?? [])];
@@ -777,12 +783,20 @@ function PhotosCard({ ctx, logId, date, photos, canAdd, own }: { ctx: Ctx; logId
               <small><Loader2 className="spin" size={11} /> {t("dlog.photoSending")}</small>
             </div>
           ))}
-          {photos.map((ph) => (
-            <button key={ph.ItemId} type="button" className="m-dlog-photo" onClick={() => ctx.onNavigate(`/photos/${ph.ItemId}`)} title={ph.caption || undefined}>
-              {ph.thumbUrl || ph.previewUrl ? <img src={ph.thumbUrl ?? ph.previewUrl} alt={ph.caption} loading="lazy" /> : <span className="m-dlog-nophoto"><ImageOff size={20} /></span>}
-              <small>{ph.uploadedByName}{ph.companyName ? ` · ${ph.companyName}` : ""} · {fmtDateTime(ph.takenAt)}</small>
-            </button>
-          ))}
+          {photos.map((ph) => {
+            const place = pins.data?.[ph.ItemId];
+            return (
+              <div key={ph.ItemId} className="m-dlog-photo-cell">
+                <button type="button" className="m-dlog-photo" onClick={() => ctx.onNavigate(`/photos/${ph.ItemId}`)} title={ph.caption || undefined}>
+                  {ph.thumbUrl || ph.previewUrl ? <img src={ph.thumbUrl ?? ph.previewUrl} alt={ph.caption} loading="lazy" /> : <span className="m-dlog-nophoto"><ImageOff size={20} /></span>}
+                  <small>{ph.uploadedByName}{ph.companyName ? ` · ${ph.companyName}` : ""} · {fmtDateTime(ph.takenAt)}</small>
+                </button>
+                {place ? <PinnedChip place={place} onNavigate={ctx.onNavigate} t={t} />
+                  : canPin && pins.data ? <button type="button" className="m-link m-small m-pin-chip" onClick={() => setPinning(ph.ItemId)}><MapPin size={12} /> {t("drw.photo.pinOnDrawing")}</button>
+                  : null}
+              </div>
+            );
+          })}
         </div>
       ) : <p className="m-muted" style={{ margin: 0 }}>{own ? t("dlog.noPhotosOwn") : canAdd ? t("dlog.noPhotos") : t("dlog.noPhotosRead")}</p>}
       {queue.failed.length ? (
@@ -795,6 +809,7 @@ function PhotosCard({ ctx, logId, date, photos, canAdd, own }: { ctx: Ctx; logId
           </Note>
         </div>
       ) : null}
+      {pinning ? <PinPhotoDialog projectId={projectId} photoId={pinning} onNavigate={ctx.onNavigate} onClose={() => setPinning(undefined)} t={t} /> : null}
     </Panel>
   );
 }

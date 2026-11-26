@@ -66,7 +66,7 @@ export type SheetPin = {
   /** 0 = still shown on the newest revision. */
   toRevisionIndex: number;
   version: number;
-  type: "rfi" | "punchItem";
+  type: "rfi" | "punchItem" | "photo";
   recordId: string;
   number: string;
   title: string;
@@ -76,6 +76,13 @@ export type SheetPin = {
   ballInCourtName: string;
   /** Punch pins: the company that fixes it. */
   companyName?: string;
+  /** Photo pins (a daily log photo): the log, when and by whom it was taken, image links. */
+  logId?: string;
+  logDate?: string;
+  takenAt?: string;
+  takenByName?: string;
+  thumbUrl?: string;
+  previewUrl?: string;
   createdByName: string;
   createdAt: string;
   canMove: boolean;
@@ -135,7 +142,7 @@ export function revisionLinks(projectId: string, revisionIds: string[]) {
 type SheetAction =
   | { action: "updateSheet"; sheetId: string; version: number; sheetNumber?: string; title?: string; discipline?: string; setName?: string }
   | { action: "voidRevision"; sheetId: string; revisionId: string; reason: string }
-  | { action: "pin"; sheetId: string; revisionIndex: number; x: number; y: number; recordType: "rfi" | "punchItem"; recordId: string; temp: SheetPin }
+  | { action: "pin"; sheetId: string; revisionIndex: number; x: number; y: number; recordType: "rfi" | "punchItem" | "photo"; recordId: string; temp: SheetPin }
   | { action: "movePin"; sheetId: string; pinId: string; revisionIndex: number; x: number; y: number }
   | { action: "removePin"; sheetId: string; pinId: string };
 
@@ -200,6 +207,8 @@ export function useDrawingAction(projectId?: string) {
         // A punch item shows where it is pinned, and the sheet offers only unpinned items to link.
         void queryClient.invalidateQueries({ queryKey: ["punch", projectId ?? ""] });
         void queryClient.invalidateQueries({ queryKey: ["punchItem", projectId ?? ""] });
+        // A log photo shows "Pinned on A-101".
+        void queryClient.invalidateQueries({ queryKey: photoPinsKey(projectId) });
         if (body.action !== "movePin") void queryClient.invalidateQueries({ queryKey: sheetKey(projectId, body.sheetId) });
       }
     }
@@ -216,6 +225,20 @@ export function addPendingPin(queryClient: ReturnType<typeof useQueryClient>, pr
 /** A pin whose record is still being saved (New punch item here): shown at once, replaced on the next read. */
 export function showSavingPin(queryClient: ReturnType<typeof useQueryClient>, projectId: string, pin: SheetPin) {
   queryClient.setQueryData<SheetDetail>(sheetKey(projectId, pin.sheetId), (old) => (old ? { ...old, pins: [...old.pins, { ...pin, saving: true }] } : old));
+}
+
+/** Where a daily log photo is pinned now: the sheet and the pin, for the "Pinned on A-101" chip. */
+export type PhotoPinPlace = { pinId: string; sheetId: string; sheetNumber: string };
+const photoPinsKey = (projectId?: string, ids?: string[]) => ["drawings", projectId ?? "", "photoPins", ...(ids ? [ids.join(",")] : [])];
+
+export function usePhotoPins(projectId: string | undefined, photoIds: string[]) {
+  const ids = [...new Set(photoIds)].sort();
+  return useQuery({
+    queryKey: photoPinsKey(projectId, ids),
+    queryFn: () => call<{ pins: Record<string, PhotoPinPlace> }>({ action: "photoPins", projectId, photoIds: ids }).then((r) => r.pins ?? {}),
+    enabled: Boolean(projectId && ids.length && FUNCTIONS.drawings),
+    staleTime: 60_000
+  });
 }
 
 export function refreshDrawings(queryClient: ReturnType<typeof useQueryClient>, projectId: string, sheetIds: string[] = []) {

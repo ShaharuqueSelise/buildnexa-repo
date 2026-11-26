@@ -20,6 +20,8 @@
 // detail = { date, today, role, archived, log, crews, companies, missingCrews, remindedAt, can, history, photos }.
 // submit and correct also answer `notified` ({ bell, email, failed }): who was told (part 5).
 // Photos are added through the photos Function (link { type: "dailyLog", id }); `can.addPhotos` says when.
+// The same code deployed as the workflow-only Function daily-logs-jobs sends the 18:00 "log still
+// missing" reminder (runMissing, near the end of this file).
 //
 // Who (05 §3, decisions of 2026-11-26):
 // - PM, superintendent (daily_log.create): open any day up to tomorrow, fill every section and
@@ -1422,7 +1424,7 @@ async function correct(db, me, args) {
 // - "Remind" (GC, draft log) -> one subcontractor's people on the project: bell + email ("reminder
 //   emails" setting), at most once an hour per company and day; the log's history keeps it.
 // A notice that can't be sent never fails the change; the answer says how many went out.
-// Not here: the 18:00 "log missing" reminder (needs a scheduled job, see 05 §7).
+// The 18:00 "log missing" reminder runs from a scheduled workflow: see runMissing below.
 const PREF_FIELDS = "ItemId userId emailEnabled reminderEmails";
 const REMIND_EVERY_MS = 60 * 60 * 1000;
 const html = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -1517,7 +1519,112 @@ async function remind(db, me, args) {
   return { ...(await detail(db, c, date, log)), reminded: { companyName: co.companyName || "", people: people.length, ...sent } };
 }
 
+// ---------- the 18:00 "log still missing" reminder (05 §7) ----------
+// A scheduled workflow runs this every 15 minutes through the workflow-only copy of this Function
+// (daily-logs-jobs). From 18:00 in the project's timezone on a working day, a construction-stage
+// project whose log for today is missing or still a draft gets ONE reminder: bell + email to its
+// superintendents (the project managers when it has none). Once a day per project: a history
+// line (action "missingReminder") is written BEFORE anything is sent, and the earliest one wins,
+// so two overlapping runs never both send. Missed runs are skipped by the scheduler; any run
+// between 18:00 and midnight catches up. Nothing is created or changed on the log itself.
+const MISSING_HOUR = 18;
+const MISSING_BUDGET_MS = 22_000;
+const MISSING_ACTION = "missingReminder";
+const MARKER_FIELDS = "ItemId CreatedDate projectId recordType action recordNumber at";
+
+function hourIn(timeZone) {
+  try {
+    return Number(new Intl.DateTimeFormat("en-GB", { timeZone: timeZone || "Europe/Berlin", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
+  } catch {
+    return new Date().getUTCHours();
+  }
+}
+
+const markersOf = (db, c, date) =>
+  db.list("ActivityEvent", MARKER_FIELDS, c.me.tenantRole, { projectId: c.projectId, recordType: "dailyLog", action: MISSING_ACTION, recordNumber: date });
+
+async function missingProject(db, project, out, options) {
+  const tenantRole = project.tenantRole;
+  const date = todayIn(project.timezone);
+  const c = { me: { userId: "", tenantRole }, project, projectId: project.ItemId, today: date };
+  const log = await loadLog(db, c, date);
+  if (log && (log.status !== "draft" || log.isWorkingDay === false)) return;
+  if ((await markersOf(db, c, date)).length) return; // already told today
+  const team = await db.list("ProjectMember", TEAM_FIELDS, tenantRole, { projectId: project.ItemId });
+  c.active = team.filter((m) => m.status === "active");
+  const supts = c.active.filter((m) => m.role === SUPT);
+  const to = supts.length ? supts : c.active.filter((m) => m.role === PM);
+  if (!to.length) return;
+  const title = `Daily log for ${shortDay(date)} not submitted yet`;
+  const body = log
+    ? `${project.number || project.name}: the log is still a draft. Check the crews and submit it before the day ends.`
+    : `${project.number || project.name}: nobody has opened today's log yet. Fill it in and submit it before the day ends.`;
+  const messages = to.map((m) => ({ m, kind: "missing", title, body, link: logLink(c, date), email: true }));
+  if (options.dryRun) {
+    out.planned.push({ project: project.number, date, log: log ? "draft" : "none", kind: "dailyLog.missing", title, people: to.length });
+    return;
+  }
+  // Claim first: our history line, then the earliest line of the day decides who sends.
+  const mine = await db.insert("ActivityEvent", {
+    tenantRole,
+    projectId: c.projectId,
+    recordType: "dailyLog",
+    recordId: log?.ItemId || "",
+    recordNumber: date,
+    action: MISSING_ACTION,
+    actorUserId: "",
+    actorName: "Buildnexa",
+    at: new Date().toISOString(),
+    summary: `Reminder: the log for ${niceDate(date)} wasn't submitted by ${MISSING_HOUR}:00 (sent to ${plural(to.length, "person")})`,
+    source: "app"
+  });
+  const winner = first(await markersOf(db, c, date));
+  if (winner && winner.ItemId !== mine) return;
+  out.told += 1;
+  const sent = await deliver(db, c, messages, { reminder: true });
+  out.bell += sent.bell;
+  out.email += sent.email;
+  out.failed.push(...sent.failed);
+}
+
+async function runMissing(ctx, options = {}) {
+  const started = Date.now();
+  const out = { ok: true, projects: 0, told: 0, bell: 0, email: 0, leftForNextRun: 0, failed: [], planned: [] };
+  try {
+    const db = client(ctx, await serviceToken(ctx));
+    const projects = await db.listAll("Project", "ItemId number name status stage timezone");
+    for (const project of projects) {
+      if (project.status === "archived" || project.stage !== "construction") continue;
+      const today = todayIn(project.timezone);
+      if (!options.anyTime && (isWeekend(today) || hourIn(project.timezone) < MISSING_HOUR)) continue;
+      if (Date.now() - started > MISSING_BUDGET_MS) {
+        out.leftForNextRun += 1;
+        continue;
+      }
+      out.projects += 1;
+      try {
+        await missingProject(db, project, out, options);
+      } catch (error) {
+        out.failed.push(`${project.number || project.ItemId}: ${String(error?.message ?? error).slice(0, 160)}`);
+      }
+    }
+  } catch (error) {
+    ctx.log.error("daily log missing reminder failed", { message: error.message });
+    out.ok = false;
+    out.failed.push(String(error?.message ?? error).slice(0, 200));
+  }
+  ctx.log.info("daily log missing reminder", { ...out, planned: out.planned.length });
+  if (!options.dryRun) delete out.planned;
+  return out;
+}
+
 export default async function handler(input, ctx) {
+  // The 15-minute "log missing" workflow. `ctx.run.invokedBy` is set by Blocks, not by the caller,
+  // so an app user can't start it. A test run may ask for a dry run (nothing written or sent) and
+  // ignore the working-day and 18:00 rule (anyTime).
+  const by = ctx.run?.invokedBy?.type;
+  if (by === "workflow") return runMissing(ctx);
+  if (by === "test" && input?.action === "missing") return runMissing(ctx, { dryRun: input.dryRun === true, anyTime: input.anyTime === true });
   return handle(input, ctx, "daily-logs", {
     month: (args, { db, me }) => month(db, me, args),
     get: (args, { db, me }) => get(db, me, args),

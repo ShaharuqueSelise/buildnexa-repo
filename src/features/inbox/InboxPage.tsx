@@ -28,7 +28,7 @@ const KIND_META: Record<Kind, { label: TranslationKey; icon: ReactNode; tone: To
 };
 // Reminders: RFIs due soon or overdue, the RFI manager's list of overdue RFIs, and the punch
 // list's daily overdue digest (per company, the PM copied).
-const REMINDER_KINDS = ["rfi.due", "rfi.overdue", "rfi.digest", "punch.overdue", "punch.digest", "dailyLog.remind"];
+const REMINDER_KINDS = ["rfi.due", "rfi.overdue", "rfi.digest", "punch.overdue", "punch.digest", "dailyLog.remind", "dailyLog.missing"];
 // Work that lands on me: an RFI's ball, new punch items for my company, a fix to check, a fix sent back.
 const TURN_KINDS = ["rfi.turn", "punch.assigned", "punch.ready", "punch.rejected"];
 const DECIDED_KINDS = ["rfi.decided", "punch.closed"];

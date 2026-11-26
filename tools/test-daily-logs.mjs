@@ -454,5 +454,84 @@ await test("archived projects are read-only", async () => {
   expect(m.can.open === false && m.days.length === 0, "nothing to open");
 });
 
+// ---------- the 18:00 "log missing" job (workflow-only copy of the Function) ----------
+const E = "company-east";
+const job = (type, input = {}) =>
+  handler(input, {
+    context: { tenantId: "TEN", userId: "", organizationId: "", roles: [] },
+    run: { invokedBy: { type } },
+    env: { CLIENT_ID: "id", CLIENT_SECRET: "secret" },
+    log: { error: (...a) => console.error("  [function error]", ...a), warn() {}, info() {} }
+  });
+const eastMember = (projectId, userId, role, status = "active") =>
+  rows("ProjectMember").push({ ItemId: `${projectId}-${userId}`, tenantRole: E, projectId, userId, displayName: userId, email: `${userId}@test.example`, companyId: "east", companyName: "East Bau", companyRelation: "self", role, status, joinedAt: "2026-01-01" });
+for (const [id, stage, status] of [["e1", "construction", "active"], ["e2", "construction", "active"], ["e3", "preconstruction", "active"], ["e4", "construction", "active"], ["e5", "construction", "archived"], ["e6", "construction", "active"]]) {
+  rows("Project").push({ ItemId: id, tenantRole: E, number: id.toUpperCase(), name: `East ${id}`, status, stage, timezone: "Europe/Berlin" });
+  eastMember(id, `${id}-pm`, "project-manager");
+}
+eastMember("e1", "e1-supt", "superintendent");
+eastMember("e1", "e1-gone", "superintendent", "removed");
+eastMember("e1", "e1-sub", "field-user");
+eastMember("e4", "e4-supt", "superintendent");
+eastMember("e6", "e6-supt", "superintendent");
+// e1: no log today. e2: a draft, no superintendent (the PM is told). e4: submitted. e6: marked not a working day.
+rows("DailyLog").push({ ItemId: "e2-log", tenantRole: E, projectId: "e2", logDate: today, status: "draft", version: 1, isWorkingDay: true, CreatedDate: "2026-01-01T00:00:00Z" });
+rows("DailyLog").push({ ItemId: "e4-log", tenantRole: E, projectId: "e4", logDate: today, status: "submitted", version: 2, isWorkingDay: true, CreatedDate: "2026-01-01T00:00:00Z" });
+rows("DailyLog").push({ ItemId: "e6-log", tenantRole: E, projectId: "e6", logDate: today, status: "draft", version: 1, isWorkingDay: false, CreatedDate: "2026-01-01T00:00:00Z" });
+const markers = (projectId) => rows("ActivityEvent").filter((e) => e.tenantRole === E && e.projectId === projectId && e.action === "missingReminder");
+
+await test("missing log: only Blocks' workflow or test runs start the job; an app call can't", async () => {
+  refused(await handler({ method: "POST", body: { action: "missing", projectId: "e1" } }, {
+    context: { tenantId: "TEN", userId: "pm", organizationId: "ORG", roles: [T, "staff"] }, env: {}, log: { error() {}, warn() {}, info() {} }
+  }), "BAD_ACTION", "app call");
+  const r = await job("test", { action: "other" });
+  expect(r.ok === false && r.code === "BAD_ACTION", "a test run without the action falls through to the app actions");
+});
+
+await test("missing log: a dry run plans without writing or sending", async () => {
+  sent.length = 0;
+  const r = await job("test", { action: "missing", dryRun: true, anyTime: true });
+  expect(r.ok === true && sent.length === 0 && markers("e1").length === 0, JSON.stringify(r));
+  const by = Object.fromEntries(r.planned.map((p) => [p.project, p]));
+  expect(by.E1?.log === "none" && by.E1.people === 1 && by.E2?.log === "draft" && by.E2.people === 1, JSON.stringify(r.planned));
+  expect(!by.E3 && !by.E4 && !by.E5 && !by.E6 && !by["PRJ-001"], "preconstruction, submitted, archived, non-working and stage-less projects are skipped");
+});
+
+await test("missing log: superintendents told (the PM when there is none), bell + email, once a day", async () => {
+  sent.length = 0;
+  const r = await job("test", { action: "missing", anyTime: true });
+  expect(r.ok === true && r.told === 2 && r.bell === 2 && r.email === 2 && r.planned === undefined, JSON.stringify(r));
+  expect(bellsTo("e1-supt").length === 1 && bellsTo("e1-pm").length === 0 && bellsTo("e1-gone").length === 0 && bellsTo("e1-sub").length === 0, "e1: the active superintendent only");
+  expect(bellsTo("e2-pm").length === 1 && mailsTo("e2-pm").length === 1, "e2: no superintendent, so the PM");
+  const b = bellsTo("e1-supt")[0].payload;
+  expect(b.kind === "dailyLog.missing" && b.link === `/daily-logs/${today}?project=e1` && /nobody has opened/.test(b.body), JSON.stringify(b));
+  expect(/still a draft/.test(bellsTo("e2-pm")[0].payload.body), "draft wording");
+  expect(markers("e1").length === 1 && markers("e2").length === 1 && markers("e2")[0].recordId === "e2-log", "history line written");
+  expect(!rows("DailyLog").some((l) => l.projectId === "e1"), "no log is created");
+  sent.length = 0;
+  const again = await job("test", { action: "missing", anyTime: true });
+  expect(again.ok === true && again.projects === 4 && again.told === 0 && sent.length === 0, `second run: ${JSON.stringify(again)}`);
+  const wf = await job("workflow"); // the real schedule: same job, 18:00 and weekday rules on
+  expect(wf.ok === true && wf.told === 0 && sent.length === 0 && wf.planned === undefined, `workflow run: ${JSON.stringify(wf)}`);
+});
+
+await test("missing log: a run that loses the race to another sends nothing", async () => {
+  // e7: another run's line lands first (earlier CreatedDate) between our check and our claim.
+  rows("Project").push({ ItemId: "e7", tenantRole: E, number: "E7", name: "East e7", status: "active", stage: "construction", timezone: "Europe/Berlin" });
+  eastMember("e7", "e7-supt", "superintendent");
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const body = init?.body ? String(init.body) : "";
+    if (body.includes("insertActivityEvent") && body.includes('"projectId":"e7"') && !markers("e7").length) {
+      rows("ActivityEvent").push({ ItemId: "other-run", tenantRole: E, projectId: "e7", recordType: "dailyLog", action: "missingReminder", recordNumber: today, CreatedDate: "2000-01-01T00:00:00Z" });
+    }
+    return realFetch(url, init);
+  };
+  sent.length = 0;
+  const r = await job("test", { action: "missing", anyTime: true });
+  globalThis.fetch = realFetch;
+  expect(r.ok === true && r.told === 0 && bellsTo("e7-supt").length === 0, JSON.stringify(r));
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -128,5 +128,5 @@ textarea.fld-input { min-height: 84px; }
 .fld-comment { border-top: 1px solid hsl(var(--border)); padding-top: 8px; }
 .fld-comment small { color: hsl(var(--muted-foreground)); font-size: 12px; }
 .fld-comment p { margin: 2px 0 0; white-space: pre-wrap; }
-.fld-app .m-toasts { bottom: auto; left: 50%; position: absolute; right: auto; top: 70px; transform: translateX(-50%); width: calc(100% - 28px); z-index: 10; }
+.fld-app .m-toasts { bottom: 92px; left: 50%; position: absolute; right: auto; top: auto; transform: translateX(-50%); width: calc(100% - 28px); z-index: 10; }
 .fld-app .m-toast { max-width: none; }

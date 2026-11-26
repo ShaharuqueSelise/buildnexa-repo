@@ -135,3 +135,4 @@
   .m-dlog-layout .m-panel-head { flex-wrap: wrap; }
   .m-dlog-layout .m-panel-head > .m-actions { gap: 6px; }
 }
+.m-dlog-photo-cell { display: grid; gap: 4px; align-content: start; }

@@ -1,0 +1,17 @@
+{
+  "name": "daily-log-missing",
+  "settings": {},
+  "nodes": [
+    { "id": "t1", "name": "Every 15 minutes", "category": "trigger", "type": "schedule", "version": "v1",
+      "position": { "x": 0, "y": 0 },
+      "parameters": { "triggerInterval": "custom", "cronExpression": "*/15 * * * *" },
+      "settings": {}, "pinData": null },
+    { "id": "f1", "name": "Daily log missing reminder", "category": "action", "type": "function", "version": "v1",
+      "position": { "x": 300, "y": 0 },
+      "parameters": { "functionId": "5169d17c-0feb-48e5-8821-abc5269ac217", "inputMode": "item" },
+      "settings": {}, "pinData": null }
+  ],
+  "edges": [
+    { "id": "e1", "source": "t1", "target": "f1", "sourceHandle": "source", "targetHandle": "target" }
+  ]
+}

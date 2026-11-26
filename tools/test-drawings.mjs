@@ -394,5 +394,93 @@ await test("a new revision also tells who holds the ball on a pinned punch item;
   expect(bells("drawing.pinned_sheet_revised").length === 0, "a closed item's pin tells nobody");
 });
 
+// ---------- daily log photos pinned on a sheet (Phase 3 small gap, 2026-11-26) ----------
+rows("DailyLog").push(
+  { ItemId: "log-draft", tenantRole: T, projectId: P, logDate: "2026-11-26", status: "draft" },
+  { ItemId: "log-done", tenantRole: T, projectId: P, logDate: "2026-11-25", status: "submitted" },
+  { ItemId: "log-dup", tenantRole: T, projectId: P, logDate: "2026-11-26", status: "draft", duplicateOf: "log-draft" }
+);
+const photo = (id, extra) => {
+  files.push({ fileId: `th-${id}` }, { fileId: `pv-${id}` });
+  rows("Photo").push({ ItemId: id, tenantRole: T, projectId: P, thumbFileId: `th-${id}`, previewFileId: `pv-${id}`, fileName: `${id}.jpg`, takenAt: "2026-11-26T09:00:00Z", uploadedByUserId: "supt", uploadedByName: "SUPT", uploaderCompanyId: "gc", linkedRecordType: "dailyLog", linkedRecordId: "log-draft", linkedRecordNumber: "2026-11-26", isVoided: false, ...extra });
+};
+photo("ph-gc", { caption: "Cracked slab" });
+photo("ph-sub", { uploadedByUserId: "sub", uploadedByName: "SUB", uploaderCompanyId: "sub-co" });
+photo("ph-done", { linkedRecordId: "log-done", linkedRecordNumber: "2026-11-25" });
+photo("ph-void", { isVoided: true });
+photo("ph-rfi", { linkedRecordType: "rfi", linkedRecordId: "rfi-gc" });
+photo("ph-orphan", { linkedRecordId: "log-dup" });
+let photoPin;
+
+await test("log photo pins: who may pin which photo; one live pin per photo; also on a submitted log", async () => {
+  const a = sheetBy("A-101");
+  const at = { sheetId: a.ItemId, revisionIndex: a.currentRevisionIndex, recordType: "photo" };
+  const r = await call("supt", { action: "pin", ...at, x: 0.5, y: 0.5, recordId: "ph-gc" });
+  ok(r, "supt pins a log photo");
+  photoPin = r.pin;
+  expect(r.pin.type === "photo" && r.pin.recordId === "ph-gc" && r.pin.title === "Cracked slab" && r.pin.logDate === "2026-11-26" && r.pin.logId === "log-draft", JSON.stringify(r.pin));
+  expect(r.pin.thumbUrl && r.pin.previewUrl && r.pin.closed === false && r.pin.canMove, "thumbnail links and own pin");
+  refused(await call("pm", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "ph-gc" }), "ALREADY_PINNED", "one live pin per photo");
+  for (const [id, why] of [["ph-void", "removed photo"], ["ph-rfi", "not a log photo"], ["ph-orphan", "duplicate log"], ["nope", "unknown"]]) {
+    refused(await call("supt", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: id }), "NOT_FOUND", why);
+  }
+  refused(await call("owner", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "ph-done" }), "NOT_ALLOWED", "owner");
+  refused(await call("design", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "ph-gc" }), "NOT_ALLOWED", "designer");
+  refused(await call("sub", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "ph-done" }), "NOT_FOUND", "sub on the GC's photo");
+  ok(await call("sub", { action: "pin", ...at, x: 0.3, y: 0.7, recordId: "ph-sub" }), "sub pins their company's photo");
+  ok(await call("pm", { action: "pin", ...at, x: 0.8, y: 0.2, recordId: "ph-done" }), "pm pins a photo of a submitted log");
+  const logLines = mine("ActivityEvent").filter((e) => e.recordType === "dailyLog" && e.action === "photoPinned");
+  expect(logLines.length === 3 && logLines.some((e) => e.recordId === "log-draft" && e.summary === `SUPT pinned a photo on A-101`) && logLines.some((e) => e.recordId === "log-done"), JSON.stringify(logLines.map((e) => e.summary)));
+  expect(mine("ActivityEvent").some((e) => e.recordType === "sheet" && e.summary === `SUPT pinned a photo (log 26 Nov) on A-101 rev ${a.currentRevisionLabel}`), "sheet history");
+});
+
+await test("log photo pins follow the photo's visibility and aren't counted as open pins", async () => {
+  const a = sheetBy("A-101");
+  const photosOf = (r) => r.pins.filter((p) => p.type === "photo").map((p) => p.recordId).sort().join(",");
+  const pm = await call("pm", { action: "sheet", sheetId: a.ItemId });
+  expect(photosOf(pm) === "ph-done,ph-gc,ph-sub", `pm ${photosOf(pm)}`);
+  const issues = pm.pins.filter((p) => p.type !== "photo" && !p.toRevisionIndex && !p.closed).length;
+  expect(pm.sheet.pins === issues, `open pins ${pm.sheet.pins} = issues ${issues}`);
+  const sub = await call("sub", { action: "sheet", sheetId: a.ItemId });
+  expect(photosOf(sub) === "ph-sub", `sub ${photosOf(sub)}`);
+  const owner = await call("owner", { action: "sheet", sheetId: a.ItemId });
+  expect(photosOf(owner) === "ph-done", `owner ${photosOf(owner)}`);
+  const design = await call("design", { action: "sheet", sheetId: a.ItemId });
+  expect(photosOf(design) === "", `designer ${photosOf(design)}`);
+  const subNoPhotos = await call("sub", { action: "list" });
+  expect(subNoPhotos.sheets.find((x) => x.sheetNumber === "A-101").hiddenPins === sub.hiddenPins, "no hidden count for photos");
+  // The chip: where each photo is pinned.
+  const map = (u) => call(u, { action: "photoPins", photoIds: ["ph-gc", "ph-sub", "ph-done", "ph-void"] });
+  const forPm = await map("pm");
+  expect(Object.keys(forPm.pins).sort().join(",") === "ph-done,ph-gc,ph-sub" && forPm.pins["ph-gc"].sheetNumber === "A-101" && forPm.pins["ph-gc"].pinId === photoPin.ItemId, JSON.stringify(forPm));
+  expect(Object.keys((await map("sub")).pins).join(",") === "ph-sub", "sub: own company's only");
+  expect(Object.keys((await map("owner")).pins).join(",") === "ph-done", "owner: submitted logs only");
+  expect(Object.keys((await map("design")).pins).length === 0, "designer: none");
+  // Removing the photo hides its pin (restoring brings it back).
+  const ph = mine("Photo").find((x) => x.ItemId === "ph-done");
+  ph.isVoided = true;
+  expect(photosOf(await call("pm", { action: "sheet", sheetId: a.ItemId })) === "ph-gc,ph-sub", "removed photo's pin is gone");
+  ph.isVoided = false;
+});
+
+await test("log photo pins: move and remove with history on the log; a new revision tells nobody", async () => {
+  refused(await call("sub", { action: "removePin", pinId: photoPin.ItemId }), "NOT_FOUND", "sub can't see the GC photo's pin");
+  refused(await call("owner", { action: "movePin", pinId: photoPin.ItemId, revisionIndex: sheetBy("A-101").currentRevisionIndex, x: 0.1, y: 0.1 }), "NOT_FOUND", "owner can't see a draft log's photo pin");
+  const m = await call("supt", { action: "movePin", pinId: photoPin.ItemId, revisionIndex: sheetBy("A-101").currentRevisionIndex, x: 0.55, y: 0.5 });
+  ok(m, "supt moves own photo pin");
+  expect(m.pin.type === "photo" && m.pin.x === 0.55 && m.pin.thumbUrl, JSON.stringify(m.pin));
+  expect(mine("ActivityEvent").some((e) => e.recordType === "dailyLog" && e.recordId === "log-draft" && e.action === "photoPinMoved"), "log history: moved");
+  sent.length = 0;
+  ok(await publish("dc", [{ sheetNumber: "A-101", revisionLabel: "D" }]), "dc publishes rev D");
+  expect(bells("drawing.pinned_sheet_revised").length === 0, "photo pins tell nobody about a new revision");
+  const pm = await call("pm", { action: "sheet", sheetId: sheetBy("A-101").ItemId });
+  expect(pm.pins.some((p) => p.type === "photo" && p.recordId === "ph-gc" && !p.toRevisionIndex), "carried to rev D");
+  const live = pm.pins.find((p) => p.recordId === "ph-gc");
+  ok(await call("dc", { action: "removePin", pinId: live.ItemId }), "dc removes any pin");
+  expect(mine("ActivityEvent").some((e) => e.recordType === "dailyLog" && e.recordId === "log-draft" && e.action === "photoUnpinned" && e.summary === "DC removed a photo's pin from A-101"), "log history: removed");
+  expect(!(await call("pm", { action: "photoPins", photoIds: ["ph-gc"] })).pins["ph-gc"], "no chip once removed");
+  ok(await call("supt", { action: "pin", sheetId: sheetBy("A-101").ItemId, revisionIndex: sheetBy("A-101").currentRevisionIndex, recordType: "photo", x: 0.5, y: 0.5, recordId: "ph-gc" }), "can be pinned again");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

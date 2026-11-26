@@ -114,3 +114,30 @@
   .m-drw-viewer { grid-template-columns: 1fr; height: auto; }
   .m-drw-canvas { flex: none; height: 62vh; }
 }
+
+/* ---------- daily log photos pinned on a sheet (Phase 3 small gap) ---------- */
+.m-drw-pin-photo { color: #0d9488; }
+.m-drw-pin .m-drw-pin-icon { color: #fff; left: 50%; position: absolute; top: 6px; transform: translateX(-50%); }
+.m-drw-hint.m-drw-hint-photo { align-items: center; display: flex; gap: 8px; max-width: calc(100% - 20px); pointer-events: auto; white-space: normal; }
+.m-drw-hint-photo .m-link { color: inherit; text-decoration: underline; }
+.m-drw-pop-photo { background: none; border: 0; cursor: zoom-in; padding: 0; }
+.m-drw-pop-photo img { aspect-ratio: 4 / 3; border-radius: 8px; display: block; object-fit: cover; width: 100%; }
+.m-pin-chip { align-items: center; display: inline-flex; gap: 3px; }
+.m-pin-search { align-items: center; display: flex; gap: 8px; }
+.m-pin-search .m-input { flex: 1; }
+.m-pin-sheets { display: grid; gap: 6px; max-height: min(55vh, 460px); overflow-y: auto; }
+.m-pin-sheet { align-items: center; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 10px; color: inherit; cursor: pointer; display: flex; gap: 10px; padding: 6px; text-align: left; }
+.m-pin-sheet:hover, .m-pin-sheet:focus-visible { border-color: hsl(var(--primary)); }
+.m-pin-sheet img, .m-pin-sheet-blank { background: #fff; border-radius: 6px; flex: none; height: 44px; object-fit: contain; width: 62px; }
+.m-pin-sheet-blank { align-items: center; color: hsl(var(--muted-foreground)); display: flex; justify-content: center; }
+.m-pin-sheet-text { display: grid; min-width: 0; }
+.m-pin-sheet-text small { color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Sheet picker while the register loads: three rows shaped like the real ones, gently pulsing. */
+.m-pin-sheet-skel { cursor: default; pointer-events: none; }
+.m-pin-sheet-skel .m-pin-sheet-blank, .m-pin-sheet-skel i { animation: m-pin-skel 1.2s ease-in-out infinite; background: hsl(var(--muted)); }
+.m-pin-sheet-skel .m-pin-sheet-text { gap: 6px; }
+.m-pin-sheet-skel i { border-radius: 4px; display: block; height: 10px; max-width: 100%; }
+@keyframes m-pin-skel { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .m-pin-sheet-skel .m-pin-sheet-blank, .m-pin-sheet-skel i { animation: none; } }
+/* "Remove this pin?" in the pin pop-up: the question on its own line, the buttons under it. */
+.m-drw-pop-confirm { background: hsl(var(--muted) / .5); border-radius: 8px; display: grid; gap: 8px; padding: 8px 10px; }

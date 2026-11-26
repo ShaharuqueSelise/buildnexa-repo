@@ -16,9 +16,10 @@
 //                                                                    -> { results: [{ fileId, ok, sheetId?, code?, error? }], notified }
 //   { action: "updateSheet", projectId, sheetId, version, sheetNumber?, title?, discipline?, setName? } -> { sheet }
 //   { action: "voidRevision", projectId, revisionId, reason }        -> { sheet }
-//   { action: "pin", projectId, sheetId, revisionIndex, x, y, recordType: "rfi" | "punchItem", recordId } -> { pin }
+//   { action: "pin", projectId, sheetId, revisionIndex, x, y, recordType: "rfi" | "punchItem" | "photo", recordId } -> { pin }
 //   { action: "movePin", projectId, pinId, revisionIndex, x, y }    -> { pin }
 //   { action: "removePin", projectId, pinId }                        -> { pinId }
+//   { action: "photoPins", projectId, photoIds }                     -> { pins: { [photoId]: { pinId, sheetId, sheetNumber } } }
 //
 // Rules (Phase 3 decisions, 24 Nov 2026):
 // - The caller must be an active member of the project. Everyone on the team sees the register
@@ -36,6 +37,14 @@
 //   item here"); an existing active item without a pin is pinned here. An item has at most one live
 //   pin. Its history shows when it is pinned, moved or unpinned. A subcontractor sees the pins of
 //   items assigned to their company or created by them (punch_item.view_assigned).
+// - Daily log photos (Phase 3 small gap, 2026-11-26): a photo on a daily log can be pinned where it
+//   was taken, one live pin per photo, by anyone who places pins AND sees the photo (a subcontractor
+//   their own company's). Also after the log is submitted: the pin is on the drawing, the log's
+//   content doesn't change; its history gets a line. A photo pin is seen by whoever sees the photo
+//   (the daily log rules: PM, superintendent, document controller all; a subcontractor their own
+//   company's; the owner once the log is submitted; designers none). Pins the caller can't see are
+//   left out without a count, and photo pins are not counted as open pins (they are not issues)
+//   and never trigger "sheet revised" notices.
 // - Every sheet change matches the row's `version` (compare-and-set); revisions are never
 //   overwritten, nothing is deleted.
 // Never returns or logs a token; download links only go to people who may open the sheet.
@@ -693,6 +702,10 @@ const RFI_FIELDS =
 const PREF_FIELDS = "ItemId userId emailEnabled";
 const PUNCH_FIELDS = "ItemId number title status isVoided dueDate assigneeCompanyId assigneeCompanyName ballInCourtUserId ballInCourtName createdByUserId";
 const PUNCH_ACTIVE = ["open", "inProgress", "readyForReview"];
+const PHOTO_FIELDS =
+  "ItemId thumbFileId previewFileId fileName caption takenAt uploadedAt uploadedByUserId uploadedByName uploaderCompanyId " +
+  "linkedRecordType linkedRecordId linkedRecordNumber isVoided";
+const LOG_FIELDS = "ItemId logDate status duplicateOf";
 
 // ---------- small helpers ----------
 const text = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -813,6 +826,31 @@ async function loadPunch(db, c) {
   return rows;
 }
 const punchPinnable = (i, c) => i && !i.isVoided && PUNCH_ACTIVE.includes(i.status) && i.number && canSeePunch(i, c);
+
+// ---------- daily log photos the caller can see (same rules as functions/photos seesLogPhoto) ----------
+function canSeeLogPhoto(ph, c) {
+  if (!ph || ph.isVoided || ph.linkedRecordType !== "dailyLog") return false;
+  const log = c.logById?.get(ph.linkedRecordId);
+  if (!log) return false;
+  if (projectCan(c.role, "daily_log.view") || projectCan(c.role, "daily_log.create")) return true;
+  if (projectCan(c.role, "daily_log.crew_own")) return Boolean(ph.uploaderCompanyId) && ph.uploaderCompanyId === c.mine.companyId;
+  if (projectCan(c.role, "daily_log.view_submitted")) return log.status === "submitted";
+  return false;
+}
+async function loadLogPhotos(db, c) {
+  if (c.photoById) return;
+  const [photos, logs] = await Promise.all([
+    db.list("Photo", PHOTO_FIELDS, c.me.tenantRole, { projectId: c.projectId, linkedRecordType: "dailyLog" }).catch(() => []),
+    db.list("DailyLog", LOG_FIELDS, c.me.tenantRole, { projectId: c.projectId }).catch(() => [])
+  ]);
+  c.photoById = new Map(photos.map((p) => [p.ItemId, p]));
+  c.logById = new Map(logs.filter((l) => !l.duplicateOf).map((l) => [l.ItemId, l]));
+}
+const shortDay = (iso) => (isDay(iso) ? new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) : "");
+/** How a pin's record is named in history lines: "RFI-002", or "a photo (log 26 Nov)". */
+const pinLabel = (p) => (p.linkedRecordType === "photo" ? `a photo (log ${shortDay(p.linkedRecordNumber)})` : p.linkedRecordNumber);
+/** The log a photo pin belongs to, for the log's own history. */
+const photoLogOf = (p, c) => c.logById?.get(c.photoById?.get(p.linkedRecordId)?.linkedRecordId);
 // The pin that shows an item on the current revision of its sheet (at most one per item).
 const livePin = (p) => !p.isVoided && !Number(p.toRevisionIndex);
 
@@ -850,6 +888,7 @@ async function linksFor(db, fileIds) {
 function pinView(p, c) {
   if (p.isVoided) return null;
   if (p.linkedRecordType === "punchItem") return punchPinView(p, c);
+  if (p.linkedRecordType === "photo") return photoPinView(p, c);
   if (p.linkedRecordType !== "rfi") return null;
   const r = c.rfiById.get(p.linkedRecordId);
   if (!r || r.isVoided || r.status === "void") return null;
@@ -906,6 +945,49 @@ function punchPinView(p, c) {
     canRemove: !c.archived && (c.manager || (c.pinner && mineToo))
   };
 }
+
+// A photo pin: null (left out, no count) when the caller can't see the photo or the photos weren't loaded.
+function photoPinView(p, c) {
+  const ph = c.photoById?.get(p.linkedRecordId);
+  if (!canSeeLogPhoto(ph, c)) return null;
+  const log = c.logById.get(ph.linkedRecordId);
+  const mineToo = p.createdByUserId === c.me.userId;
+  return {
+    ItemId: p.ItemId,
+    sheetId: p.sheetId,
+    x: Number(p.x),
+    y: Number(p.y),
+    fromRevisionIndex: Number(p.fromRevisionIndex ?? 1),
+    toRevisionIndex: Number(p.toRevisionIndex ?? 0),
+    version: Number(p.version ?? 0),
+    type: "photo",
+    recordId: ph.ItemId,
+    number: "",
+    title: ph.caption || ph.fileName || "",
+    logId: log.ItemId,
+    logDate: log.logDate,
+    takenAt: ph.takenAt || ph.uploadedAt,
+    takenByName: ph.uploadedByName ?? "",
+    closed: false,
+    createdByName: p.createdByName ?? "",
+    createdAt: p.createdAt,
+    canMove: !c.archived && (c.manager || (c.pinner && mineToo)),
+    canRemove: !c.archived && (c.manager || (c.pinner && mineToo))
+  };
+}
+// Thumbnail and preview links for the photo pins in a list of pin views (changed in place).
+async function photoLinks(db, c, views) {
+  const ph = views.filter((v) => v.type === "photo").map((v) => c.photoById.get(v.recordId)).filter(Boolean);
+  if (!ph.length) return;
+  const urls = await linksFor(db, ph.flatMap((x) => [x.thumbFileId, x.previewFileId]));
+  for (const v of views) {
+    if (v.type !== "photo") continue;
+    const x = c.photoById.get(v.recordId);
+    if (urls[x?.thumbFileId]) v.thumbUrl = urls[x.thumbFileId];
+    if (urls[x?.previewFileId]) v.previewUrl = urls[x.previewFileId];
+  }
+}
+const isIssue = (p) => p.linkedRecordType !== "photo";
 
 function pinsFor(pins, c) {
   const shown = [];
@@ -992,7 +1074,7 @@ async function list(db, me, args) {
   const links = await linksFor(db, revisions.filter((r) => curIds.has(r.ItemId)).map((r) => r.thumbFileId));
   const rows = live.map((s) => {
     const cur = Number(s.currentRevisionIndex ?? 0);
-    const { shown, hidden } = pinsFor((pinsBy.get(s.ItemId) ?? []).filter((p) => Number(p.fromRevisionIndex) <= cur && (!Number(p.toRevisionIndex) || Number(p.toRevisionIndex) >= cur)), c);
+    const { shown, hidden } = pinsFor((pinsBy.get(s.ItemId) ?? []).filter((p) => isIssue(p) && Number(p.fromRevisionIndex) <= cur && (!Number(p.toRevisionIndex) || Number(p.toRevisionIndex) >= cur)), c);
     return presentSheet(s, c, revsBy.get(s.ItemId) ?? [], { open: shown.filter((p) => !p.closed).length, total: shown.length, hidden }, links);
   });
   return {
@@ -1027,14 +1109,16 @@ async function sheetDetail(db, c, sheetId) {
     loadPins(db, c, { sheetId: s.ItemId }),
     loadPins(db, c, { linkedRecordType: "punchItem" }),
     loadRfis(db, c),
-    loadPunch(db, c)
+    loadPunch(db, c),
+    loadLogPhotos(db, c)
   ]);
   const pinnedPunch = new Set(punchPins.filter(livePin).map((p) => p.linkedRecordId));
   const visibleRevs = revisions.filter((r) => !r.isVoided || c.manager).sort((a, b) => b.revisionIndex - a.revisionIndex);
   const urls = await linksFor(db, visibleRevs.filter((r) => !r.isVoided).flatMap((r) => [r.fileId, r.thumbFileId]));
   const { shown, hidden } = pinsFor(pins, c);
+  await photoLinks(db, c, shown);
   const cur = Number(s.currentRevisionIndex ?? 0);
-  const live = (p) => p.fromRevisionIndex <= cur && (!p.toRevisionIndex || p.toRevisionIndex >= cur);
+  const live = (p) => p.type !== "photo" && p.fromRevisionIndex <= cur && (!p.toRevisionIndex || p.toRevisionIndex >= cur);
   return {
     ok: true,
     role: c.role,
@@ -1476,7 +1560,7 @@ function point(v) {
 async function loadPin(db, c, pinId) {
   const [p] = await loadPins(db, c, { ItemId: String(pinId ?? "") });
   if (!p || p.isVoided) throw new Refused("NOT_FOUND", "This pin doesn't exist any more.");
-  await Promise.all([loadRfis(db, c), loadPunch(db, c)]);
+  await Promise.all([loadRfis(db, c), loadPunch(db, c), p.linkedRecordType === "photo" ? loadLogPhotos(db, c) : null]);
   const v = pinView(p, c);
   if (!v || v === "hidden") throw new Refused("NOT_FOUND", "This pin doesn't exist any more.");
   return { p, v };
@@ -1495,7 +1579,8 @@ async function pin(db, me, args) {
   if (s.isVoided) throw new Refused("NOT_FOUND", "This sheet was removed.");
   onCurrent(s, args.revisionIndex);
   if (args.recordType === "punchItem") return pinPunch(db, me, c, s, args);
-  if (args.recordType !== "rfi") throw new Refused("BAD_LINK", "A pin links to an RFI or a punch item.");
+  if (args.recordType === "photo") return pinPhoto(db, me, c, s, args);
+  if (args.recordType !== "rfi") throw new Refused("BAD_LINK", "A pin links to an RFI, a punch item or a daily log photo.");
   await loadRfis(db, c);
   const r = c.rfiById.get(String(args.recordId ?? ""));
   if (!pinnable(r, c)) throw new Refused("NOT_FOUND", "That RFI doesn't exist, or you can't open it.");
@@ -1567,6 +1652,66 @@ async function pinPunch(db, me, c, s, args) {
   return { ok: true, pin: pinView({ ...row, ItemId: itemId }, c) };
 }
 
+// Pins a daily log photo where it was taken (one live pin per photo; also on a submitted log).
+async function pinPhoto(db, me, c, s, args) {
+  await loadLogPhotos(db, c);
+  const ph = c.photoById.get(String(args.recordId ?? ""));
+  if (!canSeeLogPhoto(ph, c)) throw new Refused("NOT_FOUND", "That photo doesn't exist, isn't on a daily log, or you can't open it.");
+  const log = c.logById.get(ph.linkedRecordId);
+  const x = point(args.x);
+  const y = point(args.y);
+  const already = (await loadPins(db, c, { linkedRecordId: ph.ItemId })).find((p) => p.linkedRecordType === "photo" && livePin(p));
+  if (already) {
+    const [where] = await loadSheets(db, c, { ItemId: already.sheetId });
+    throw new Refused("ALREADY_PINNED", `This photo is already pinned${where ? ` on ${where.sheetNumber}` : ""}. Move that pin instead.`);
+  }
+  const row = {
+    tenantRole: me.tenantRole,
+    projectId: c.projectId,
+    sheetId: s.ItemId,
+    fromRevisionIndex: Number(s.currentRevisionIndex),
+    toRevisionIndex: 0,
+    version: 0,
+    x,
+    y,
+    linkedRecordType: "photo",
+    linkedRecordId: ph.ItemId,
+    linkedRecordNumber: log.logDate,
+    createdByUserId: me.userId,
+    createdByCompanyId: c.mine.companyId ?? "",
+    createdByName: actorName(c),
+    createdAt: new Date().toISOString(),
+    isVoided: false,
+    lastChange: { kind: "created", nonce: crypto.randomUUID(), actorUserId: me.userId }
+  };
+  const itemId = await db.insert("Pin", row);
+  await Promise.all([
+    history(db, c, "sheet", s.ItemId, s.sheetNumber, "pinned", `${actorName(c)} pinned ${pinLabel(row)} on ${s.sheetNumber} rev ${s.currentRevisionLabel}`),
+    history(db, c, "dailyLog", log.ItemId, log.logDate, "photoPinned", `${actorName(c)} pinned a photo on ${s.sheetNumber}`)
+  ]);
+  const pin = pinView({ ...row, ItemId: itemId }, c);
+  await photoLinks(db, c, [pin]);
+  return { ok: true, pin };
+}
+
+// Where each of these photos is pinned now (the live pin on its sheet), for "Pinned on A-101".
+// Only photos the caller can see; removed sheets and pins are left out.
+async function photoPins(db, me, args) {
+  const c = await projectContext(db, me, args.projectId);
+  const ids = Array.isArray(args.photoIds) ? [...new Set(args.photoIds.map(String))].slice(0, LINKS_PER_CALL) : [];
+  if (!ids.length) return { ok: true, pins: {} };
+  const wanted = new Set(ids);
+  const [pins, sheets] = await Promise.all([loadPins(db, c, { linkedRecordType: "photo" }), loadSheets(db, c), loadLogPhotos(db, c)]);
+  const sheetById = new Map(sheets.filter((s) => !s.isVoided).map((s) => [s.ItemId, s]));
+  const out = {};
+  for (const p of pins) {
+    if (!wanted.has(p.linkedRecordId) || !livePin(p) || !sheetById.has(p.sheetId)) continue;
+    if (!canSeeLogPhoto(c.photoById.get(p.linkedRecordId), c)) continue;
+    out[p.linkedRecordId] = { pinId: p.ItemId, sheetId: p.sheetId, sheetNumber: sheetById.get(p.sheetId).sheetNumber };
+  }
+  return { ok: true, pins: out };
+}
+
 // The punch item's own history (the punch Function shows it in the item panel).
 function punchHistory(db, c, itemId, number, action, summary) {
   return history(db, c, "punchItem", itemId, number, action, summary);
@@ -1615,9 +1760,13 @@ async function movePin(db, me, args) {
     if (n !== 1) throw new Refused("STATE_CHANGED", "Someone else just moved this pin. The sheet has been reloaded.");
     saved = { ...p, x, y, version: Number(p.version ?? 0) + 1 };
   }
-  await history(db, c, "sheet", s.ItemId, s.sheetNumber, "pinMoved", `${actorName(c)} moved the pin of ${p.linkedRecordNumber} on ${s.sheetNumber}`);
+  await history(db, c, "sheet", s.ItemId, s.sheetNumber, "pinMoved", `${actorName(c)} moved the pin of ${pinLabel(p)} on ${s.sheetNumber}`);
   if (p.linkedRecordType === "punchItem") await punchHistory(db, c, p.linkedRecordId, p.linkedRecordNumber, "pinMoved", `${actorName(c)} moved its pin on ${s.sheetNumber}`);
-  return { ok: true, pin: pinView(saved, c), replacedPinId: saved.ItemId !== p.ItemId ? p.ItemId : undefined };
+  const log = p.linkedRecordType === "photo" ? photoLogOf(p, c) : null;
+  if (log) await history(db, c, "dailyLog", log.ItemId, log.logDate, "photoPinMoved", `${actorName(c)} moved a photo's pin on ${s.sheetNumber}`);
+  const view = pinView(saved, c);
+  await photoLinks(db, c, [view]);
+  return { ok: true, pin: view, replacedPinId: saved.ItemId !== p.ItemId ? p.ItemId : undefined };
 }
 
 async function removePin(db, me, args) {
@@ -1633,8 +1782,10 @@ async function removePin(db, me, args) {
     lastChange: { kind: "removed", nonce: crypto.randomUUID(), actorUserId: me.userId }
   });
   if (n !== 1) throw new Refused("STATE_CHANGED", "Someone else just changed this pin. The sheet has been reloaded.");
-  await history(db, c, "sheet", s.ItemId, s.sheetNumber, "unpinned", `${actorName(c)} removed the pin of ${p.linkedRecordNumber} from ${s.sheetNumber}`);
+  await history(db, c, "sheet", s.ItemId, s.sheetNumber, "unpinned", `${actorName(c)} removed the pin of ${pinLabel(p)} from ${s.sheetNumber}`);
   if (p.linkedRecordType === "punchItem") await punchHistory(db, c, p.linkedRecordId, p.linkedRecordNumber, "unpinned", `${actorName(c)} removed its pin from ${s.sheetNumber}`);
+  const log = p.linkedRecordType === "photo" ? photoLogOf(p, c) : null;
+  if (log) await history(db, c, "dailyLog", log.ItemId, log.logDate, "photoUnpinned", `${actorName(c)} removed a photo's pin from ${s.sheetNumber}`);
   return { ok: true, pinId: p.ItemId };
 }
 
@@ -1649,6 +1800,7 @@ export default async function handler(input, ctx) {
     voidRevision: (args, { db, me }) => voidRevision(db, me, args),
     pin: (args, { db, me }) => pin(db, me, args),
     movePin: (args, { db, me }) => movePin(db, me, args),
-    removePin: (args, { db, me }) => removePin(db, me, args)
+    removePin: (args, { db, me }) => removePin(db, me, args),
+    photoPins: (args, { db, me }) => photoPins(db, me, args)
   });
 }

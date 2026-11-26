@@ -6,12 +6,12 @@
 // shown here follow its answer (can.upload, can.manage, photo.canEdit, photo.canRemove).
 // Deep link: /photos/<photoId> opens the lightbox.
 // Punch items link their before and after photos here (the punch page uploads them). Not real yet:
-// sheet pins (Drawings step), links to daily logs (their step),
+// sheet pins for photos not on a daily log (a log photo is pinned with "Pin on a drawing"),
 // linking an existing photo to another record (R2), download as a zip (R2), Draft RFI from a
 // photo (R3), uploads that continue after the app is closed (R2, PWA).
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Camera, ChevronLeft, ChevronRight, CloudUpload, Download, Image as ImageIcon, ImagePlus, Link2, Loader2, RotateCcw, Sparkles,
+  Camera, ChevronLeft, ChevronRight, CloudUpload, Download, Image as ImageIcon, ImagePlus, Link2, Loader2, MapPin, RotateCcw, Sparkles,
   Tag, Trash, Undo2, WifiOff, X
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -27,6 +27,9 @@ import { useProjects } from "../projects/projectsApi";
 import { fmtDate, fmtShortDate } from "../projects/ProjectsPage";
 import { fileSize } from "../files/files";
 import { saveUrlAs } from "../files/FileViewer";
+import { projectCan } from "../../lib/permissions";
+import { usePhotoPins } from "../drawings/drawingsApi";
+import { PinPhotoDialog, PinnedChip } from "../drawings/PhotoPin";
 import {
   clearFinishedPhotos, dropPhoto, enqueuePhotos, mergePhotos, originalLink, photoLinks, photoRefusal, retryAllPhotos, retryPhoto,
   useMergeQueued, usePhotoAction, usePhotoQueue, usePhotos
@@ -285,7 +288,7 @@ function PhotosView({ projectId, openId, onNavigate, toast, t }: { projectId: st
         <Select value={loc} onChange={setLoc} options={locations} placeholder={t("photo.allLocations")} />
         <Select value={tag} onChange={setTag} options={allTags.map((x) => ({ value: x, label: `#${x}` }))} placeholder={t("photo.allTags")} />
         <Select value={author} onChange={setAuthor} options={authors} placeholder={t("photo.allAuthors")} />
-        <Select value={linkKind} onChange={setLinkKind} options={[{ value: "rfi", label: t("photo.linkedRfi") }, { value: "punchItem", label: t("photo.linkedPunch") }, { value: "dailyLog", label: t("photo.linkedLog") }, { value: "none", label: t("photo.notLinked") }]} placeholder={t("photo.anyRecord")} />
+        <Select value={linkKind} onChange={setLinkKind} options={[{ value: "rfi", label: t("photo.linkedRfi") }, { value: "punchItem", label: t("photo.linkedPunch") }, ...(base.role === "design-reviewer" ? [] : [{ value: "dailyLog", label: t("photo.linkedLog") }]), { value: "none", label: t("photo.notLinked") }]} placeholder={t("photo.anyRecord")} />
       </div>
       <div className="m-toolbar">
         <Segmented value={mode} onChange={setMode} options={[{ key: "timeline", label: t("photo.mode.timeline") }, { key: "albums", label: t("photo.mode.albums") }, { key: "location", label: t("photo.mode.location") }]} />
@@ -376,6 +379,7 @@ function PhotosView({ projectId, openId, onNavigate, toast, t }: { projectId: st
           index={lightIdx}
           total={filtered.length}
           myCompanyId={base.companyId}
+          canPin={projectCan(base.role, "drawing.pin") && !base.archived}
           allTags={allTags}
           t={t}
           toast={toast}
@@ -449,13 +453,15 @@ function QueuePanel({ items, offline, t }: { items: QueueItem[]; offline: boolea
   );
 }
 
-function Lightbox({ projectId, photo, previewUrl, index, total, myCompanyId, allTags, t, toast, onNavigate, onPrev, onNext, onClose, onChanged }: {
+function Lightbox({ projectId, photo, previewUrl, index, total, myCompanyId, canPin, allTags, t, toast, onNavigate, onPrev, onNext, onClose, onChanged }: {
   projectId: string;
   photo: Photo;
   previewUrl?: string;
   index: number;
   total: number;
   myCompanyId: string;
+  /** May place pins on drawings (a daily log photo can be pinned where it was taken). */
+  canPin: boolean;
   allTags: string[];
   t: T;
   toast: Toast;
@@ -466,6 +472,10 @@ function Lightbox({ projectId, photo, previewUrl, index, total, myCompanyId, all
   onChanged: (p: Photo) => void;
 }) {
   const action = usePhotoAction(projectId);
+  const logPhoto = photo.link?.type === "dailyLog" && !photo.removed;
+  const pins = usePhotoPins(projectId, logPhoto ? [photo.ItemId] : []);
+  const place = pins.data?.[photo.ItemId];
+  const [pinning, setPinning] = useState(false);
   const [newTag, setNewTag] = useState("");
   const [caption, setCaption] = useState(photo.caption);
   const [location, setLocation] = useState(photo.locationLabel);
@@ -539,7 +549,7 @@ function Lightbox({ projectId, photo, previewUrl, index, total, myCompanyId, all
   return (
     <Dialog
       title={<span className="m-pho-light-title">{titleOf(photo)} <span className="m-muted m-small">{index >= 0 ? `${index + 1} / ${total}` : ""}</span></span>}
-      onClose={onClose}
+      onClose={pinning ? () => setPinning(false) : onClose}
       size="xl"
     >
       <div className="m-pho-light">
@@ -573,7 +583,11 @@ function Lightbox({ projectId, photo, previewUrl, index, total, myCompanyId, all
                 {photo.link.number} · {photo.link.label}{photo.link.role === "before" || photo.link.role === "after" ? ` · ${t(photo.link.role === "before" ? "photo.roleBefore" : "photo.roleAfter")}` : ""}
               </button>
             ) : <span className="m-muted">{t("photo.notLinked")}</span>],
-            [t("photo.sheet"), <span className="m-muted">{t("photo.sheetLater")}</span>],
+            [t("photo.sheet"), !logPhoto ? <span className="m-muted">{t("photo.sheetLogOnly")}</span>
+              : place ? <PinnedChip place={place} onNavigate={onNavigate} t={t} />
+              : !pins.data ? <span className="m-muted">{t("common.loading")}</span>
+              : canPin ? <button type="button" className="m-link m-pin-chip" onClick={() => setPinning(true)}><MapPin size={13} /> {t("drw.photo.pinOnDrawing")}</button>
+              : <span className="m-muted">{t("drw.photo.notPinned")}</span>],
             [t("photo.file"), <span className="m-small">{photo.fileName} · {fileSize(photo.sizeBytes)}{dims}</span>]
           ]} />
           <hr className="m-sep" />
@@ -627,6 +641,7 @@ function Lightbox({ projectId, photo, previewUrl, index, total, myCompanyId, all
           )}
         </div>
       </div>
+      {pinning ? <PinPhotoDialog projectId={projectId} photoId={photo.ItemId} onNavigate={onNavigate} onClose={() => setPinning(false)} t={t} /> : null}
     </Dialog>
   );
 }
