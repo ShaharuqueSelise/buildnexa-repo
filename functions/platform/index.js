@@ -75,10 +75,19 @@ function client(ctx, token) {
     }
     return json;
   }
+  // An error is `uncertain` when the write may still have happened: no answer at all, or a 5xx.
+  // A 4xx or a GraphQL error means the gateway refused it (giveBackNumber relies on this).
   async function gql(query, variables) {
-    const res = await fetch(`${API}/data/v4/gateway`, { method: "POST", headers, body: JSON.stringify({ query, variables }) });
+    const res = await fetch(`${API}/data/v4/gateway`, { method: "POST", headers, body: JSON.stringify({ query, variables }) }).catch((error) => {
+      error.uncertain = true;
+      throw error;
+    });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok || body.errors?.length) throw new Error(`gateway ${res.status}: ${JSON.stringify(body.errors?.map((e) => e.message) ?? body).slice(0, 200)}`);
+    if (!res.ok || body.errors?.length) {
+      const error = new Error(`gateway ${res.status}: ${JSON.stringify(body.errors?.map((e) => e.message) ?? body).slice(0, 200)}`);
+      error.uncertain = res.status >= 500;
+      throw error;
+    }
     return body.data;
   }
   // Every company's rows: only for platform work (counts per company), never sent to a company.
@@ -380,10 +389,28 @@ function sequenceRow(me, projectId, key) {
   return { tenantRole: me.tenantRole, projectId, key, prefix: def.prefix, padWidth: 3, targetSchema: def.targetSchema, lastValue: 0 };
 }
 
+// Has the record that claimed number `n` (with claim ref `ref`) been written with it? The ref is the
+// record's clientRequestId (create) or its ItemId (RFI submit). Only text filters: a number filter
+// on the gateway is unproven, and a list of all records stops at 1000.
+async function numberWritten(db, me, projectId, def, ref, n) {
+  const [byRequest, byId] = await Promise.all([
+    db.list(def.targetSchema, "ItemId seq", me.tenantRole, { projectId, clientRequestId: ref }),
+    db.list(def.targetSchema, "ItemId seq", me.tenantRole, { projectId, ItemId: ref })
+  ]);
+  return [...byRequest, ...byId].some((r) => Number(r.seq) === n);
+}
+
+// A claim older than this can no longer be written: every Buildnexa Function stops after 45 s
+// (timeoutSeconds in its settings; docs/architecture/13 §4.1 said 35 s for the old 30 s limit).
+// Raise this if a Function's timeout is raised.
+const STALE_CLAIM_MS = 60_000;
+
 // Next number for `key` in one project. A project created before numbering existed gets its
 // counter on first use (two first callers at once can each create one; everyone then uses the
 // same one, sorted by id, and the others stay unused).
-// Self-heal of numbers whose record was never written comes with the first numbered record.
+// Repair (docs/architecture/13 §4.1): when the last number was claimed over 60 s ago and its record
+// was never written (the Function crashed or timed out), the next caller gets that number again.
+// Gaps lower down are not repaired: a newer number already exists above them.
 async function allocateNumber(db, me, projectId, key, claimRef) {
   const def = SEQUENCES[key];
   if (!def) throw new Error(`unknown sequence ${key}`);
@@ -399,16 +426,48 @@ async function allocateNumber(db, me, projectId, key, claimRef) {
       continue;
     }
     const last = Number(seq.lastValue ?? 0);
+    const numbered = (n) => ({ seq: n, number: formatNumber(seq.prefix || def.prefix, n, seq.padWidth || 3), claimRef: ref, sequenceId: seq.ItemId });
+    const claimedAt = Date.parse(seq.claimedAt ?? "");
+    if (last > 0 && seq.claimRef && claimedAt && Date.now() - claimedAt > STALE_CLAIM_MS && !(await numberWritten(db, me, projectId, def, seq.claimRef, last))) {
+      // Take the stale claim over; only one caller can, because the old claim ref must still be there.
+      const healed = await db.updateWhere("Sequence", { ItemId: { eq: seq.ItemId }, lastValue: { eq: last }, claimRef: { eq: seq.claimRef } }, me.tenantRole, {
+        claimRef: ref,
+        claimedAt: new Date().toISOString()
+      });
+      if (healed === 1) return numbered(last);
+      continue; // someone else moved the counter: read it again
+    }
     const n = last + 1;
     const won = await db.updateWhere("Sequence", { ItemId: { eq: seq.ItemId }, lastValue: { eq: last } }, me.tenantRole, {
       lastValue: n,
       claimRef: ref,
       claimedAt: new Date().toISOString()
     });
-    if (won === 1) return { seq: n, number: formatNumber(seq.prefix || def.prefix, n, seq.padWidth || 3), claimRef: ref };
+    if (won === 1) return numbered(n);
     await pause(attempt * 40 + Math.floor(Math.random() * 80));
   }
   throw new Refused("SEQUENCE_CONTENDED", "Too many people are creating records right now. Please try again.");
+}
+
+// The record that took number `n` failed to save: hand the number back so the next one gets it,
+// then rethrow `error`. Only when the gateway refused the write (not when it may have happened),
+// no record holds the number, and nobody took a newer one since. The claim ref is cleared, so the
+// repair in allocateNumber leaves the counter alone afterwards. `n` may be undefined (no number).
+async function giveBackNumber(db, me, projectId, key, n, error) {
+  if (n && !error?.uncertain) {
+    try {
+      if (!(await numberWritten(db, me, projectId, SEQUENCES[key], n.claimRef, n.seq))) {
+        await db.updateWhere("Sequence", { ItemId: { eq: n.sequenceId }, lastValue: { eq: n.seq }, claimRef: { eq: n.claimRef } }, me.tenantRole, {
+          lastValue: n.seq - 1,
+          claimRef: "",
+          claimedAt: new Date().toISOString()
+        });
+      }
+    } catch {
+      // The save error is what the caller needs to see; a number left taken is repaired later.
+    }
+  }
+  throw error;
 }
 
 // ---------- handler shell ----------
@@ -488,7 +547,7 @@ const PROJECT_PERMISSIONS = {
   // Drawings
   "drawing.view": [PM, SUPT, DC, DESIGN, OWNER],
   "drawing.view_relevant": [SUB],
-  "drawing.pin": [PM, SUPT, SUB],
+  "drawing.pin": [PM, SUPT, DC, SUB], // DC added 2026-11-25 (P8, client agreed)
   "drawing.upload": [PM, DC, DESIGN], // design: revisions of their own discipline
   "drawing.manage_versions": [PM, DC], // supersede, void, register
   // Documents and photos

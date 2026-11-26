@@ -49,7 +49,7 @@ const PROJECT_PERMISSIONS = {
   // Drawings
   "drawing.view": [PM, SUPT, DC, DESIGN, OWNER],
   "drawing.view_relevant": [SUB],
-  "drawing.pin": [PM, SUPT, SUB],
+  "drawing.pin": [PM, SUPT, DC, SUB], // DC added 2026-11-25 (P8, client agreed)
   "drawing.upload": [PM, DC, DESIGN], // design: revisions of their own discipline
   "drawing.manage_versions": [PM, DC], // supersede, void, register
   // Documents and photos

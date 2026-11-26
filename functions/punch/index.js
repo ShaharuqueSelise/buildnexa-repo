@@ -103,10 +103,19 @@ function client(ctx, token) {
     }
     return json;
   }
+  // An error is `uncertain` when the write may still have happened: no answer at all, or a 5xx.
+  // A 4xx or a GraphQL error means the gateway refused it (giveBackNumber relies on this).
   async function gql(query, variables) {
-    const res = await fetch(`${API}/data/v4/gateway`, { method: "POST", headers, body: JSON.stringify({ query, variables }) });
+    const res = await fetch(`${API}/data/v4/gateway`, { method: "POST", headers, body: JSON.stringify({ query, variables }) }).catch((error) => {
+      error.uncertain = true;
+      throw error;
+    });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok || body.errors?.length) throw new Error(`gateway ${res.status}: ${JSON.stringify(body.errors?.map((e) => e.message) ?? body).slice(0, 200)}`);
+    if (!res.ok || body.errors?.length) {
+      const error = new Error(`gateway ${res.status}: ${JSON.stringify(body.errors?.map((e) => e.message) ?? body).slice(0, 200)}`);
+      error.uncertain = res.status >= 500;
+      throw error;
+    }
     return body.data;
   }
   // Every company's rows: only for platform work (counts per company), never sent to a company.
@@ -408,10 +417,28 @@ function sequenceRow(me, projectId, key) {
   return { tenantRole: me.tenantRole, projectId, key, prefix: def.prefix, padWidth: 3, targetSchema: def.targetSchema, lastValue: 0 };
 }
 
+// Has the record that claimed number `n` (with claim ref `ref`) been written with it? The ref is the
+// record's clientRequestId (create) or its ItemId (RFI submit). Only text filters: a number filter
+// on the gateway is unproven, and a list of all records stops at 1000.
+async function numberWritten(db, me, projectId, def, ref, n) {
+  const [byRequest, byId] = await Promise.all([
+    db.list(def.targetSchema, "ItemId seq", me.tenantRole, { projectId, clientRequestId: ref }),
+    db.list(def.targetSchema, "ItemId seq", me.tenantRole, { projectId, ItemId: ref })
+  ]);
+  return [...byRequest, ...byId].some((r) => Number(r.seq) === n);
+}
+
+// A claim older than this can no longer be written: every Buildnexa Function stops after 45 s
+// (timeoutSeconds in its settings; docs/architecture/13 §4.1 said 35 s for the old 30 s limit).
+// Raise this if a Function's timeout is raised.
+const STALE_CLAIM_MS = 60_000;
+
 // Next number for `key` in one project. A project created before numbering existed gets its
 // counter on first use (two first callers at once can each create one; everyone then uses the
 // same one, sorted by id, and the others stay unused).
-// Self-heal of numbers whose record was never written comes with the first numbered record.
+// Repair (docs/architecture/13 §4.1): when the last number was claimed over 60 s ago and its record
+// was never written (the Function crashed or timed out), the next caller gets that number again.
+// Gaps lower down are not repaired: a newer number already exists above them.
 async function allocateNumber(db, me, projectId, key, claimRef) {
   const def = SEQUENCES[key];
   if (!def) throw new Error(`unknown sequence ${key}`);
@@ -427,16 +454,48 @@ async function allocateNumber(db, me, projectId, key, claimRef) {
       continue;
     }
     const last = Number(seq.lastValue ?? 0);
+    const numbered = (n) => ({ seq: n, number: formatNumber(seq.prefix || def.prefix, n, seq.padWidth || 3), claimRef: ref, sequenceId: seq.ItemId });
+    const claimedAt = Date.parse(seq.claimedAt ?? "");
+    if (last > 0 && seq.claimRef && claimedAt && Date.now() - claimedAt > STALE_CLAIM_MS && !(await numberWritten(db, me, projectId, def, seq.claimRef, last))) {
+      // Take the stale claim over; only one caller can, because the old claim ref must still be there.
+      const healed = await db.updateWhere("Sequence", { ItemId: { eq: seq.ItemId }, lastValue: { eq: last }, claimRef: { eq: seq.claimRef } }, me.tenantRole, {
+        claimRef: ref,
+        claimedAt: new Date().toISOString()
+      });
+      if (healed === 1) return numbered(last);
+      continue; // someone else moved the counter: read it again
+    }
     const n = last + 1;
     const won = await db.updateWhere("Sequence", { ItemId: { eq: seq.ItemId }, lastValue: { eq: last } }, me.tenantRole, {
       lastValue: n,
       claimRef: ref,
       claimedAt: new Date().toISOString()
     });
-    if (won === 1) return { seq: n, number: formatNumber(seq.prefix || def.prefix, n, seq.padWidth || 3), claimRef: ref };
+    if (won === 1) return numbered(n);
     await pause(attempt * 40 + Math.floor(Math.random() * 80));
   }
   throw new Refused("SEQUENCE_CONTENDED", "Too many people are creating records right now. Please try again.");
+}
+
+// The record that took number `n` failed to save: hand the number back so the next one gets it,
+// then rethrow `error`. Only when the gateway refused the write (not when it may have happened),
+// no record holds the number, and nobody took a newer one since. The claim ref is cleared, so the
+// repair in allocateNumber leaves the counter alone afterwards. `n` may be undefined (no number).
+async function giveBackNumber(db, me, projectId, key, n, error) {
+  if (n && !error?.uncertain) {
+    try {
+      if (!(await numberWritten(db, me, projectId, SEQUENCES[key], n.claimRef, n.seq))) {
+        await db.updateWhere("Sequence", { ItemId: { eq: n.sequenceId }, lastValue: { eq: n.seq }, claimRef: { eq: n.claimRef } }, me.tenantRole, {
+          lastValue: n.seq - 1,
+          claimRef: "",
+          claimedAt: new Date().toISOString()
+        });
+      }
+    } catch {
+      // The save error is what the caller needs to see; a number left taken is repaired later.
+    }
+  }
+  throw error;
 }
 
 // ---------- handler shell ----------
@@ -516,7 +575,7 @@ const PROJECT_PERMISSIONS = {
   // Drawings
   "drawing.view": [PM, SUPT, DC, DESIGN, OWNER],
   "drawing.view_relevant": [SUB],
-  "drawing.pin": [PM, SUPT, SUB],
+  "drawing.pin": [PM, SUPT, DC, SUB], // DC added 2026-11-25 (P8, client agreed)
   "drawing.upload": [PM, DC, DESIGN], // design: revisions of their own discipline
   "drawing.manage_versions": [PM, DC], // supersede, void, register
   // Documents and photos
@@ -1015,9 +1074,12 @@ async function get(db, me, args) {
 // - marked ready -> the verifier (who holds the ball now): bell + email;
 // - sent back / reopened -> the assigned company's people on the project: bell + email, with the reason;
 // - closed -> the assigned company's people: bell only.
-// New and reassigned items are NOT told here: the 15-minute pass (runNotices) sends one notice per
-// company, so a walkthrough of 20 items is one message, not 20. A bulk change sends one notice per
-// person ("4 punch items were closed"). Emails follow the person's settings (email off = bell only;
+// - new item, or moved to another company -> that company's people on the project: bell + email.
+//   This is the "on save" mode (the default since 25 Nov 2026), because Blocks doesn't let the
+//   15-minute workflow read the service secret (blocks-study E2), so the batch never ran. Set the
+//   Function variable PUNCH_ASSIGNED_NOTICE=batch to go back to the 15-minute pass (runNotices),
+//   which sends one notice per company so a walkthrough of 20 items is one message, not 20.
+// A bulk change sends one notice per person ("4 punch items were closed"). Emails follow the person's settings (email off = bell only;
 // the overdue digest also follows "reminder emails").
 const PREF_FIELDS = "ItemId userId emailEnabled reminderEmails";
 const html = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -1033,7 +1095,8 @@ const MANY = {
   markedReady: "are ready for your check",
   sentBack: "were sent back: new after photos are needed",
   reopened: "were reopened: new after photos are needed",
-  closed: "were closed"
+  closed: "were closed",
+  assigned: "were assigned to your company"
 };
 const itemLink = (projectId, item) => `/punch/${item.ItemId}?project=${projectId}`;
 const listLink = (projectId, extra = "") => `/punch?project=${projectId}${extra}`;
@@ -1067,6 +1130,16 @@ function noticeFor(c, item, event, extra = {}) {
     };
   }
   if (event === "closed") return { kind: "closed", to: companyPeople(c, item), title: `${item.number} was closed`, body: `${head} · closed by ${actor(c)}`, email: false };
+  if (event === "assigned") {
+    const company = item.assigneeCompanyName || "your company";
+    return {
+      kind: "assigned",
+      to: companyPeople(c, item),
+      title: `New punch item ${item.number} for ${company}`,
+      body: `${head}${item.dueDate ? ` · due ${shortDate(item.dueDate)}` : ""} · from ${actor(c)}`,
+      email: true
+    };
+  }
   return null;
 }
 
@@ -1211,8 +1284,9 @@ async function placePin(db, c, { sheet, x, y }, item) {
   });
 }
 
-async function create(db, me, args) {
+async function create(db, me, args, mode = {}) {
   const c = await projectContext(db, me, args.projectId, { write: true });
+  c.assignedOnSave = mode.assignedOnSave === true;
   if (!c.creator) throw new Refused("NOT_ALLOWED", "Only the superintendent and the project manager create punch items.");
   const clientRequestId = text(args.clientRequestId, 64);
   if (!clientRequestId) throw new Refused("BAD_REQUEST", "Missing request id. Reload the page and try again.");
@@ -1252,14 +1326,15 @@ async function create(db, me, args) {
     photoExpected: withPhoto,
     sheetId: pinAt?.sheet.ItemId ?? "",
     pinId: "",
-    notifyPending: true,
-    notifyPendingSince: now,
+    notifyPending: !c.assignedOnSave,
+    ...(c.assignedOnSave ? {} : { notifyPendingSince: now }), // a DateTime: never ""
     isVoided: false
   };
   Object.assign(row, assigneeBall(c, row));
   row.searchText = searchTextOf(row);
   row.lastChange = { kind: "created", nonce: crypto.randomUUID(), fromStatus: "", toStatus: "open", previousBallUserId: "", actorUserId: me.userId, reason: "" };
-  const itemId = await db.insert("PunchItem", row);
+  // A failed save hands its number back, so the next try gets the same one (no gap).
+  const itemId = await db.insert("PunchItem", row).catch((error) => giveBackNumber(db, me, c.projectId, "punchItem", n, error));
   let saved = { ...row, ItemId: itemId };
   if (pinAt) {
     const pinId = await placePin(db, c, pinAt, saved);
@@ -1267,7 +1342,9 @@ async function create(db, me, args) {
   }
   const where = pinAt ? ` on ${pinAt.sheet.sheetNumber}` : row.location ? ` at ${row.location}` : "";
   await history(db, c, saved, "created", `${actor(c)} created ${row.number}${where} for ${row.assigneeCompanyName}, due ${row.dueDate}`, { toStatus: "open" });
-  return { ...(await detail(db, c, saved)), created: true };
+  if (!c.assignedOnSave) return { ...(await detail(db, c, saved)), created: true };
+  const [d, notified] = await Promise.all([detail(db, c, saved), tellPunch(db, c, [{ item: saved, event: "assigned" }])]);
+  return { ...d, created: true, notified };
 }
 
 async function edit(db, me, args) {
@@ -1365,7 +1442,7 @@ async function applyChange(db, c, item, op, args, photos) {
       const companyChanged = who.assigneeCompanyId !== item.assigneeCompanyId;
       const next = { ...item, ...who };
       const patch = { ...who, ...(s === "readyForReview" ? {} : assigneeBall(c, next)) };
-      if (companyChanged) Object.assign(patch, { notifyPending: true, notifyPendingSince: now, ...(tradeOfCompany ? { trade: tradeOfCompany } : {}) });
+      if (companyChanged) Object.assign(patch, { ...(c.assignedOnSave ? {} : { notifyPending: true, notifyPendingSince: now }), ...(tradeOfCompany ? { trade: tradeOfCompany } : {}) });
       const before = `${item.assigneeCompanyName}${item.assigneeName ? ` (${item.assigneeName})` : ""}`;
       const after = `${who.assigneeCompanyName}${who.assigneeName ? ` (${who.assigneeName})` : ""}`;
       const saved = await save(db, c, item, patch, "reassigned", { before, after });
@@ -1387,15 +1464,23 @@ async function applyChange(db, c, item, op, args, photos) {
 }
 
 // One item, one change: start, markReady, close, sendBack, reopen, void, reassign.
+// The event a saved change tells about: the status events, and (on-save mode) a move to another company.
+function eventOf(c, op, item, saved) {
+  if (saved === item) return undefined;
+  if (op === "reassign") return c.assignedOnSave && saved.assigneeCompanyId !== item.assigneeCompanyId ? "assigned" : undefined;
+  return OP_EVENT[op];
+}
+
 function change(op) {
-  return async (db, me, raw) => {
+  return async (db, me, raw, mode = {}) => {
     // `assignment` and `dueDateChecked` are filled in by bulk() after its own checks, never by a caller.
     const { assignment: _a, dueDateChecked: _d, ...args } = raw;
     const c = await projectContext(db, me, args.projectId, { write: true });
+    c.assignedOnSave = mode.assignedOnSave === true;
     const item = await loadItem(db, c, args.itemId);
     const photos = photoSummary(item, photosByItem(await loadPhotos(db, c, item.ItemId)).get(item.ItemId));
     const saved = await applyChange(db, c, item, op, args, photos);
-    const event = saved !== item ? OP_EVENT[op] : undefined;
+    const event = eventOf(c, op, item, saved);
     if (!event) return detail(db, c, saved);
     const [d, notified] = await Promise.all([detail(db, c, saved), tellPunch(db, c, [{ item: saved, event, extra: { reason: saved.lastRejectReason } }])]);
     return { ...d, notified };
@@ -1437,8 +1522,9 @@ async function inBatches(list, size, fn) {
   return out;
 }
 
-async function bulk(db, me, args) {
+async function bulk(db, me, args, mode = {}) {
   const c = await projectContext(db, me, args.projectId, { write: true });
+  c.assignedOnSave = mode.assignedOnSave === true;
   if (!c.assigner) throw new Refused("NOT_ALLOWED", "Only the superintendent and the project manager change several items at once.");
   const op = String(args.op ?? "");
   if (!BULK_OPS.includes(op)) throw new Refused("BAD_ACTION", "Choose what to change.");
@@ -1465,7 +1551,8 @@ async function bulk(db, me, args) {
     }
     try {
       const saved = await applyChange(db, c, item, op, extra, photoSummary(item, byItem.get(id)));
-      if (saved !== item && OP_EVENT[op]) events.push({ item: saved, event: OP_EVENT[op] });
+      const event = eventOf(c, op, item, saved);
+      if (event) events.push({ item: saved, event });
       updated.push(id);
     } catch (error) {
       if (!(error instanceof Refused)) throw error;
@@ -1658,19 +1745,21 @@ export default async function handler(input, ctx) {
   const by = ctx.run?.invokedBy?.type;
   if (by === "workflow") return runNotices(ctx);
   if (by === "test" && input?.action === "notices") return runNotices(ctx, { dryRun: input.dryRun === true, anyTime: input.anyTime === true });
+  // New and moved items: told on save unless the Function variable PUNCH_ASSIGNED_NOTICE is "batch".
+  const mode = { assignedOnSave: String(ctx.env?.PUNCH_ASSIGNED_NOTICE ?? "").trim().toLowerCase() !== "batch" };
   return handle(input, ctx, "punch", {
     list: (args, { db, me }) => list(db, me, args),
     get: (args, { db, me }) => get(db, me, args),
-    create: (args, { db, me }) => create(db, me, args),
+    create: (args, { db, me }) => create(db, me, args, mode),
     edit: (args, { db, me }) => edit(db, me, args),
-    reassign: (args, { db, me }) => change("reassign")(db, me, args),
-    start: (args, { db, me }) => change("start")(db, me, args),
-    markReady: (args, { db, me }) => change("markReady")(db, me, args),
-    close: (args, { db, me }) => change("close")(db, me, args),
-    sendBack: (args, { db, me }) => change("sendBack")(db, me, args),
-    reopen: (args, { db, me }) => change("reopen")(db, me, args),
-    void: (args, { db, me }) => change("void")(db, me, args),
+    reassign: (args, { db, me }) => change("reassign")(db, me, args, mode),
+    start: (args, { db, me }) => change("start")(db, me, args, mode),
+    markReady: (args, { db, me }) => change("markReady")(db, me, args, mode),
+    close: (args, { db, me }) => change("close")(db, me, args, mode),
+    sendBack: (args, { db, me }) => change("sendBack")(db, me, args, mode),
+    reopen: (args, { db, me }) => change("reopen")(db, me, args, mode),
+    void: (args, { db, me }) => change("void")(db, me, args, mode),
     comment: (args, { db, me }) => comment(db, me, args),
-    bulk: (args, { db, me }) => bulk(db, me, args)
+    bulk: (args, { db, me }) => bulk(db, me, args, mode)
   });
 }

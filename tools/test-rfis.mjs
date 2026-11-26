@@ -587,8 +587,61 @@ await test("New RFI here: the pin is saved with the RFI, on the current revision
   refused(await create("supt", { pin: { ...pin, revisionIndex: 1 } }), "NOT_CURRENT", "old revision");
   refused(await create("supt", { pin: { ...pin, sheetId: "nope" } }), "NOT_FOUND", "unknown sheet");
   refused(await create("supt", { pin: { ...pin, x: 2 } }), "BAD_POINT", "off the sheet");
-  refused(await create("dc", { pin }), "NOT_ALLOWED", "dc doesn't pin");
   expect(rows("Rfi").length === before, "no RFI saved when the pin is refused");
+  // P8 (2026-11-25): the document controller pins too.
+  const d = await create("dc", { pin: { ...pin, x: 0.3 } });
+  ok(d, "dc creates with a pin");
+  expect(rows("Pin").some((p) => p.linkedRecordId === d.rfi.ItemId && !p.isVoided), "dc's pin saved");
+});
+
+
+// ---------- numbering: a failed save never leaves a gap (docs/architecture/13 §4.1) ----------
+// The next Rfi save fails once: "refused" = the gateway answers 400 (nothing written),
+// "lost" = no answer at all (it may have been written).
+function failNextSave(how, mutation) {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(init?.body ?? "").includes(mutation)) {
+      globalThis.fetch = real;
+      if (how === "lost") throw new TypeError("fetch failed");
+      return { ok: false, status: 400, json: async () => ({ errors: [{ message: "DateTime cannot parse" }] }) };
+    }
+    return real(url, init);
+  };
+}
+const quietly = async (fn) => {
+  const err = console.error;
+  console.error = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.error = err;
+  }
+};
+const aged = () => new Date(Date.now() - 70_000).toISOString(); // older than a Function can run (45 s)
+const rfiCounter = () => rows("Sequence").find((s) => s.tenantRole === T && s.projectId === P && s.key === "rfi");
+const rfiNo = (x) => `RFI-${String(x).padStart(3, "0")}`;
+
+await test("an RFI whose save is refused hands its number back: the retry gets the same number", async () => {
+  const top = rfiCounter().lastValue;
+  failNextSave("refused", "insertRfi");
+  refused(await quietly(() => create("supt", { clientRequestId: "req-gap" })), "FAILED", "refused create");
+  expect(rfiCounter().lastValue === top, `handed back: ${JSON.stringify(rfiCounter())}`);
+  const r = await create("supt", { clientRequestId: "req-gap" });
+  ok(r, "retry");
+  expect(r.rfi.number === rfiNo(top + 1), `expected ${rfiNo(top + 1)}, got ${r.rfi.number}`);
+});
+
+await test("submitting a draft: a refused save hands the number back, the next submit gets it", async () => {
+  const d = await create("supt", { submit: false });
+  ok(d, "draft");
+  const top = rfiCounter().lastValue;
+  failNextSave("refused", "updateRfi");
+  refused(await quietly(() => call("supt", { action: "submit", rfiId: d.rfi.ItemId })), "FAILED", "refused submit");
+  expect(rfiCounter().lastValue === top, "handed back");
+  const s = await call("supt", { action: "submit", rfiId: d.rfi.ItemId });
+  ok(s, "submit again");
+  expect(s.rfi.number === rfiNo(top + 1), `expected ${rfiNo(top + 1)}, got ${s.rfi.number}`);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

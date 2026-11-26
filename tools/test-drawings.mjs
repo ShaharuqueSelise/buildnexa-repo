@@ -171,7 +171,7 @@ await test("company admin not on the team gets nothing; what each role may do", 
   expect(r.disciplines.some((d) => d.name === "Architectural"), "default disciplines");
   const want = {
     pm: "upload manage pin createRfi createPunch",
-    dc: "upload manage",
+    dc: "upload manage pin createRfi", // P8
     design: "upload",
     supt: "pin createRfi createPunch",
     sub: "pin createRfi",
@@ -264,7 +264,11 @@ await test("pins: on the current revision only, for records the person can open;
   refused(await call("supt", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "rfi-void" }), "NOT_FOUND", "voided");
   refused(await call("supt", { action: "pin", ...at, x: 1.5, y: 0.1, recordId: "rfi-sub" }), "BAD_POINT", "off the sheet");
   refused(await call("owner", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "rfi-sub" }), "NOT_ALLOWED", "owner");
-  refused(await call("dc", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "rfi-sub" }), "NOT_ALLOWED", "dc");
+  refused(await call("design", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "rfi-sub" }), "NOT_ALLOWED", "designer");
+  // P8 (2026-11-25): the document controller pins too. Removed again so the sub can pin RFI-001 below.
+  const d = await call("dc", { action: "pin", ...at, x: 0.2, y: 0.2, recordId: "rfi-sub" });
+  ok(d, "dc pins RFI-001");
+  ok(await call("dc", { action: "removePin", pinId: d.pin.ItemId }), "dc removes its own pin");
   refused(await call("sub", { action: "pin", ...at, x: 0.1, y: 0.1, recordId: "rfi-gc" }), "NOT_FOUND", "sub on an RFI they can't open");
   const s = await call("sub", { action: "pin", ...at, x: 0.7, y: 0.3, recordId: "rfi-sub" });
   ok(s, "sub pins RFI-001");

@@ -64,7 +64,7 @@ assigned to. The module's Function checks the record as well as the key. — = n
 | rfi.see_cost | ✓ | ✓ | ✓ | — | — | ✓ |
 | rfi.see_internal | ✓ | ✓ | ✓ | — | — | — |
 | drawing.view | ✓ | ✓ | ✓ | L (relevant) | ✓ | ✓ |
-| drawing.pin | ✓ | ✓ | — | ✓ | — | — |
+| drawing.pin | ✓ | ✓ | ✓ (P8) | ✓ | — | — |
 | drawing.upload | ✓ | — | ✓ | — | ✓ (revisions) | — |
 | drawing.manage_versions | ✓ | — | ✓ | — | — | — |
 | document.view | ✓ | ✓ | ✓ | L | L | ✓ |
@@ -134,7 +134,7 @@ list does not let anyone read the secret's value; that was tested and refused wi
 | P5 | **Change order separation of duties** | Approval within thresholds, and never approving your own change order, comes with the change orders module. |
 | P6 | **Role names** | Screens use the spec's names. System names stay (`field-user` = Subcontractor, `design-reviewer` = Designer / Consultant, `owner-viewer` = Owner). |
 | P7 | **Custom roles** | Not built. The code checks permission keys, never role names, so a custom role later is one more entry in the table. |
-| P8 | **Document Controller: pins on drawings** | A DC can create RFIs, and through `drawing.manage_versions` can move or remove any pin. But the spec gives `drawing.pin` (placing a new pin) only to the PM, superintendent and subcontractor, so a DC can't pin the RFIs they raise; the PM or superintendent has to add the pin. **Confirm** whether a DC should also place pins. If yes, add the DC to `drawing.pin`. |
+| P8 | **Document Controller: pins on drawings** | **Agreed with the client 2026-11-25:** a DC places pins too. `drawing.pin` now includes the DC, so a DC can pin the RFIs they raise ("New RFI here") and pin an existing punch item that has no pin. "New punch item here" still needs `punch_item.create` (PM, superintendent). As before, a DC moves or removes any pin through `drawing.manage_versions`. |
 
 ## 7. Known limits (accepted for now)
 

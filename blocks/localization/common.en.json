@@ -1131,7 +1131,7 @@
   "drw.v.pinned": "{number} pinned on {sheet}.",
   "drw.v.unpinned": "Pin of {number} removed.",
   "drw.v.downloadFailed": "The download didn't start. Try again.",
-  "drw.v.pinWho": "Only the project manager, superintendent and subcontractors pin RFIs on sheets.",
+  "drw.v.pinWho": "Only the project manager, superintendent, document controller and subcontractors pin on sheets.",
   "drw.v.pinCurrentOnly": "Pins go on the current revision only.",
   "drw.v.roleManager": "You can upload revisions, void a wrong one and edit sheet details. Pinning is for the project manager, superintendent and subcontractors.",
   "drw.v.roleDesigner": "You can upload new sheets and new revisions. The project manager or document controller changes sheet details and voids revisions.",

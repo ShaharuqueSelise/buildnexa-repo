@@ -90,10 +90,13 @@ for (const [userId, p] of Object.entries(people)) {
 rows("Sheet").push({ ItemId: "sheet-a", tenantRole: T, projectId: P, sheetNumber: "A-101", currentRevisionIndex: 2, currentRevisionLabel: "B", isVoided: false });
 rows("PunchItem").push({ ItemId: "foreign", tenantRole: "company-other", projectId: P, number: "PI-999", title: "Not yours", status: "open", assigneeCompanyId: "sub-co", createdByUserId: "x", seq: 999, version: 0 });
 
+// The Function variable PUNCH_ASSIGNED_NOTICE: unset = new and moved items are told on save (the
+// default); "batch" = the 15-minute pass tells them. Tests switch it with `noticeMode`.
+let noticeMode = "";
 const call = (user, body, projectId = P) =>
   handler({ method: "POST", body: { projectId, ...body } }, {
     context: { tenantId: "TEN", userId: user, organizationId: "ORG", roles: [T, people[user].account] },
-    env: { CLIENT_ID: "id", CLIENT_SECRET: "secret" },
+    env: { CLIENT_ID: "id", CLIENT_SECRET: "secret", ...(noticeMode ? { PUNCH_ASSIGNED_NOTICE: noticeMode } : {}) },
     log: { error: (...a) => console.error("  [function error]", ...a), warn() {}, info() {} }
   });
 
@@ -173,7 +176,7 @@ await test("the superintendent creates PI-001 with a photo coming: open, ball wi
   expect(r.item.assigneeCompanyName === "Dry Walls Ltd" && r.item.trade === "Drywall", "company and trade");
   expect(r.item.dueDate === workingDaysAhead(7), `due ${r.item.dueDate}, wanted ${workingDaysAhead(7)}`);
   expect(r.item.photoMissing === true, "photo missing until the upload lands");
-  expect(row(first).notifyPending === true, "batched notice pending");
+  expect(row(first).notifyPending === false && r.notified && r.notified.bell > 0, "told on save, nothing left for the batch");
   expect(!("tenantRole" in r.item) && !("clientRequestId" in r.item) && !("notifyPending" in r.item), "internal fields hidden");
   expect(r.can.start && r.can.markReady && r.can.close && r.can.void && r.can.edit, "the superintendent can work it");
   expect(events(first).includes("created"), "history line");
@@ -352,7 +355,8 @@ await test("edit: the GC only, active items only, guarded by version", async () 
   refused(await call("supt", { action: "edit", itemId: id, changes: { dueDate: "" } }), "BAD_DUE_DATE", "clear the due date");
 });
 
-await test("reassign moves the item to another company and queues their notice", async () => {
+await test("batch mode: reassign moves the item to another company and queues their notice", async () => {
+  noticeMode = "batch";
   const r = await create("supt", { title: "Wrong trade" });
   const id = r.item.ItemId;
   row(id).notifyPending = false;
@@ -365,6 +369,7 @@ await test("reassign moves the item to another company and queues their notice",
   refused(await call("sub", { action: "get", itemId: id }), "NOT_FOUND", "old company loses it");
   ok(await call("other", { action: "get", itemId: id }), "new company sees it");
   refused(await call("sub", { action: "reassign", itemId: id, assigneeCompanyId: "sub-co" }), "NOT_FOUND", "sub can't even see it now");
+  noticeMode = "";
 });
 
 await test("comments: the GC and the assigned company", async () => {
@@ -479,7 +484,30 @@ await test("the 15-minute pass can't be started by a person", async () => {
   refused(await runNotices("http", { method: "POST", body: { action: "notices" } }), "BAD_ACTION", "an http call is a person's call");
 });
 
-await test("new and reassigned items: one notice per company every 15 minutes; flags cleared; never twice", async () => {
+await test("new and moved items are told on save: bell + email to the company, flag not set, the creator not told", async () => {
+  for (const i of mine("PunchItem")) i.notifyPending = false;
+  sent.length = 0;
+  const a = await create("supt", { title: "Told on save" });
+  expect(a.ok && a.notified && a.notified.bell === 2, `notified ${JSON.stringify(a.notified)}`);
+  expect(row(a.item.ItemId).notifyPending === false && !("notifyPendingSince" in row(a.item.ItemId)), "no pending flag, and no empty date (the gateway refuses \"\" for a DateTime)");
+  const subs = bellsTo("sub", "punch.assigned");
+  expect(subs.length === 1 && subs[0].title === `New punch item ${a.item.number} for Dry Walls Ltd` && subs[0].link === `/punch/${a.item.ItemId}?project=${P}`, JSON.stringify(subs));
+  expect(bellsTo("sub2", "punch.assigned").length === 1 && mailsTo("sub").length === 1 && mailsTo("sub2").length === 0, "sub2 bell only (email off)");
+  expect(bellsTo("supt", "punch.assigned").length === 0, "the creator is not told");
+  sent.length = 0;
+  ok(await call("supt", { action: "reassign", itemId: a.item.ItemId, assigneeCompanyId: "paint-co" }), "moved to Paint & Co");
+  expect(bellsTo("other", "punch.assigned").some((x) => x.title === `New punch item ${a.item.number} for Paint & Co`), "the new company is told");
+  expect(row(a.item.ItemId).notifyPending === false, "still no pending flag");
+  sent.length = 0;
+  ok(await call("supt", { action: "reassign", itemId: a.item.ItemId, assigneeCompanyId: "paint-co", assigneeUserId: "other" }), "a person in the same company");
+  expect(bellsTo("other", "punch.assigned").length === 0, "same company: no new-item notice");
+  const run = await runNotices("workflow");
+  expect(run.ok && run.assigned === 0, `the 15-minute pass has nothing left ${JSON.stringify(run)}`);
+  ok(await call("pm", { action: "void", itemId: a.item.ItemId, reason: "test item" }), "tidy up");
+});
+
+await test("batch mode: new and reassigned items, one notice per company every 15 minutes; flags cleared; never twice", async () => {
+  noticeMode = "batch";
   for (const i of mine("PunchItem")) i.notifyPending = false;
   const a = await create("supt", { title: "Batch one" });
   const b = await create("supt", { title: "Batch two", dueDate: workingDaysAhead(3) });
@@ -508,6 +536,7 @@ await test("new and reassigned items: one notice per company every 15 minutes; f
   ok(await call("supt", { action: "reassign", itemId: a.item.ItemId, assigneeCompanyId: "paint-co" }), "reassign to Paint & Co");
   await runNotices("workflow");
   expect(bellsTo("other", "punch.assigned").some((p) => p.title === `New punch item ${a.item.number} for Paint & Co`), "the new company hears about the reassigned item");
+  noticeMode = "";
 });
 
 await test("the daily overdue digest: one per company, the PM copied, once a day; reminder emails respected", async () => {
@@ -533,6 +562,74 @@ await test("the daily overdue digest: one per company, the PM copied, once a day
   sent.length = 0;
   const again = await runNotices("test", { action: "notices", anyTime: true });
   expect(again.overdue === 0 && sent.length === 0, "once a day");
+});
+
+
+// ---------- numbering: a failed save never leaves a gap (docs/architecture/13 §4.1) ----------
+// The next PunchItem save fails once: "refused" = the gateway answers 400 (nothing written),
+// "lost" = no answer at all (it may have been written).
+function failNextSave(how, mutation) {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(init?.body ?? "").includes(mutation)) {
+      globalThis.fetch = real;
+      if (how === "lost") throw new TypeError("fetch failed");
+      return { ok: false, status: 400, json: async () => ({ errors: [{ message: "DateTime cannot parse" }] }) };
+    }
+    return real(url, init);
+  };
+}
+const quietly = async (fn) => {
+  const err = console.error;
+  console.error = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.error = err;
+  }
+};
+const aged = () => new Date(Date.now() - 70_000).toISOString(); // older than a Function can run (45 s)
+const counter = () => mine("Sequence").find((s) => s.projectId === P && s.key === "punchItem");
+const topSeq = () => Math.max(...mine("PunchItem").filter((i) => i.projectId === P).map((i) => Number(i.seq)));
+const pi = (n) => `PI-${String(n).padStart(3, "0")}`;
+
+await test("a save the gateway refuses hands its number back: two failed tries, then the item gets the next number (no gap)", async () => {
+  const top = topSeq();
+  failNextSave("refused", "insertPunchItem");
+  refused(await quietly(() => create("supt", { clientRequestId: "rq-gap" })), "FAILED", "first try");
+  expect(counter().lastValue === top && counter().claimRef === "", `handed back: ${JSON.stringify(counter())}`);
+  failNextSave("refused", "insertPunchItem");
+  refused(await quietly(() => create("supt", { clientRequestId: "rq-gap" })), "FAILED", "second try");
+  expect(counter().lastValue === top, "handed back again");
+  const r = await create("supt", { clientRequestId: "rq-gap" });
+  ok(r, "third try");
+  expect(r.item.number === pi(top + 1), `expected ${pi(top + 1)}, got ${r.item.number}`);
+  // The cleared claim ref means the repair never touches a handed-back counter.
+  counter().claimedAt = aged();
+  const next = await create("supt");
+  expect(next.item.number === pi(top + 2), `next ${next.item.number}`);
+});
+
+await test("a save with no answer keeps its number (it may exist); once the claim is over 60 s old with no item, the next item gets it", async () => {
+  const top = topSeq();
+  failNextSave("lost", "insertPunchItem");
+  refused(await quietly(() => create("supt")), "FAILED", "lost save");
+  expect(counter().lastValue === top + 1, "still taken while the write may have happened");
+  counter().claimedAt = aged();
+  const r = await create("supt");
+  ok(r, "next item");
+  expect(r.item.number === pi(top + 1), `repaired: expected ${pi(top + 1)}, got ${r.item.number}`);
+  expect(mine("PunchItem").filter((i) => i.projectId === P && i.number === r.item.number).length === 1, "never two items with one number");
+});
+
+await test("the repair never gives out a number whose item exists, voided ones included", async () => {
+  const top = topSeq();
+  const last = mine("PunchItem").find((i) => i.projectId === P && i.seq === top);
+  last.isVoided = true;
+  counter().claimedAt = aged();
+  const r = await create("supt");
+  last.isVoided = false;
+  expect(r.item.number === pi(top + 1), `expected ${pi(top + 1)}, got ${r.item.number}`);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
