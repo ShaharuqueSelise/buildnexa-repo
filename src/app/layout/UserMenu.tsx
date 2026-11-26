@@ -12,13 +12,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from "../../shared/ui/dropdown-menu";
+import { Sk } from "../../shared/m/Skeleton";
 
 export function UserMenu({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { logout } = useAuth();
   const { t } = useT();
   const me = useCurrentUser();
   const profile = me.data?.data;
-  const name = userDisplayName(profile) || (me.isLoading ? "Loading..." : "Guest");
+  const name = userDisplayName(profile) || (me.isLoading ? null : "Guest");
   const { myCompanyName } = useProjects();
   // "Company Admin · Demo Builder GmbH": plain words, never the hidden company tag.
   const access = [accountRoleLabels(profile?.roles, t).join(", "), myCompanyName].filter(Boolean).join(" · ");
@@ -39,7 +40,7 @@ export function UserMenu({ onNavigate }: { onNavigate: (path: string) => void })
         <DropdownMenuLabel className="flex items-center gap-3 font-normal">
           <span className="avatar avatar-lg">{userInitials(profile)}</span>
           <div className="grid gap-0.5 overflow-hidden">
-            <strong className="truncate text-sm font-semibold">{name}</strong>
+            <strong className="truncate text-sm font-semibold">{name ?? <Sk w={130} h={13} style={{ margin: "3px 0" }} />}</strong>
             {profile?.email ? <small className="truncate text-xs text-[hsl(var(--muted-foreground))]">{profile.email}</small> : null}
             {access ? <small className="truncate text-xs text-[hsl(var(--muted-foreground))]">{access}</small> : null}
           </div>

@@ -17,6 +17,7 @@ import type { Tone } from "../../shared/m/ui";
 import { hueOf, personName, setCurrentProject, stageOf, timeElapsed, useCreateProject, useProjects } from "./projectsApi";
 import type { NewProject, OrgMemberRow, ProjectRow, Stage } from "./projectsApi";
 import "./Portfolio.css";
+import { SkeletonPage } from "../../shared/m/Skeleton";
 
 type Nav = { onNavigate: (path: string) => void };
 
@@ -56,7 +57,7 @@ export function ProjectsPage({ onNavigate }: Nav) {
 
   if (query.isLoading || !ws) {
     if (query.error) return <Note tone="danger">{t("common.error")}: {(query.error as Error).message}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="cards" label={t("common.loading")} />;
   }
 
   const rows = projects.map((p) => ({ p, stage: stageOf(p), progress: timeElapsed(p), members: ws.team.filter((r) => r.projectId === p.ItemId && r.status === "active").length }));

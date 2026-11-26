@@ -30,6 +30,7 @@ import { addPendingPin, refreshDrawings, showSavingPin, useDrawingAction, useShe
 import type { Revision, SheetDetail, SheetPin } from "./drawingsApi";
 import { DEFAULT_SET, UploadDialog, errorText } from "./DrawingsPage";
 import type { T, Toast } from "./DrawingsPage";
+import { SkeletonPage } from "../../shared/m/Skeleton";
 
 const PAPER_W = 1200; // the page's width on the stage at 100 %; its height follows the page size
 const RFI_TONE: Record<string, Tone> = { draft: "gray", open: "blue", answered: "amber", closed: "green" };
@@ -176,7 +177,7 @@ export function SheetViewer({ projectId, sheetId, onNavigate, toast, t }: { proj
         </div>
       );
     }
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="sheet" label={t("common.loading")} />;
   }
   return <Viewer projectId={projectId} data={data} onNavigate={onNavigate} toast={toast} t={t} />;
 }

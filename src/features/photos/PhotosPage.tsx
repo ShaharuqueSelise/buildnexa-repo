@@ -36,6 +36,7 @@ import {
 } from "./photosApi";
 import type { LinkableRfi, Photo, QueueItem } from "./photosApi";
 import "./PhotosPage.css";
+import { Sk, SkGallery, SkeletonPage } from "../../shared/m/Skeleton";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
 type T = (key: TranslationKey) => string;
@@ -80,7 +81,7 @@ export function PhotosPage({ onNavigate, params = [] }: Nav) {
 
   if (query.isLoading || !ws) {
     if (query.error) return <Note tone="danger">{t("common.error")}: {(query.error as Error).message}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="gallery" label={t("common.loading")} />;
   }
   if (!project) {
     return (
@@ -238,7 +239,7 @@ function PhotosView({ projectId, openId, onNavigate, toast, t }: { projectId: st
 
   if (!live.data) {
     if (live.error) return <Note tone="danger">{errorText(t, live.error)}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="gallery" label={t("common.loading")} />;
   }
   const base = live.data;
   const sub = !base.can.manage && base.role === "field-user";
@@ -325,7 +326,7 @@ function PhotosView({ projectId, openId, onNavigate, toast, t }: { projectId: st
       {removedPending ? (
         removedQuery.error
           ? <Note tone="danger">{errorText(t, removedQuery.error)}</Note>
-          : <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("photo.loadingRemoved")}</strong></div>
+          : <SkGallery count={6} label={t("photo.loadingRemoved")} />
       ) : photos.length === 0 ? (
         <Panel><Empty icon={<ImageIcon size={26} />} title={showRemoved ? t("photo.noneRemoved") : t("photo.noneTitle")}>{showRemoved ? null : t("photo.noneText")}</Empty></Panel>
       ) : filtered.length === 0 ? (
@@ -585,7 +586,7 @@ function Lightbox({ projectId, photo, previewUrl, index, total, myCompanyId, can
             ) : <span className="m-muted">{t("photo.notLinked")}</span>],
             [t("photo.sheet"), !logPhoto ? <span className="m-muted">{t("photo.sheetLogOnly")}</span>
               : place ? <PinnedChip place={place} onNavigate={onNavigate} t={t} />
-              : !pins.data ? <span className="m-muted">{t("common.loading")}</span>
+              : !pins.data ? <Sk w={160} h={12} />
               : canPin ? <button type="button" className="m-link m-pin-chip" onClick={() => setPinning(true)}><MapPin size={13} /> {t("drw.photo.pinOnDrawing")}</button>
               : <span className="m-muted">{t("drw.photo.notPinned")}</span>],
             [t("photo.file"), <span className="m-small">{photo.fileName} · {fileSize(photo.sizeBytes)}{dims}</span>]

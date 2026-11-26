@@ -22,6 +22,7 @@ import { DueLabel } from "../rfis/RfisPage";
 import { fmtShortDate } from "../projects/ProjectsPage";
 import { AppBar, PunchLine, fmtWhen, live, sortByDue, toVerify } from "./fieldUi";
 import type { Ctx } from "./fieldUi";
+import { SkCardList, SkRows } from "../../shared/m/Skeleton";
 
 // ---------- the list ----------
 
@@ -72,7 +73,7 @@ export function PunchTab({ ctx }: { ctx: Ctx }) {
           </div>
         ) : null}
 
-        {list.isLoading ? <p className="fld-muted fld-center">{t("shell.loading")}</p>
+        {list.isLoading ? <SkRows rows={5} avatar label={t("shell.loading")} />
           : list.isError ? <Note tone="warn">{refusalText(list.error, t("fld.couldNotLoad"))}</Note>
           : rows.length ? <div className="fld-list">{rows.slice(0, 60).map((p) => <PunchLine key={p.ItemId} p={p} ctx={ctx} />)}</div>
           : <p className="fld-muted fld-center">{t("fld.nothingHere")}</p>}
@@ -104,7 +105,7 @@ export function CaptureScreen({ ctx }: { ctx: Ctx }) {
 
   const bar = (right?: ReactNode) => <AppBar title={t("fld.newPunch")} onBack={ctx.back} backLabel={t("common.cancel")} right={right} />;
   if (!data) {
-    return <>{bar()}<div className="fld-body">{list.isError ? <Note tone="warn">{refusalText(list.error, t("fld.couldNotLoad"))}</Note> : <p className="fld-muted fld-center">{t("shell.loading")}</p>}</div></>;
+    return <>{bar()}<div className="fld-body">{list.isError ? <Note tone="warn">{refusalText(list.error, t("fld.couldNotLoad"))}</Note> : <SkCardList count={3} className="fld-card" label={t("shell.loading")} />}</div></>;
   }
   if (!data.can.create) return <>{bar()}<div className="fld-body"><Note tone="warn">{t("punch.createWhy")}</Note></div></>;
 
@@ -217,7 +218,7 @@ export function ItemScreen({ ctx, id }: { ctx: Ctx; id: string }) {
       <>
         {bar(t("punch.item"))}
         <div className="fld-body">
-          {detail.isError ? <Empty icon={<ImageOff size={28} />} title={t("punch.cantOpen")}>{refusalText(detail.error, t("common.error"))}</Empty> : <p className="fld-muted fld-center">{t("shell.loading")}</p>}
+          {detail.isError ? <Empty icon={<ImageOff size={28} />} title={t("punch.cantOpen")}>{refusalText(detail.error, t("common.error"))}</Empty> : <SkCardList count={3} className="fld-card" label={t("shell.loading")} />}
         </div>
       </>
     );

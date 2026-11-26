@@ -20,6 +20,7 @@ import { personName, useAddMembers, useProjects, useRemoveMember, useSetProjectR
 import type { CompanyRow, OrgMemberRow, TeamRow } from "./projectsApi";
 import { fmtShortDate } from "./ProjectsPage";
 import "./Directory.css";
+import { SkeletonPage } from "../../shared/m/Skeleton";
 
 type Nav = { onNavigate: (path: string) => void };
 type Tab = "people" | "companies" | "lists";
@@ -58,7 +59,7 @@ export function DirectoryPage({ onNavigate }: Nav) {
 
   if (query.isLoading || !ws) {
     if (query.error) return <Note tone="danger">{t("common.error")}: {(query.error as Error).message}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="table" label={t("common.loading")} />;
   }
   if (!project) {
     return (

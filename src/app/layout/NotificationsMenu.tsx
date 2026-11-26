@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import { cx } from "../../shared/m/ui";
 import { useMarkAllRead, useMarkRead, useNotifications } from "../../features/notifications/notificationsApi";
+import { SkRows } from "../../shared/m/Skeleton";
 
 const when = (iso?: string) => {
   if (!iso) return "";
@@ -60,7 +61,7 @@ export function NotificationsMenu({ onNavigate }: { onNavigate: (path: string) =
               </span>
             </button>
           ))}
-          {query.isLoading ? <div className="m-empty m-small">{t("shell.loading")}</div> : null}
+          {query.isLoading ? <div style={{ padding: "2px 10px" }}><SkRows rows={3} avatar tag={false} label={t("shell.loading")} /></div> : null}
           {query.isError ? <div className="m-empty m-small">{t("shell.notificationsError")}</div> : null}
           {!query.isLoading && !query.isError && items.length === 0 ? (
             <div className={cx("m-empty", "m-small")}>

@@ -33,6 +33,7 @@ import type { NewAttachment } from "../files/files";
 import { rfiUploadLinks, useRfi, useRfiAction, useRfiList } from "./rfisApi";
 import type { Impact, RfiDetail, RfiInput, RfiPin, RfiRow, RfiStatus } from "./rfisApi";
 import "./RfisPage.css";
+import { SkTable, SkeletonPage } from "../../shared/m/Skeleton";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
 type T = (key: TranslationKey) => string;
@@ -129,7 +130,7 @@ export function RfisPage({ onNavigate, params = [] }: Nav) {
 
   if (query.isLoading || !ws) {
     if (query.error) return <Note tone="danger">{t("common.error")}: {(query.error as Error).message}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="table" label={t("common.loading")} />;
   }
   if (!project) {
     return (
@@ -293,7 +294,7 @@ function RfiListView({ ctx }: { ctx: Ctx }) {
       </div>
 
       {list.isLoading ? (
-        <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>
+        <SkTable label={t("common.loading")} />
       ) : filtered.length === 0 ? (
         <Panel>
           <Empty icon={<MessageSquare size={28} />} title={rfis.length ? t("rfi.noMatch") : t("rfi.none")}>
@@ -575,7 +576,7 @@ function RfiDetailView({ ctx, rfiId }: { ctx: Ctx; rfiId: string }) {
   const seesInternal = projectCan(myRole, "rfi.see_internal");
 
   const back = <Button variant="ghost" small icon={<ArrowLeft size={14} />} onClick={() => onNavigate("/rfis")}>{t("rfi.back")}</Button>;
-  if (detail.isLoading) return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+  if (detail.isLoading) return <SkeletonPage kind="detail" label={t("common.loading")} />;
   if (!detail.data) {
     return (
       <Panel>

@@ -36,6 +36,7 @@ import {
 } from "./punchApi";
 import type { PendingCreate, PunchBulkOp, PunchDetail, PunchInput, PunchList, PunchPhoto, PunchPin, PunchPriority, PunchRow, PunchStatus } from "./punchApi";
 import "./PunchPage.css";
+import { SkLines, SkRows, SkStatus, SkTable, SkeletonPage } from "../../shared/m/Skeleton";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
 type T = (key: TranslationKey) => string;
@@ -84,7 +85,7 @@ export function PunchPage({ onNavigate, params = [] }: Nav) {
 
   if (query.isLoading || !ws) {
     if (query.error) return <Note tone="danger">{t("common.error")}: {(query.error as Error).message}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="table" label={t("common.loading")} />;
   }
   if (!project) {
     return (
@@ -276,7 +277,7 @@ function PunchListView({ ctx, openId }: { ctx: Ctx; openId?: string }) {
       {pending.length ? <PendingRows ctx={ctx} pending={pending} /> : null}
 
       {list.isLoading ? (
-        <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>
+        <SkTable label={t("common.loading")} />
       ) : !filtered.length ? (
         <Panel>
           <Empty icon={<ClipboardCheck size={28} />} title={items.length ? t("punch.noMatch") : t("punch.none")}>
@@ -886,7 +887,7 @@ export function PunchHereDialog({ projectId, pin, toast, onNavigate, onClose, on
       <Dialog title={t("punch.new")} onClose={onClose} size="sm">
         {list.data ? <Note tone="warn">{t("punch.createWhy")}</Note>
           : list.error ? <Note tone="danger">{refusalText(list.error, t("common.error"))}</Note>
-          : <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>}
+          : <SkStatus label={t("common.loading")}><SkLines lines={5} /></SkStatus>}
       </Dialog>
     );
   }
@@ -925,7 +926,7 @@ function PunchDrawer({ ctx, itemId, list, photoQueue, onClose }: { ctx: Ctx; ite
   const today = d?.today ?? ctx.today;
 
   if (detail.isLoading || (!d && !detail.error)) {
-    return <Drawer title={t("punch.item")} onClose={onClose}><div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div></Drawer>;
+    return <Drawer title={t("punch.item")} onClose={onClose}><SkStatus label={t("common.loading")}><SkLines lines={4} /><div style={{ marginTop: 20 }}><SkRows rows={3} avatar /></div></SkStatus></Drawer>;
   }
   if (!d) {
     return (

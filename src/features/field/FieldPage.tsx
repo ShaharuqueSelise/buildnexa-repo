@@ -28,6 +28,7 @@ import { AppBar, PunchLine, TAB_KEYS, myPunch } from "./fieldUi";
 import type { Ctx, Screen, Tab } from "./fieldUi";
 import { CaptureScreen, ItemScreen, PunchTab } from "./FieldPunch";
 import "./Field.css";
+import { Sk, SkCardList } from "../../shared/m/Skeleton";
 
 const TABS: { key: Tab; label: TranslationKey; icon: ReactNode }[] = [
   { key: "today", label: "fld.tab.today", icon: <Home size={22} /> },
@@ -104,7 +105,7 @@ export function FieldPage({ onNavigate }: { onNavigate: (path: string) => void }
 
   let content: ReactNode;
   if (query.isLoading) {
-    content = <div className="fld-body"><p className="fld-muted fld-center">{t("shell.loading")}</p></div>;
+    content = <div className="fld-body"><SkCardList count={4} className="fld-card" label={t("shell.loading")} /></div>;
   } else if (!project) {
     content = (
       <div className="fld-body">
@@ -176,7 +177,7 @@ function TodayTab({ ctx, firstName }: { ctx: Ctx; firstName: string }) {
               {punch.isLoading ? <span className="m-muted">…</span> : <Badge tone={mine.length ? "amber" : "green"}>{mine.length}</Badge>}
             </h4>
             {punch.isLoading
-              ? <span className="fld-muted">{t("shell.loading")}</span>
+              ? <Sk w="55%" h={11} />
               : punch.isError
               ? <span className="fld-muted">{t("fld.couldNotLoad")}</span>
               : overdue ? <span className="fld-over">{fmt(t(overdue === 1 ? "fld.overdue1" : "fld.overdue"), { count: overdue })}</span>
@@ -195,7 +196,7 @@ function TodayTab({ ctx, firstName }: { ctx: Ctx; firstName: string }) {
             <span><Bell size={16} /> {t("fld.rfisWithMe")}</span>
             {rfis.isLoading ? <span className="m-muted">…</span> : <Badge tone={rfiCount ? "blue" : "gray"}>{rfiCount}</Badge>}
           </h4>
-          <span className="fld-muted">{rfis.isLoading ? t("shell.loading") : rfis.isError ? t("fld.couldNotLoad") : rfiCount ? t("fld.rfisAnswer") : t("fld.rfisNone")}</span>
+          {rfis.isLoading ? <Sk w="55%" h={11} /> : <span className="fld-muted">{rfis.isError ? t("fld.couldNotLoad") : rfiCount ? t("fld.rfisAnswer") : t("fld.rfisNone")}</span>}
         </button>
 
         <div className="fld-actions">
@@ -215,7 +216,7 @@ function LogCard({ ctx, day, loading, failed }: { ctx: Ctx; day?: LogDetail; loa
   const Icon = w?.condition ? COND_ICON[w.condition] : null;
   let badge: ReactNode = null;
   let line: ReactNode = null;
-  if (loading) line = <span className="fld-muted">{t("shell.loading")}</span>;
+  if (loading) line = <Sk w="55%" h={11} />;
   else if (failed || !day) line = <span className="fld-muted">{t("fld.couldNotLoad")}</span>;
   else if (day.pending) {
     badge = <Badge tone="gray">{t("fld.logPending")}</Badge>;

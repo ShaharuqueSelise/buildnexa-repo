@@ -37,6 +37,7 @@ import { projectCan } from "../../lib/permissions";
 import { usePhotoPins } from "../drawings/drawingsApi";
 import { PinPhotoDialog, PinnedChip } from "../drawings/PhotoPin";
 import "./DailyLogsPage.css";
+import { Sk, SkPanel, SkStatus, SkeletonPage } from "../../shared/m/Skeleton";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
 type T = (key: TranslationKey) => string;
@@ -75,7 +76,7 @@ export function DailyLogsPage({ onNavigate, params = [] }: Nav) {
 
   if (query.isLoading || !ws) {
     if (query.error) return <Note tone="danger">{t("common.error")}: {(query.error as Error).message}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="calendar" label={t("common.loading")} />;
   }
   if (!project) {
     return (
@@ -202,7 +203,7 @@ function LogsView({ ctx, projectName, wanted }: { ctx: Ctx; projectName: string;
                 <div style={{ flex: 1 }}>
                   <div className="m-row" style={{ justifyContent: "space-between" }}>
                     <span className="m-small m-muted">{t("dlog.completion")}</span>
-                    <strong>{month.isFetching && !month.data ? "…" : `${completion} %`}</strong>
+                    <strong>{month.isFetching && !month.data ? <Sk w={36} h={14} /> : `${completion} %`}</strong>
                   </div>
                   <ProgressBar value={completion} tone={completion >= 90 ? "green" : completion >= 60 ? "amber" : "red"} />
                   <span className="m-small m-muted">{fmt(t("dlog.completionHint"), { done: submitted, total: elapsedWork.length })}</span>
@@ -236,7 +237,7 @@ function LogsView({ ctx, projectName, wanted }: { ctx: Ctx; projectName: string;
 
         <div>
           {day.isLoading ? (
-            <Panel><div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div></Panel>
+            <SkStatus label={t("common.loading")}><SkPanel lines={5} /><SkPanel rows={3} /></SkStatus>
           ) : day.error ? (
             <Note tone="danger">{refusalText(day.error, t("common.error"))}</Note>
           ) : day.data?.log ? (
@@ -372,11 +373,11 @@ function MonthCalendar({ t, ym, setYm, today, selected, days, byDate, stateOf, o
         <div className="m-dlog-cal-score">
           <div className="m-dlog-ring-wrap">
             <Ring value={completion} tone={completion >= 90 ? "green" : completion >= 60 ? "amber" : "red"} />
-            <b>{loading ? "…" : `${completion}%`}</b>
+            <b>{loading ? <Sk w={28} h={12} /> : `${completion}%`}</b>
           </div>
           <div>
             <div className="m-small m-muted">{t("dlog.completion")}</div>
-            <div className="m-small"><b>{fmt(t("dlog.completionHint"), { done: submitted, total })}</b></div>
+            <div className="m-small">{loading ? <Sk w={150} h={12} style={{ marginTop: 4 }} /> : <b>{fmt(t("dlog.completionHint"), { done: submitted, total })}</b>}</div>
           </div>
         </div>
         <div className="m-dlog-cal-nav">

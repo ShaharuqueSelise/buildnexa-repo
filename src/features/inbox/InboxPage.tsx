@@ -17,6 +17,7 @@ import { fmtDate } from "../projects/ProjectsPage";
 import type { AppNotification } from "../notifications/notificationsApi";
 import { useInbox, useMarkAllRead, useMarkRead, useNotificationSettings, useSetNotificationSettings } from "../notifications/notificationsApi";
 import "./Inbox.css";
+import { SkLines, SkRows, SkStatus } from "../../shared/m/Skeleton";
 
 // The kinds the rfis Function sends (payload `kind`), plus Blocks' own notices (sign-ins, ...).
 type Kind = "turn" | "reminder" | "decided" | "info";
@@ -105,7 +106,7 @@ export function InboxPage({ onNavigate }: { onNavigate: (path: string) => void }
           </div>
 
           {inbox.isLoading ? (
-            <Panel><div className="m-empty m-small">{t("shell.loading")}</div></Panel>
+            <Panel><SkRows rows={5} avatar label={t("shell.loading")} /></Panel>
           ) : inbox.isError ? (
             <Panel><div className="m-empty m-small">{t("shell.notificationsError")}</div></Panel>
           ) : list.length === 0 ? (
@@ -219,7 +220,7 @@ function SettingsTab({ toast, onNavigate }: { toast: (text: string) => void; onN
         <Panel title={<span className="m-row"><Mail size={15} /> {t("inbox.email")}</span>}>
           <div className="m-stack-v">
             {settings.isLoading ? (
-              <span className="m-small m-muted">{t("shell.loading")}</span>
+              <SkStatus label={t("shell.loading")}><SkLines lines={3} /></SkStatus>
             ) : settings.isError ? (
               <span className="m-small m-muted">{t("common.error")}</span>
             ) : (

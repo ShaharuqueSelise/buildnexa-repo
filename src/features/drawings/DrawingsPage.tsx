@@ -27,6 +27,7 @@ import {
 import type { Discipline, PdfFacts, PublishRow, Register, RevisionSummary, SheetRow } from "./drawingsApi";
 import { SheetViewer } from "./SheetViewer";
 import "./DrawingsPage.css";
+import { SkeletonPage } from "../../shared/m/Skeleton";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
 export type T = (key: TranslationKey) => string;
@@ -42,7 +43,7 @@ export function DrawingsPage({ onNavigate, params = [] }: Nav) {
 
   if (query.isLoading || !ws) {
     if (query.error) return <Note tone="danger">{t("common.error")}: {(query.error as Error).message}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="table" label={t("common.loading")} />;
   }
   if (!project) {
     return (
@@ -137,7 +138,7 @@ function RegisterView({ projectId, projectNumber, onNavigate, toast, t }: { proj
 
   if (!data) {
     if (list.error) return <Note tone="danger">{errorText(t, list.error)}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="table" label={t("common.loading")} />;
   }
 
   const can = data.can;

@@ -3,7 +3,7 @@ import { useAuth } from "../../app/providers/AuthProvider";
 import { completeLogin } from "../../lib/blocks/auth";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import { Alert } from "../../shared/ui/Alert";
-import { LoadingScreen } from "../../shared/ui/LoadingScreen";
+import { ShellSkeleton } from "../../app/layout/ShellSkeleton";
 
 export function CallbackPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { refresh, returnPathFor } = useAuth();
@@ -38,5 +38,5 @@ export function CallbackPage({ onNavigate }: { onNavigate: (path: string) => voi
     );
   }
 
-  return <LoadingScreen />;
+  return <ShellSkeleton />;
 }

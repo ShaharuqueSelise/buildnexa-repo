@@ -5,6 +5,7 @@ import { ClipboardList, Eye, Menu, PanelLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { SkNav } from "./ShellSkeleton";
 import { NAV_GROUPS, navItemFor, navItems, visibleModules } from "./navItems";
 import { NotificationsMenu } from "./NotificationsMenu";
 import { UserMenu } from "./UserMenu";
@@ -111,7 +112,8 @@ export function AppShell({ activePath, children, onNavigate }: { activePath: str
           <div>{t("app.name")}<small>{t("app.tagline")}</small></div>
         </a>
         <nav>
-          {NAV_GROUPS.map((group) => {
+          {/* Until roles are known the menu would grow item by item, so show grey rows instead. */}
+          {!ready ? <SkNav /> : NAV_GROUPS.map((group) => {
             const items = navItems.filter((item) => item.group === group.key && visible.has(item.module));
             if (items.length === 0) return null;
             return (

@@ -30,6 +30,7 @@ import { DOC_EXTENSIONS, docLink, docRefusal, extOf, uploadDocs, useDocAction, u
 import { FileViewer, saveUrlAs } from "../files/FileViewer";
 import type { DocFolder, DocListing, DocRow, DocVersion } from "./documentsApi";
 import "./DocumentsPage.css";
+import { SkeletonPage } from "../../shared/m/Skeleton";
 
 type Nav = { onNavigate: (path: string) => void; params?: string[] };
 type T = (key: TranslationKey) => string;
@@ -106,7 +107,7 @@ export function DocumentsPage({ onNavigate }: Nav) {
 
   if (query.isLoading || !ws) {
     if (query.error) return <Note tone="danger">{t("common.error")}: {(query.error as Error).message}</Note>;
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="split" label={t("common.loading")} />;
   }
   if (!project) {
     return (
@@ -158,7 +159,7 @@ function DocumentsView({ projectId, projectNumber, toast, t }: { projectId: stri
   const data = list.data;
   const folderById = useMemo(() => new Map((data?.folders ?? []).map((f) => [f.ItemId, f])), [data]);
 
-  if (list.isLoading) return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+  if (list.isLoading) return <SkeletonPage kind="split" label={t("common.loading")} />;
   if (list.error || !data) return <Note tone="danger">{t("common.error")}: {errorText(t, list.error)}</Note>;
 
   const { can } = data;

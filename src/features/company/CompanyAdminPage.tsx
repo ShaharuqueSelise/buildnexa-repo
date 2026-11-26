@@ -21,6 +21,7 @@ import type { Company, Membership, Person, Project } from "./peopleApi";
 import { CompaniesTab } from "./CompaniesTab";
 import { RolesTab } from "./RolesTab";
 import "./CompanyAdmin.css";
+import { SkTable, SkeletonPage } from "../../shared/m/Skeleton";
 
 type TabKey = "people" | "companies" | "roles" | "reference" | "branding" | "languages" | "security" | "billing" | "templates";
 
@@ -40,7 +41,7 @@ export function CompanyAdminPage() {
   const own = people.data?.companies.find((c) => c.relation === "self");
 
   if (!roles) {
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkeletonPage kind="table" label={t("common.loading")} />;
   }
   if (!isAdmin) {
     return (
@@ -77,7 +78,7 @@ export function CompanyAdminPage() {
         ]}
       />
       {tab === "people" ? <PeopleTab query={people} /> : null}
-      {tab === "companies" ? (people.data ? <CompaniesTab data={people.data} /> : people.error ? <Note tone="danger">{(people.error as Error).message}</Note> : <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>) : null}
+      {tab === "companies" ? (people.data ? <CompaniesTab data={people.data} /> : people.error ? <Note tone="danger">{(people.error as Error).message}</Note> : <SkTable label={t("common.loading")} />) : null}
       {tab === "roles" ? <RolesTab /> : null}
       {tab === "reference" || tab === "branding" || tab === "languages" ? later("coadmin.whenPhase5") : null}
       {tab === "security" || tab === "billing" || tab === "templates" ? later("coadmin.whenR2") : null}
@@ -156,7 +157,7 @@ function PeopleTab({ query }: { query: ReturnType<typeof usePeople> }) {
   const statusLabel = (s: string) => t(`coadmin.status.${s.toLowerCase()}` as TranslationKey);
 
   if (query.isLoading) {
-    return <div className="m-empty"><Loader2 className="spin" size={22} /><strong>{t("common.loading")}</strong></div>;
+    return <SkTable label={t("common.loading")} />;
   }
   if (query.error) {
     return <Note tone="danger">{(query.error as Error).message}</Note>;

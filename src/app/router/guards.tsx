@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { useAuth } from "../providers/AuthProvider";
-import { LoadingScreen } from "../../shared/ui/LoadingScreen";
+import { AuthSkeleton, ShellSkeleton } from "../layout/ShellSkeleton";
 
 type GuardProps = { children: ReactNode; onNavigate: (path: string) => void };
 
@@ -19,7 +19,7 @@ export function RequireAuth({ children, currentPath, onNavigate }: GuardProps & 
     }
   }, [currentPath, status, onNavigate]);
 
-  if (status !== "authenticated") return <LoadingScreen />;
+  if (status !== "authenticated") return <ShellSkeleton />;
   return <>{children}</>;
 }
 
@@ -32,6 +32,8 @@ export function RedirectIfAuthenticated({ children, onNavigate, to: requested }:
     if (status === "authenticated") onNavigate(returnPathFor(to));
   }, [status, onNavigate, returnPathFor, to]);
 
-  if (status === "loading" || status === "authenticated") return <LoadingScreen />;
+  // Signed in: the app is on its way, so show its frame; still checking: show the sign-in card.
+  if (status === "authenticated") return <ShellSkeleton />;
+  if (status === "loading") return <AuthSkeleton />;
   return <>{children}</>;
 }

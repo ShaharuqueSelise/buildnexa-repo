@@ -18,6 +18,7 @@ import {
 } from "./platformApi";
 import type { NewAdmin, PlatformAdmin, PlatformCompany } from "./platformApi";
 import "./PlatformAdmin.css";
+import { SkRows } from "../../shared/m/Skeleton";
 
 type TabKey = "companies" | "usage" | "admins" | "flags" | "support" | "health" | "limits";
 
@@ -130,7 +131,7 @@ function CompaniesTab({ rows, loading, toast }: { rows: PlatformCompany[]; loadi
             ))}
           </tbody>
         </table>
-        {loading ? <div className="m-empty m-small">{t("shell.loading")}</div> : null}
+        {loading ? <div style={{ padding: "0 16px" }}><SkRows rows={4} label={t("shell.loading")} /></div> : null}
         {!loading && shown.length === 0 ? (
           <Empty icon={<Building2 size={26} />} title={rows.length ? t("plat.noMatch") : t("plat.noneTitle")}>{rows.length ? null : t("plat.noneText")}</Empty>
         ) : null}
@@ -355,7 +356,7 @@ function AdminsTab({ toast }: { toast: (text: string, tone?: "good" | "warn") =>
             ))}
           </tbody>
         </table>
-        {admins.isLoading ? <div className="m-empty m-small">{t("shell.loading")}</div> : null}
+        {admins.isLoading ? <div style={{ padding: "0 16px" }}><SkRows rows={3} avatar label={t("shell.loading")} /></div> : null}
       </div>
       {rows.length === 1 ? <Note tone="warn">{t("plat.admin.onlyOne")}</Note> : null}
 

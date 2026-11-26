@@ -21,6 +21,7 @@ import { punchOnMe, usePunchList } from "../punch/punchApi";
 import type { PunchRow } from "../punch/punchApi";
 import { StatusPill as PunchStatusPill } from "../punch/PunchPage";
 import "./Home.css";
+import { Sk, SkRows, SkeletonPage } from "../../shared/m/Skeleton";
 
 // What the person does next on an RFI that waits on them.
 function rfiAction(r: RfiRow): "finish" | "review" | "pass" | "respond" {
@@ -50,7 +51,7 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
   const punchList = usePunchList(seesPunch ? project?.ItemId : undefined);
   const [showAllMine, setShowAllMine] = useState(false);
 
-  if (query.isLoading) return <div className="m-panel m-empty"><strong>{t("shell.loading")}</strong></div>;
+  if (query.isLoading) return <SkeletonPage kind="home" label={t("shell.loading")} />;
   if (!project) {
     return (
       <Panel>
@@ -111,7 +112,7 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
   const openRfis = rfis.filter((r) => r.status === "open" || r.status === "answered");
   const answeredRfis = rfis.filter((r) => r.status === "answered").length;
   const overdueRfis = openRfis.filter((r) => r.status === "open" && r.dueDate && r.dueDate < today);
-  const rfiValue = (n: number) => (rfisLoading ? "…" : rfiList.isError ? "—" : n);
+  const rfiValue = (n: number) => (rfisLoading ? <Sk w={40} h={24} /> : rfiList.isError ? "—" : n);
 
   return (
     <div className="m-home">
@@ -168,7 +169,7 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
             actions={<span className="m-muted m-small m-hide-mobile">{t("home.myItemsHint")}</span>}
           >
             {mineLoading ? (
-              <div className="m-empty m-small">{t("shell.loading")}</div>
+              <SkRows rows={3} label={t("shell.loading")} />
             ) : rfiList.isError && !mine.length ? (
               <div className="m-empty m-small">{t("home.myItemsError")}</div>
             ) : mine.length === 0 ? (
@@ -211,7 +212,7 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
             {seesPunch ? (
               <Kpi
                 label={isSub ? t("home.kpi.myPunch") : t("home.kpi.openPunch")}
-                value={punchLoading ? "…" : punchList.isError ? "—" : openPunch.length}
+                value={punchLoading ? <Sk w={40} h={24} /> : punchList.isError ? "—" : openPunch.length}
                 hint={fmt(t("home.kpi.openPunchHint"), { ready: readyPunch, overdue: overduePunch })}
                 tone={overduePunch ? "red" : readyPunch ? "amber" : undefined}
                 onClick={() => onNavigate("/punch")}
