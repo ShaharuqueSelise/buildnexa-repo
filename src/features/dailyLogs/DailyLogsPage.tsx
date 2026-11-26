@@ -293,7 +293,7 @@ function NoLog({ ctx, detail, date }: { ctx: Ctx; detail: LogDetail; date: strin
 // Tiles tinted by status, with the day's weather and a mark for PM corrections. Tap a status chip
 // to highlight those days; hover (or focus) a day to preview it below the grid; arrow keys move
 // between days, Enter opens one, and a month change slides in from the side it came from.
-const COND_ICON: Record<string, typeof Sun> = {
+export const COND_ICON: Record<string, typeof Sun> = {
   clear: Sun, partlyCloudy: CloudSun, cloudy: Cloud, fog: CloudFog, drizzle: CloudDrizzle, rain: CloudRain, snow: Snowflake, thunderstorm: CloudLightning
 };
 type DayRowLike = { status: string; condition?: string; headcount?: number | null; corrections?: number };

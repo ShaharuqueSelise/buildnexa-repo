@@ -24,6 +24,7 @@ import { PhotosPage } from "../../features/photos/PhotosPage";
 import { PunchPage } from "../../features/punch/PunchPage";
 import { DailyLogsPage } from "../../features/dailyLogs/DailyLogsPage";
 import { InboxPage } from "../../features/inbox/InboxPage";
+import { FieldPage } from "../../features/field/FieldPage";
 import { setCurrentProject } from "../../features/projects/projectsApi";
 import { navItemFor } from "../layout/navItems";
 
@@ -114,6 +115,15 @@ export function AppRouter() {
   }
   if (/^\/(resetpassword|reset-password)(\/|$)/.test(path)) {
     return <ResetPasswordPage onNavigate={navigate} />;
+  }
+
+  // The Field app is its own full screen on a phone, without the sidebar and top bar.
+  if (path === "/field") {
+    return (
+      <RequireAuth currentPath={`${path}${search}`} onNavigate={navigate}>
+        <FieldPage onNavigate={navigate} />
+      </RequireAuth>
+    );
   }
 
   // Modules not built yet open a page that says which phase builds them.
