@@ -1,0 +1,23 @@
+{
+  "_meta": {
+    "cliVersion": "0.11.0",
+    "note": "Read-only snapshot written by 'blocks pull'. Editing it changes nothing; use the blocks <service> commands, then pull again.",
+    "pulledAt": "2026-11-26T12:27:06.287Z",
+    "readOnly": true,
+    "secretsRedacted": true,
+    "tenantId": "D3bc8723b437142b0bb2ac286f5169d06",
+    "service": "release"
+  },
+  "data": [
+    {
+      "branch": "dev",
+      "deploymentType": "Manual",
+      "lastDeploymentDate": null,
+      "lastDeploymentStatus": null,
+      "name": "ShaharuqueSelise/buildnexa-repo",
+      "repoId": "4f5fed88-e0a3-4256-8cb3-eeb081f16309",
+      "repoUrl": "https://github.com/ShaharuqueSelise/buildnexa-repo",
+      "url": "https://dbldiu-etezp.slsblx.com"
+    }
+  ]
+}
