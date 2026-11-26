@@ -10,7 +10,8 @@ export const FUNCTIONS = {
   documents: "7aa5c9d4-5ce6-486a-8df3-87d42db341d3",
   photos: "17490b4f-03f8-4e97-91e5-c51401347723",
   drawings: "7c0a2741-b718-4e22-9143-4722044e442e",
-  punch: "7781b02d-b33f-4d45-94e8-af4b04417c1a"
+  punch: "7781b02d-b33f-4d45-94e8-af4b04417c1a",
+  dailyLogs: "c569204e-e924-4ea2-91fa-4e78829da33d"
 } as const;
 
 // Every Buildnexa Function answers { ok: true, ... } or { ok: false, code, error }.

@@ -1,0 +1,37 @@
+{
+  "schemaName": "VisitorEntry",
+  "collectionName": "VisitorEntrys",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "rowId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "name",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "organisation",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "purpose",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "timeIn",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "timeOut",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

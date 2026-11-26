@@ -1,0 +1,137 @@
+{
+  "schemaName": "DailyLog",
+  "collectionName": "DailyLogs",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "logDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "isWorkingDay",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "weather",
+      "type": "WeatherSnapshot",
+      "isArray": false
+    },
+    {
+      "name": "weatherOverride",
+      "type": "WeatherSnapshot",
+      "isArray": false
+    },
+    {
+      "name": "siteConditions",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "equipment",
+      "type": "EquipmentEntry",
+      "isArray": true
+    },
+    {
+      "name": "deliveries",
+      "type": "DeliveryEntry",
+      "isArray": true
+    },
+    {
+      "name": "visitors",
+      "type": "VisitorEntry",
+      "isArray": true
+    },
+    {
+      "name": "delays",
+      "type": "DelayEntry",
+      "isArray": true
+    },
+    {
+      "name": "safety",
+      "type": "SafetyObservation",
+      "isArray": true
+    },
+    {
+      "name": "notes",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "manpowerSummary",
+      "type": "ManpowerEntry",
+      "isArray": true
+    },
+    {
+      "name": "totalHeadcount",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "totalHours",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "createdAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "submittedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "createdByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "submittedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "submittedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "correctionCount",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "duplicateOf",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    }
+  ]
+}

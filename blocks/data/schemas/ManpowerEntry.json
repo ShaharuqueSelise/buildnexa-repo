@@ -1,0 +1,47 @@
+{
+  "schemaName": "ManpowerEntry",
+  "collectionName": "ManpowerEntrys",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "rowId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "companyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "companyName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "trade",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "headcount",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "hours",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "workDone",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "location",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

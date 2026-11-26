@@ -1,0 +1,77 @@
+{
+  "schemaName": "DailyLogCrew",
+  "collectionName": "DailyLogCrews",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "dailyLogId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "logDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "companyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "companyName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "manpower",
+      "type": "ManpowerEntry",
+      "isArray": true
+    },
+    {
+      "name": "notes",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastEditedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "lastEditedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastEditedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "duplicateOf",
+      "type": "ID",
+      "isArray": false
+    }
+  ]
+}

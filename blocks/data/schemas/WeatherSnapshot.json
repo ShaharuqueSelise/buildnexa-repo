@@ -1,0 +1,52 @@
+{
+  "schemaName": "WeatherSnapshot",
+  "collectionName": "WeatherSnapshots",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "source",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "place",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "condition",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "summary",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "fetchedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "tempMinC",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "tempMaxC",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "precipitationMm",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "windMaxKph",
+      "type": "Float",
+      "isArray": false
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "schemaName": "DeliveryEntry",
+  "collectionName": "DeliveryEntrys",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "rowId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "time",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "supplier",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "material",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "quantity",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "deliveryNoteNo",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

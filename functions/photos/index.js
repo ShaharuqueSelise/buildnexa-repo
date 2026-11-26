@@ -584,11 +584,11 @@ const PROJECT_PERMISSIONS = {
   "submittal.upload_own": [SUB],
   "submittal.review": [PM, DESIGN],
   // Daily logs
-  "daily_log.view": [PM, SUPT, DC],
-  "daily_log.view_submitted": [DESIGN, OWNER],
-  "daily_log.create": [PM, SUPT],
-  "daily_log.crew_own": [SUB],
-  "daily_log.correct": [PM], // audited correction after submit
+  "daily_log.view": [PM, SUPT, DC], // every section, drafts included
+  "daily_log.view_submitted": [OWNER], // submitted logs only; designers get none (decided 2026-11-26)
+  "daily_log.create": [PM, SUPT], // open a day, fill the sections and every company's crew, submit
+  "daily_log.crew_own": [SUB], // the day's header and their own company's crew and notes
+  "daily_log.correct": [PM], // audited correction after submit, reason required
   // Punch list
   "punch_item.view": [PM, SUPT, DC, DESIGN, OWNER],
   "punch_item.view_assigned": [SUB],

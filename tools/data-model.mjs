@@ -73,7 +73,29 @@ const dtos = {
     ...str("uploadedByName", "note"),
     ...date("uploadedAt"),
     ...int("restoredFrom")
-  ]
+  ],
+  // Daily logs (docs/architecture/05-daily-logs.md). Rows carry a client-made `rowId`.
+  WeatherSnapshot: [
+    ...str("source", "place", "condition", "summary"), // source: open-meteo | manual; condition: clear | partlyCloudy | cloudy | fog | drizzle | rain | snow | thunderstorm
+    ...date("fetchedAt"),
+    f("tempMinC", "Float"),
+    f("tempMaxC", "Float"),
+    f("precipitationMm", "Float"),
+    f("windMaxKph", "Float")
+  ],
+  ManpowerEntry: [
+    ...str("rowId"),
+    ...id("companyId"),
+    ...str("companyName", "trade"),
+    ...int("headcount"),
+    f("hours", "Float"),
+    ...str("workDone", "location")
+  ],
+  EquipmentEntry: [...str("rowId", "name"), ...int("quantity"), f("hoursUsed", "Float"), ...str("status", "notes")], // status: working | idle | broken
+  DeliveryEntry: [...str("rowId", "time", "supplier", "material", "quantity", "deliveryNoteNo")],
+  VisitorEntry: [...str("rowId", "name", "organisation", "purpose", "timeIn", "timeOut")],
+  DelayEntry: [...str("rowId", "type", "description"), f("durationHours", "Float")], // type: weather | material | labour | design | owner | inspection | access | other
+  SafetyObservation: [...str("rowId", "type", "description", "actionTaken")] // type: observation | nearMiss | incident | toolboxTalk | inspection
 };
 
 // ---------- Entities (schemaType 1) ----------
@@ -360,6 +382,49 @@ const entities = {
     f("mentionUserIds", "ID", true),
     ...bool("isVoided"),
     ...str("voidReason")
+  ],
+  // The site diary: one per project per day (05-daily-logs.md). The general contractor's sections
+  // live here; each company's crew lives in its own DailyLogCrew, so companies never overwrite each
+  // other. Blocks has no unique index: when two people open an empty day at once, the log saved
+  // first (CreatedDate, then ItemId) is the day's log and the other gets `duplicateOf`.
+  DailyLog: [
+    ...PROJECT,
+    ...str("logDate", "status"), // logDate: yyyy-MM-dd in the project's timezone; status: draft | submitted
+    ...int("version"), // +1 on every update, the compare-and-set guard
+    ...bool("isWorkingDay"),
+    f("weather", "WeatherSnapshot"),
+    f("weatherOverride", "WeatherSnapshot"),
+    ...str("siteConditions"), // normal | wet | frozen | flooded | noAccess
+    f("equipment", "EquipmentEntry", true),
+    f("deliveries", "DeliveryEntry", true),
+    f("visitors", "VisitorEntry", true),
+    f("delays", "DelayEntry", true),
+    f("safety", "SafetyObservation", true),
+    ...str("notes"),
+    f("manpowerSummary", "ManpowerEntry", true), // every company's crew, frozen at submit
+    ...int("totalHeadcount"),
+    f("totalHours", "Float"),
+    ...date("createdAt", "submittedAt"),
+    ...id("createdByUserId", "submittedByUserId"),
+    ...str("submittedByName"),
+    ...int("correctionCount"),
+    ...id("duplicateOf"),
+    f("lastChange", "LastChange")
+  ],
+  // One company's crew and notes for one log (05 §2, option C).
+  DailyLogCrew: [
+    ...PROJECT,
+    ...id("dailyLogId"),
+    ...str("logDate"),
+    ...id("companyId"),
+    ...str("companyName", "status"), // status: open | locked (at submit)
+    ...int("version"),
+    f("manpower", "ManpowerEntry", true),
+    ...str("notes"),
+    ...id("lastEditedByUserId"),
+    ...str("lastEditedByName"),
+    ...date("lastEditedAt"),
+    ...id("duplicateOf")
   ]
 };
 
@@ -419,6 +484,10 @@ const access = {
   Photo: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Punch list: only through the punch Function (subcontractors see their company's items).
   PunchItem: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  // Daily logs: only through the daily-logs Function (subcontractors see the day's header and their
+  // own company's crew; owners see submitted logs only).
+  DailyLog: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  DailyLogCrew: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Own settings, read and saved through the projects Function (the caller's id from their token).
   NotificationPreference: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] }
 };

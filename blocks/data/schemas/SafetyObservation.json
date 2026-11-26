@@ -1,0 +1,27 @@
+{
+  "schemaName": "SafetyObservation",
+  "collectionName": "SafetyObservations",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "rowId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "type",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "description",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "actionTaken",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

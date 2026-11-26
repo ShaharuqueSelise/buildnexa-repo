@@ -74,8 +74,10 @@ assigned to. The module's Function checks the record as well as the key. — = n
 | submittal.manage | ✓ | — | ✓ | — | — | — |
 | submittal.upload_own | — | — | — | ✓ | — | — |
 | submittal.review | ✓ | — | — | — | ✓ | — |
-| daily_log.view | ✓ | ✓ | ✓ | — | L (submitted) | L (submitted) |
-| daily_log.create | ✓ | ✓ | — | L (own crew) | — | — |
+| daily_log.view (every section, drafts too) | ✓ | ✓ | ✓ | — | — | — |
+| daily_log.view_submitted (submitted logs only) | — | — | — | — | — | ✓ |
+| daily_log.create (open a day, fill it, every crew, submit) | ✓ | ✓ | — | — | — | — |
+| daily_log.crew_own (the day's header, own company's crew and notes, opens today only) | — | — | — | L (own crew) | — | — |
 | daily_log.correct | ✓ | — | — | — | — | — |
 | punch_item.view | ✓ | ✓ | ✓ | L (assigned) | ✓ | ✓ |
 | punch_item.create, assign, close | ✓ | ✓ | — | — | — | — |
@@ -135,6 +137,7 @@ list does not let anyone read the secret's value; that was tested and refused wi
 | P6 | **Role names** | Screens use the spec's names. System names stay (`field-user` = Subcontractor, `design-reviewer` = Designer / Consultant, `owner-viewer` = Owner). |
 | P7 | **Custom roles** | Not built. The code checks permission keys, never role names, so a custom role later is one more entry in the table. |
 | P8 | **Document Controller: pins on drawings** | **Agreed with the client 2026-11-25:** a DC places pins too. `drawing.pin` now includes the DC, so a DC can pin the RFIs they raise ("New RFI here") and pin an existing punch item that has no pin. "New punch item here" still needs `punch_item.create` (PM, superintendent). As before, a DC moves or removes any pin through `drawing.manage_versions`. |
+| P9 | **Designer / Consultant: daily logs** | **Decided 2026-11-26:** designers get no daily logs (the spec gave them submitted logs). Subcontractors see only the day's header (date, status, weather, site conditions) and their own company's crew, never the other sections or other companies. |
 
 ## 7. Known limits (accepted for now)
 
