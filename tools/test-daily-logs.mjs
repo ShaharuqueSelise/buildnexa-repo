@@ -14,9 +14,31 @@ const rows = (schema) => (store[schema] ??= []);
 // The gateway stamps CreatedDate on every insert; each one a little later than the last.
 let clock = Date.parse("2026-11-01T08:00:00Z");
 
+// Open-Meteo behind the two proxies: two towns called Hamburg (the German one is not the first
+// answer, so the country has to pick it), then the day's figures. `wx.down` makes both fail.
+const wx = { down: false, calls: [] };
+function fakeProxy(url) {
+  const u = new URL(url);
+  wx.calls.push(u.pathname.replace("/logic/v4/proxy/gateway/", "") + u.search);
+  if (wx.down) return { ok: false, status: 503, json: async () => ({ code: "PROXY_GATEWAY_UNAVAILABLE" }) };
+  const json = (body) => ({ ok: true, status: 200, json: async () => body });
+  if (u.pathname.endsWith("/gateway/geocoding")) {
+    return json({ results: [
+      { name: "Hamburg", latitude: 42.71, longitude: -78.83, country: "United States", country_code: "US", timezone: "America/New_York" },
+      { name: "Hamburg", latitude: 53.55, longitude: 9.99, country: "Germany", country_code: "DE", timezone: "Europe/Berlin" }
+    ] });
+  }
+  if (u.pathname.endsWith("/gateway/weather")) {
+    const date = u.searchParams.get("start_date");
+    return json({ daily: { time: [date], weather_code: [63], temperature_2m_max: [7.24], temperature_2m_min: [2.06], precipitation_sum: [4.5], wind_speed_10m_max: [55.38] } });
+  }
+  return { ok: false, status: 403, json: async () => ({}) };
+}
+
 globalThis.fetch = async (url, init) => {
   const json = (body) => ({ ok: true, status: 200, json: async () => body });
   if (String(url).includes("/oidc/token")) return json({ access_token: "test-token" });
+  if (String(url).includes("/proxy/gateway/")) return fakeProxy(String(url));
   if (String(url).includes("/logic/v4/")) return json({ isSuccess: true });
   const { query, variables } = JSON.parse(init.body);
   let m;
@@ -54,7 +76,7 @@ const { default: handler } = await import(pathToFileURL(join(here, "..", "functi
 // ---------- seed: the GC with one person per role, two subcontractors, design and owner ----------
 const T = "company-west";
 const P = "p1";
-rows("Project").push({ ItemId: P, tenantRole: T, number: "PRJ-001", name: "Tank Farm", status: "active", timezone: "Europe/Berlin", address: { street: "Kai 1", city: "Hamburg" } });
+rows("Project").push({ ItemId: P, tenantRole: T, number: "PRJ-001", name: "Tank Farm", status: "active", timezone: "Europe/Berlin", address: { street: "Kai 1", city: "Hamburg", country: "Germany" } });
 rows("Project").push({ ItemId: "p2", tenantRole: T, number: "PRJ-002", name: "Old", status: "archived", timezone: "Europe/Berlin" });
 const people = {
   pm: { role: "project-manager", account: "staff", company: "gc", companyName: "West Build" },
@@ -212,6 +234,39 @@ await test("two people on different cards never block each other; the same card 
   expect(b.log.deliveries.length === 1 && b.log.visitors.length === 1, "both kept");
   refused(await call("pm", { action: "saveSection", date: today, section: "deliveries", value: [], base: before.deliveries }), "CONFLICT", "stale deliveries");
   expect((await call("pm", { action: "get", date: today })).log.deliveries.length === 1, "the delivery is still there");
+});
+
+await test("opening a day fetches its forecast for the project's city; the provider down still opens the log", async () => {
+  const w = logsOn(today)[0].weather;
+  expect(w?.source === "open-meteo" && w.place === "Hamburg" && w.condition === "rain" && w.summary === "Moderate rain", JSON.stringify(w));
+  expect(w.tempMaxC === 7.2 && w.tempMinC === 2.1 && w.precipitationMm === 4.5 && w.windMaxKph === 55.4, "rounded figures");
+  const forecast = wx.calls.find((x) => x.startsWith("weather?"));
+  expect(forecast.includes("latitude=53.55") && forecast.includes("timezone=Europe%2FBerlin") && forecast.includes(`start_date=${today}`), `the German Hamburg, project timezone: ${forecast}`);
+  wx.down = true;
+  const r = await call("pm", { action: "open", date: dayPlus(-10) });
+  wx.down = false;
+  ok(r, "open with the provider down");
+  expect(r.log.weather === null, "no weather");
+  wx.calls.length = 0;
+  ok(await call("pm", { action: "open", date: dayPlus(-120) }), "open long ago");
+  expect(wx.calls.length === 0 && logsOn(dayPlus(-120))[0].weather === undefined, "no forecast call outside the provider's range");
+});
+
+await test("refresh forecast: the GC on a draft only; a failure says so and changes nothing", async () => {
+  refused(await call("sub", { action: "refreshWeather", date: dayPlus(-10) }), "NOT_ALLOWED", "subcontractor");
+  refused(await call("dc", { action: "refreshWeather", date: dayPlus(-10) }), "NOT_ALLOWED", "document controller");
+  refused(await call("pm", { action: "refreshWeather", date: dayPlus(-11) }), "NO_LOG", "no log");
+  wx.down = true;
+  refused(await call("supt", { action: "refreshWeather", date: dayPlus(-10) }), "WEATHER_UNAVAILABLE", "provider down");
+  wx.down = false;
+  expect(!logsOn(dayPlus(-10))[0].weather, "unchanged");
+  const project = rows("Project").find((x) => x.ItemId === P);
+  project.address.city = "";
+  refused(await call("supt", { action: "refreshWeather", date: dayPlus(-10) }), "NO_LOCATION", "no city");
+  project.address.city = "Hamburg";
+  const r = await call("supt", { action: "refreshWeather", date: dayPlus(-10) });
+  ok(r, "refresh");
+  expect(r.log.weather.source === "open-meteo" && r.log.weather.condition === "rain" && r.log.version === 1, JSON.stringify(r.log.weather));
 });
 
 await test("weather: a manual entry wins over the forecast; clearing it goes back", async () => {

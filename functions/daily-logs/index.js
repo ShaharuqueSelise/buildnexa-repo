@@ -1,4 +1,4 @@
-// Daily logs, part 1: the server (docs/architecture/05-daily-logs.md; permissions in
+// Daily logs: the server (docs/architecture/05-daily-logs.md; permissions in
 // functions/_shared/permissions.js). Every DailyLog and DailyLogCrew is read and written only here:
 // the Data Gateway rules let only the service identity touch them, because a rule can't see a
 // person's role or company on ONE project.
@@ -6,13 +6,15 @@
 //
 //   { action: "month", projectId, month: "yyyy-MM" }   -> { days, today, role, can }
 //   { action: "get", projectId, date }                 -> detail (log: null when the day has none)
-//   { action: "open", projectId, date }                -> detail, creating the day's log when allowed
+//   { action: "open", projectId, date }                -> detail, creating the day's log (with the
+//                                                         day's Open-Meteo forecast) when allowed
 //   { action: "saveSection", projectId, date, section, value, base? }   -> detail
 //       section: equipment | deliveries | visitors | delays | safety | notes | siteConditions | weatherOverride
 //       base: the section as the caller last saw it; a save is refused (CONFLICT) only when someone
 //       changed that same section since, so two people editing different cards never block each other.
 //   { action: "saveCrew", projectId, date, companyId?, manpower, notes, version? }  -> detail
-//   { action: "submit", projectId, date }              -> detail
+//   { action: "submit", projectId, date }              -> detail (the day's weather is read again)
+//   { action: "refreshWeather", projectId, date }      -> detail (GC, draft only)
 //   { action: "correct", projectId, date, reason, section + value | crewCompanyId + manpower + notes } -> detail
 // detail = { date, today, role, archived, log, crews, companies, missingCrews, can, history }.
 //
@@ -733,7 +735,7 @@ async function projectContext(db, me, projectId, { write = false } = {}) {
   const id = String(projectId ?? "");
   if (!id) throw new Refused("NOT_FOUND", "Choose a project first.");
   const [projects, team] = await Promise.all([
-    db.list("Project", "ItemId number name status timezone address { city }", me.tenantRole, { ItemId: id }),
+    db.list("Project", "ItemId number name status timezone address { city country }", me.tenantRole, { ItemId: id }),
     db.list("ProjectMember", TEAM_FIELDS, me.tenantRole, { projectId: id })
   ]);
   const project = projects[0];
@@ -799,6 +801,105 @@ async function loadHistory(db, c, log) {
 const isSubmitted = (log) => log?.status === "submitted";
 const fullView = (c, log) => c.seesAll || (c.seesSubmitted && isSubmitted(log));
 const effectiveWeather = (log) => (log.weatherOverride?.source === "manual" ? log.weatherOverride : log.weather?.source ? log.weather : null);
+
+// ---------- weather: Open-Meteo through two Blocks Proxies ----------
+// The proxies keep the provider's address on the server, one endpoint each (called on the proxy's
+// base path, so nothing else of the provider is reachable): `geocoding` →
+// geocoding-api.open-meteo.com/v1/search (the project's city to coordinates) and `weather` →
+// api.open-meteo.com/v1/forecast (the day's figures). Moving to Open-Meteo's paid plan (its free API is for non-commercial
+// use only) is a proxy change: new upstream plus the API key as a proxy secret, no code change.
+// The data is CC BY 4.0, so the screen credits Open-Meteo. Best effort throughout: any failure
+// means "no forecast", and the site team enters the weather by hand.
+const PROXY = { geocoding: "geocoding", weather: "weather" };
+const WEATHER_SOURCE = "open-meteo";
+const WEATHER_TIMEOUT_MS = 5000;
+// The forecast API answers for about three months back and two weeks ahead.
+const WEATHER_PAST_DAYS = 90;
+const WEATHER_AHEAD_DAYS = 14;
+const WEATHER_DAILY = "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max";
+// WMO weather code → our condition and the provider's wording.
+const WMO = {
+  0: ["clear", "Clear sky"], 1: ["partlyCloudy", "Mainly clear"], 2: ["partlyCloudy", "Partly cloudy"], 3: ["cloudy", "Overcast"],
+  45: ["fog", "Fog"], 48: ["fog", "Freezing fog"],
+  51: ["drizzle", "Light drizzle"], 53: ["drizzle", "Moderate drizzle"], 55: ["drizzle", "Dense drizzle"],
+  56: ["drizzle", "Light freezing drizzle"], 57: ["drizzle", "Dense freezing drizzle"],
+  61: ["rain", "Slight rain"], 63: ["rain", "Moderate rain"], 65: ["rain", "Heavy rain"],
+  66: ["rain", "Light freezing rain"], 67: ["rain", "Heavy freezing rain"],
+  71: ["snow", "Slight snowfall"], 73: ["snow", "Moderate snowfall"], 75: ["snow", "Heavy snowfall"], 77: ["snow", "Snow grains"],
+  80: ["rain", "Slight rain showers"], 81: ["rain", "Moderate rain showers"], 82: ["rain", "Violent rain showers"],
+  85: ["snow", "Slight snow showers"], 86: ["snow", "Heavy snow showers"],
+  95: ["thunderstorm", "Thunderstorm"], 96: ["thunderstorm", "Thunderstorm with slight hail"], 99: ["thunderstorm", "Thunderstorm with heavy hail"]
+};
+const round1 = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 10) / 10 : undefined);
+
+async function proxyGet(ctx, token, slug, query) {
+  const res = await fetch(`${API}/logic/v4/proxy/gateway/${slug}?${new URLSearchParams(query)}`, {
+    headers: { authorization: `Bearer ${token}`, "x-blocks-key": ctx.context.tenantId },
+    signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS)
+  });
+  if (!res.ok) throw new Error(`proxy ${slug} answered ${res.status}`);
+  return res.json();
+}
+
+// The project's city as coordinates. With several towns of that name, the one in the project's
+// country (name or ISO code) wins; else the largest (the provider sorts by population).
+async function geocode(ctx, token, address) {
+  const city = text(address?.city, 100);
+  if (!city) return null;
+  const json = await proxyGet(ctx, token, PROXY.geocoding, { name: city, count: "10", language: "en", format: "json" });
+  const results = (Array.isArray(json?.results) ? json.results : []).filter((r) => Number.isFinite(r?.latitude) && Number.isFinite(r?.longitude));
+  const country = text(address?.country, 100).toLowerCase();
+  const hit = (country && results.find((r) => [r.country, r.country_code].some((v) => String(v ?? "").toLowerCase() === country))) || results[0];
+  return hit ? { latitude: hit.latitude, longitude: hit.longitude, place: text(hit.name, 100) || city, timezone: hit.timezone } : null;
+}
+
+/** The day's weather for the project's city, or null (no city, out of range, provider down). */
+async function forecastFor(ctx, c, date) {
+  if (!ctx || date < addDays(c.today, -WEATHER_PAST_DAYS) || date > addDays(c.today, WEATHER_AHEAD_DAYS)) return null;
+  const t0 = Date.now();
+  let step = "token";
+  try {
+    // The caller's own token: the proxies accept anyone signed in. (With the service identity's
+    // token the proxy gateway never answered from inside a Function, seen on Dev 2026-11-26.)
+    const token = (await ctx.blocks?.getAccessToken?.().catch(() => null)) || (await serviceToken(ctx));
+    step = "geocoding";
+    const at = await geocode(ctx, token, c.project.address);
+    if (!at) {
+      ctx.log?.warn?.("weather: the project's city was not found", { ms: Date.now() - t0 });
+      return null;
+    }
+    step = "forecast";
+    const json = await proxyGet(ctx, token, PROXY.weather, {
+      latitude: String(at.latitude),
+      longitude: String(at.longitude),
+      daily: WEATHER_DAILY,
+      timezone: c.project.timezone || at.timezone || "auto",
+      start_date: date,
+      end_date: date,
+      wind_speed_unit: "kmh"
+    });
+    const d = json?.daily;
+    if (!d || d.time?.[0] !== date) return null;
+    const pick = (k) => round1(Array.isArray(d[k]) ? d[k][0] : undefined);
+    const [condition, summary] = WMO[d.weather_code?.[0]] ?? [];
+    const snap = {
+      source: WEATHER_SOURCE,
+      place: at.place,
+      fetchedAt: new Date().toISOString(),
+      condition,
+      summary,
+      tempMaxC: pick("temperature_2m_max"),
+      tempMinC: pick("temperature_2m_min"),
+      precipitationMm: pick("precipitation_sum"),
+      windMaxKph: pick("wind_speed_10m_max")
+    };
+    if (!snap.condition && snap.tempMaxC === undefined) return null;
+    return Object.fromEntries(Object.entries(snap).filter(([, v]) => v !== undefined));
+  } catch (error) {
+    ctx.log?.warn?.("weather unavailable", { step, ms: Date.now() - t0, message: String(error?.message ?? error).slice(0, 200) });
+    return null;
+  }
+}
 const rowsOf = (rows) => (Array.isArray(rows) ? rows : []);
 const totalsOf = (rows) => ({
   headcount: rows.reduce((s, r) => s + (Number(r.headcount) || 0), 0),
@@ -1023,9 +1124,10 @@ function history(db, c, log, action, summary, extra = {}) {
 }
 
 // The day's log, created when it has none (the earliest saved wins a race).
-async function ensureLog(db, c, date) {
+async function ensureLog(db, c, date, ctx) {
   const existing = await loadLog(db, c, date);
   if (existing) return existing;
+  const weather = await forecastFor(ctx, c, date);
   const now = new Date().toISOString();
   const row = {
     tenantRole: c.me.tenantRole,
@@ -1034,6 +1136,7 @@ async function ensureLog(db, c, date) {
     status: "draft",
     version: 0,
     isWorkingDay: !isWeekend(date),
+    ...(weather ? { weather } : {}),
     siteConditions: "",
     equipment: [],
     deliveries: [],
@@ -1090,7 +1193,7 @@ async function get(db, me, args) {
   return detail(db, c, validDate(args.date));
 }
 
-async function open(db, me, args) {
+async function open(db, me, args, ctx) {
   const c = await projectContext(db, me, args.projectId);
   const date = validDate(args.date);
   const existing = await loadLog(db, c, date);
@@ -1100,7 +1203,7 @@ async function open(db, me, args) {
   if (!c.writer && !(c.crewOwn && date === c.today)) {
     throw new Refused("NOT_ALLOWED", c.crewOwn ? "Only the superintendent or the project manager opens the log for another day." : "Only the superintendent or the project manager opens a day's log.");
   }
-  return detail(db, c, date, await ensureLog(db, c, date));
+  return detail(db, c, date, await ensureLog(db, c, date, ctx));
 }
 
 async function saveSection(db, me, args) {
@@ -1197,7 +1300,7 @@ function summaryOf(crews) {
   return { manpowerSummary: rows, totalHeadcount: totalsOf(rows).headcount, totalHours: totalsOf(rows).hours };
 }
 
-async function submit(db, me, args) {
+async function submit(db, me, args, ctx) {
   const c = await projectContext(db, me, args.projectId, { write: true });
   const date = validDate(args.date);
   if (!c.writer) throw new Refused("NOT_ALLOWED", "Only the superintendent and the project manager submit the log.");
@@ -1213,9 +1316,27 @@ async function submit(db, me, args) {
     await db.updateWhere("DailyLogCrew", { ItemId: { eq: x.ItemId }, version: { eq: Number(x.version ?? 0) } }, me.tenantRole, { status: "locked", version: Number(x.version ?? 0) + 1 });
   }
   const sum = summaryOf(crews);
+  // The day's weather as recorded at submit (best effort; a failure keeps the morning's forecast).
+  const weather = await forecastFor(ctx, c, date);
   const now = new Date().toISOString();
-  const saved = await saveLog(db, c, log, { status: "submitted", submittedAt: now, submittedByUserId: me.userId, submittedByName: actor(c), ...sum }, "statusChanged");
+  const saved = await saveLog(db, c, log, { status: "submitted", submittedAt: now, submittedByUserId: me.userId, submittedByName: actor(c), ...sum, ...(weather ? { weather } : {}) }, "statusChanged");
   await history(db, c, saved, "submitted", `${actor(c)} submitted the log for ${niceDate(date)} (${plural(sum.totalHeadcount, "worker")}, ${plural(crews.filter((x) => rowsOf(x.manpower).length).length, "company")})`, { fromStatus: "draft", toStatus: "submitted" });
+  return detail(db, c, date, saved);
+}
+
+// "Refresh forecast" on a draft: the GC reads the day's weather again (the morning forecast for a
+// day that has passed becomes the measured figures).
+async function refreshWeather(db, me, args, ctx) {
+  const c = await projectContext(db, me, args.projectId, { write: true });
+  const date = validDate(args.date);
+  if (!c.writer) throw new Refused("NOT_ALLOWED", "Only the superintendent and the project manager refresh the forecast.");
+  const log = await loadLog(db, c, date);
+  if (!log) throw new Refused("NO_LOG", "There is no log for this day yet.");
+  if (log.status !== "draft") throw new Refused("INVALID_TRANSITION", "A submitted log keeps the weather it was submitted with.");
+  if (!text(c.project.address?.city, 100)) throw new Refused("NO_LOCATION", "The project has no city, so there is no forecast. Add the city in the project settings, or enter the weather by hand.");
+  const weather = await forecastFor(ctx, c, date);
+  if (!weather) throw new Refused("WEATHER_UNAVAILABLE", "The forecast couldn't be loaded for this day. Try again later, or enter the weather by hand.");
+  const saved = await saveLog(db, c, log, { weather }, "updated");
   return detail(db, c, date, saved);
 }
 
@@ -1259,10 +1380,11 @@ export default async function handler(input, ctx) {
   return handle(input, ctx, "daily-logs", {
     month: (args, { db, me }) => month(db, me, args),
     get: (args, { db, me }) => get(db, me, args),
-    open: (args, { db, me }) => open(db, me, args),
+    open: (args, { ctx, db, me }) => open(db, me, args, ctx),
     saveSection: (args, { db, me }) => saveSection(db, me, args),
     saveCrew: (args, { db, me }) => saveCrew(db, me, args),
-    submit: (args, { db, me }) => submit(db, me, args),
+    submit: (args, { ctx, db, me }) => submit(db, me, args, ctx),
+    refreshWeather: (args, { ctx, db, me }) => refreshWeather(db, me, args, ctx),
     correct: (args, { db, me }) => correct(db, me, args)
   });
 }

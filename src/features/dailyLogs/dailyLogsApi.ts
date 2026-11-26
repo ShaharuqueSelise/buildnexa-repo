@@ -147,6 +147,7 @@ export type LogAction =
   | { action: "saveSection"; section: SectionKey; value: unknown; base?: unknown }
   | { action: "saveCrew"; companyId?: string; manpower: ManpowerRow[]; notes: string; version?: number }
   | { action: "submit" }
+  | { action: "refreshWeather" }
   | { action: "correct"; reason: string; section?: SectionKey; value?: unknown; crewCompanyId?: string; manpower?: ManpowerRow[]; notes?: string };
 
 /** Runs one action on the day; the answer (the day's full detail) replaces the cached copy. */

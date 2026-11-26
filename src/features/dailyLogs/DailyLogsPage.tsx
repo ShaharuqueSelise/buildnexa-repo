@@ -6,15 +6,16 @@
 // Every action goes through the daily-logs Function, which decides who may do what; the buttons
 // follow its `can` answers. Each card saves on its own (with the card as it was shown, so two people
 // on different cards never block each other).
-// Not real yet: the weather forecast from Open-Meteo (Part 3; until then the superintendent types the
-// weather in), photos on a log (Part 4), the bell and emails on submit and correction and the
+// The weather is the day's Open-Meteo forecast for the project's city, fetched by the Function when
+// the day is opened and again at submit; the superintendent can refresh it or type over it.
+// Not real yet: photos on a log (Part 4), the bell and emails on submit and correction and the
 // "remind a company" button (Part 5); copy yesterday and the weekly / monthly PDF (R2), offline
 // entry (R3).
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   AlertTriangle, CalendarDays, Camera, CheckCircle2, ChevronLeft, ChevronRight, CloudSun, Copy, Download, FileText, HardHat, History, List, Loader2,
-  Lock, Pencil, Plus, Send, ShieldCheck, StickyNote, Trash2, Truck, UserCheck, Users, Wifi, Wind, Wrench
+  Lock, Pencil, Plus, RefreshCw, Send, ShieldCheck, StickyNote, Trash2, Truck, UserCheck, Users, Wifi, Wind, Wrench
 } from "lucide-react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import type { TranslationKey } from "../../lib/i18n/dictionary";
@@ -395,7 +396,7 @@ function LogDetailView({ ctx, detail, log }: { ctx: Ctx; detail: LogDetail; log:
       </Panel>
 
       <div className="m-dlog-sections">
-        <WeatherCard ctx={ctx} log={log} editable={can.editSections} busy={busy} onSave={saveSection} />
+        <WeatherCard ctx={ctx} log={log} editable={can.editSections} busy={busy} onSave={saveSection} onRefresh={() => run({ action: "refreshWeather" }, t("dlog.wxRefreshed"))} />
 
         <Panel
           className="m-dlog-wide m-panel-flush"
@@ -502,7 +503,7 @@ function LogDetailView({ ctx, detail, log }: { ctx: Ctx; detail: LogDetail; log:
 type SaveFn = (section: SectionKey, value: unknown, base: unknown, done?: string, after?: () => void) => void;
 
 // ---------- weather and site conditions ----------
-function WeatherCard({ ctx, log, editable, busy, onSave }: { ctx: Ctx; log: LogView; editable: boolean; busy: boolean; onSave: SaveFn }) {
+function WeatherCard({ ctx, log, editable, busy, onSave, onRefresh }: { ctx: Ctx; log: LogView; editable: boolean; busy: boolean; onSave: SaveFn; onRefresh: () => void }) {
   const { t } = ctx;
   const [editing, setEditing] = useState(false);
   const w = log.weather;
@@ -515,6 +516,7 @@ function WeatherCard({ ctx, log, editable, busy, onSave }: { ctx: Ctx; log: LogV
       title={<><CloudSun size={16} /> {t("dlog.weather")}</>}
       actions={<>
         {w ? <Badge tone={manual ? "blue" : "teal"}>{manual ? t("dlog.wxManual") : fmt(t("dlog.wxAuto"), { place: w.place || ctx.city })}</Badge> : null}
+        {editable && !manual && !editing && ctx.city ? <Button small variant="ghost" icon={<RefreshCw size={14} />} disabled={busy} onClick={onRefresh}>{t("dlog.wxRefresh")}</Button> : null}
         {editable && !editing ? <Button small variant="secondary" icon={<Pencil size={14} />} disabled={busy} onClick={() => setEditing(true)}>{manual ? t("dlog.wxEdit") : t("dlog.wxEnter")}</Button> : null}
         {editable && manual && !editing ? <Button small variant="ghost" disabled={busy} onClick={() => onSave("weatherOverride", null, log.weatherOverride ?? null, t("dlog.wxCleared"))}>{t("dlog.wxClear")}</Button> : null}
       </>}
@@ -531,6 +533,12 @@ function WeatherCard({ ctx, log, editable, busy, onSave }: { ctx: Ctx; log: LogV
             <div className={cx("m-dlog-wx", windFlag && "m-tone-red")}><small>{t("dlog.wxWind")}</small><b><Wind size={14} /> {num(w.windMaxKph, " km/h")}</b></div>
             <div className="m-dlog-wx m-dlog-wx-wide"><small>{t("dlog.wxSummary")}</small><b style={{ fontSize: 13 }}>{w.summary || "—"}</b></div>
           </div>
+          {w.source === "open-meteo" ? (
+            <p className="m-small m-muted" style={{ margin: "8px 0 0" }}>
+              {w.fetchedAt ? `${fmt(t("dlog.wxFetched"), { when: new Date(w.fetchedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) })} · ` : ""}
+              <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">{t("dlog.wxCredit")}</a>
+            </p>
+          ) : null}
           {windFlag ? (
             <div style={{ marginTop: 10 }}>
               <Note tone="danger">
@@ -544,7 +552,7 @@ function WeatherCard({ ctx, log, editable, busy, onSave }: { ctx: Ctx; log: LogV
             </div>
           ) : null}
         </>
-      ) : <p className="m-muted" style={{ margin: 0 }}>{editable ? t("dlog.wxNoneEditor") : t("dlog.wxNone")}</p>}
+      ) : <p className="m-muted" style={{ margin: 0 }}>{!editable ? t("dlog.wxNone") : ctx.city ? t("dlog.wxNoneEditor") : t("dlog.wxNoCity")}</p>}
 
       <div className="m-dlog-site">
         <span className="m-small m-muted">{t("dlog.siteConditions")}</span>
