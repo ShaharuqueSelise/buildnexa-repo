@@ -1,0 +1,27 @@
+{
+  "schemaName": "ChangeArea",
+  "collectionName": "ChangeAreas",
+  "schemaType": 2,
+  "fields": [
+    {
+      "name": "x",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "y",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "w",
+      "type": "Float",
+      "isArray": false
+    },
+    {
+      "name": "h",
+      "type": "Float",
+      "isArray": false
+    }
+  ]
+}

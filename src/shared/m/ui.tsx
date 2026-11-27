@@ -4,7 +4,7 @@
 // looking up the demo's sample data, and Drawer uses a <div> (the app's global `aside` rule is the
 // sidebar's).
 import { useCallback, useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { X } from "lucide-react";
 import "./m.css";
 
@@ -84,9 +84,9 @@ export function Timeline({ items }: { items: { who?: string; when: string; title
   return (
     <ol className="m-timeline">
       {items.map((it, i) => (
-        <li key={i}>
-          <span className={`m-timeline-dot m-fill-${it.tone ?? "gray"}`} />
-          <div>
+        <li key={i} style={{ "--tl": `var(--m-${it.tone ?? "gray"}-fg)` } as CSSProperties}>
+          <span className="m-timeline-dot" />
+          <div className="m-timeline-card">
             <div className="m-timeline-head">{it.who ? <PersonChip name={it.who} /> : null}<span className="m-muted">{it.when}</span></div>
             <div className="m-timeline-title">{it.title}</div>
             {it.body ? <div className="m-timeline-body">{it.body}</div> : null}

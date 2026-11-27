@@ -8,7 +8,7 @@
 // Not real yet: drawing sets up to 500 MB with automatic split (R2), the current set as a zip
 // (R2), compare (R2), markups and offline sheets (R3), punch pins (Phase 3 step 3).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, FileDown, FileText, FileUp, LayoutGrid, List, Loader2, Map as MapIcon, MapPin, ScanText, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileDown, FileText, FileUp, GitCompareArrows, LayoutGrid, List, Loader2, Map as MapIcon, MapPin, ScanText, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "../../lib/i18n/LocalizationProvider";
 import type { TranslationKey } from "../../lib/i18n/dictionary";
@@ -26,6 +26,7 @@ import {
 } from "./drawingsApi";
 import type { Discipline, PdfFacts, PublishRow, Register, RevisionSummary, SheetRow } from "./drawingsApi";
 import { SheetViewer } from "./SheetViewer";
+import { compareRevision } from "./compare";
 import "./DrawingsPage.css";
 import { SkeletonPage } from "../../shared/m/Skeleton";
 
@@ -185,6 +186,8 @@ function RegisterView({ projectId, projectNumber, onNavigate, toast, t }: { proj
         <Kpi label={t("drw.kpi.pins")} value={openPins} tone="amber" hint={hidden ? fmt(t("drw.kpi.pinsHidden"), { count: hidden }) : t("drw.kpi.pinsHint")} />
       </div>
 
+      <RecentRevisions sheets={sheets} can={can} t={t} onOpen={(s) => onNavigate(`/drawings/${s.ItemId}?tab=changes`)} />
+
       {sheets.length ? (
         <div className="m-drw-chips">
           {["", ...order.filter((d) => sheets.some((s) => s.discipline === d))].map((d) => (
@@ -277,6 +280,58 @@ function RegisterView({ projectId, projectNumber, onNavigate, toast, t }: { proj
         />
       ) : null}
     </div>
+  );
+}
+
+// ---------- revision impact: the newest revisions and what is still open on them ----------
+const RECENT = 4;
+
+function RecentRevisions({ sheets, can, t, onOpen }: { sheets: SheetRow[]; can: Register["can"]; t: T; onOpen: (s: SheetRow) => void }) {
+  const recent = sheets
+    .filter((s) => s.impact && s.impact.state !== "first" && s.current)
+    .sort((a, b) => (b.current?.uploadedAt ?? "").localeCompare(a.current?.uploadedAt ?? ""))
+    .slice(0, RECENT);
+  if (!recent.length) return null;
+  return (
+    <section className="m-drw-recent">
+      <div className="m-drw-group-head"><GitCompareArrows size={16} /><h3>{t("drw.recent.title")}</h3></div>
+      <div className="m-drw-recent-cards">
+        {recent.map((s) => {
+          const i = s.impact!;
+          const L = i.revisionLabel;
+          const changes = i.state === "pending" ? t("drw.recent.comparing")
+            : i.state === "compared" ? (i.changes === 1 ? t("drw.recent.change") : fmt(t("drw.recent.changes"), { count: i.changes }))
+            : i.state === "failed" ? t("drw.recent.notCompared") : t("drw.recent.checkAll");
+          return (
+            <button key={s.ItemId} type="button" className="m-drw-recent-card" onClick={() => onOpen(s)}>
+              <span className="m-drw-recent-top">
+                <b className="m-mono">{s.sheetNumber}</b>
+                <Badge tone="green">{fmt(t("drw.rev"), { label: L })}</Badge>
+                <span className="m-small m-muted">{fmtShortDate(s.current?.issuedDate)}</span>
+              </span>
+              <span className="m-drw-card-title" title={s.title}>{s.title}</span>
+              <span className="m-drw-recent-stats">
+                <span>{changes}</span>
+                {i.state !== "pending" ? (
+                  <span className={cx(i.toCheck > 0 && "m-imp-warn")}>{i.toCheck > 0 ? fmt(t("drw.recent.toCheck"), { count: i.toCheck }) : t("drw.recent.allChecked")}</span>
+                ) : null}
+              </span>
+              {can.followUp && i.total > 0 ? (
+                <>
+                  <ProgressBar value={(i.confirmed / i.total) * 100} tone={i.confirmed === i.total ? "green" : "amber"} />
+                  <span className="m-small m-muted">{fmt(t("drw.recent.confirmed"), { done: i.confirmed, total: i.total })}</span>
+                </>
+              ) : null}
+              {can.confirm && i.mine ? (
+                i.mine === "confirmed"
+                  ? <span className="m-small"><Badge tone="green"><CheckCircle2 size={11} /> {fmt(t("drw.recent.youConfirmed"), { label: L })}</Badge></span>
+                  : <span className="m-small"><Badge tone="amber">{fmt(t("drw.recent.confirm"), { label: L })}</Badge></span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -401,6 +456,14 @@ export function UploadDialog({ projectId, register, presetSheetId, onClose, onDo
       }));
       const okIds = results.filter((x) => x.ok).map((x) => x.sheetId ?? "");
       refreshDrawings(queryClient, projectId, okIds.filter(Boolean));
+      // Revision impact: compare each new revision with the one before, from the file still in hand.
+      // It goes on after the dialog closes; the sheet shows "Comparing…" meanwhile.
+      for (const res of results) {
+        const row = todo.find((r) => r.key === res.key);
+        if (res.ok && res.sheetId && res.revisionId && res.previous && row) {
+          void compareRevision({ projectId, sheetId: res.sheetId, revisionId: res.revisionId, newFile: row.file, queryClient });
+        }
+      }
       const failedCount = results.filter((x) => !x.ok).length;
       if (okIds.length) toast(fmt(t(okIds.length === 1 ? "drw.up.doneOne" : "drw.up.done"), { count: okIds.length }));
       if (!failedCount) onDone(okIds);

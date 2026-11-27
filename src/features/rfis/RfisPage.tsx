@@ -761,7 +761,7 @@ function RfiDetailView({ ctx, rfiId }: { ctx: Ctx; rfiId: string }) {
                   who: h.actorName,
                   when: fmtDateTime(h.at),
                   title: HISTORY_KEYS.has(h.action) ? t(`rfi.event.${h.action}` as TranslationKey) : h.action,
-                  body: <>{h.summary}{h.reason ? <div><i>“{h.reason}”</i></div> : null}</>,
+                  body: h.summary || h.reason ? <>{h.summary}{h.reason ? <div><i>“{h.reason}”</i></div> : null}</> : undefined,
                   tone: HISTORY_TONE[h.action] ?? "gray"
                 }))}
               />

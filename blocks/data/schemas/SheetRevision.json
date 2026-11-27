@@ -127,6 +127,26 @@
       "name": "voidReason",
       "type": "String",
       "isArray": false
+    },
+    {
+      "name": "changesStatus",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "changeAreas",
+      "type": "ChangeArea",
+      "isArray": true
+    },
+    {
+      "name": "changesComparedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "changesComparedByUserId",
+      "type": "ID",
+      "isArray": false
     }
   ]
 }

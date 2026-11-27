@@ -141,3 +141,49 @@
 @media (prefers-reduced-motion: reduce) { .m-pin-sheet-skel .m-pin-sheet-blank, .m-pin-sheet-skel i { animation: none; } }
 /* "Remove this pin?" in the pin pop-up: the question on its own line, the buttons under it. */
 .m-drw-pop-confirm { background: hsl(var(--muted) / .5); border-radius: 8px; display: grid; gap: 8px; padding: 8px 10px; }
+
+/* ---------- revision impact (Changes tab, clouds, register strip) ---------- */
+.m-drw-cloud { background: rgba(220, 38, 38, .07); border: 2.5px dashed #dc2626; border-radius: 14px; pointer-events: none; position: absolute; }
+.m-drw-cloud > b { background: #dc2626; border: 2px solid #fff; border-radius: 999px; color: #fff; display: grid; font-size: 11px; height: 20px; left: -10px; min-width: 20px; place-items: center; position: absolute; top: -10px; transform-origin: center; }
+.m-drw-legend-btn { background: none; border: 0; cursor: pointer; padding: 0; }
+.m-drw-recent { margin-bottom: 16px; }
+.m-drw-recent-cards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.m-drw-recent-card { background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-left: 4px solid hsl(var(--m-purple-fg)); border-radius: 12px; color: inherit; cursor: pointer; display: grid; gap: 6px; min-width: 0; padding: 12px; text-align: left; transition: box-shadow .15s, transform .15s; }
+.m-drw-recent-card:hover { box-shadow: 0 8px 22px rgba(15, 23, 42, .12); transform: translateY(-1px); }
+.m-drw-recent-top { align-items: center; display: flex; gap: 6px; min-width: 0; }
+.m-drw-recent-top > :last-child { margin-left: auto; }
+.m-drw-recent-stats { display: flex; flex-wrap: wrap; font-size: 12.5px; gap: 4px 12px; }
+.m-drw-recent-stats > span { align-items: center; display: inline-flex; gap: 4px; }
+.m-imp-warn, .m-imp-warn b { color: hsl(var(--m-red-fg)); font-weight: 600; }
+.m-imp { gap: 14px; }
+.m-imp section { display: grid; gap: 8px; }
+.m-imp section > *, .m-imp-item > *, .m-imp-item-main > span { min-width: 0; }
+.m-imp-head { background: linear-gradient(135deg, hsl(var(--m-purple-bg)), hsl(var(--m-blue-bg))); border: 1px solid hsl(var(--m-purple-fg) / .25); border-radius: 12px; display: grid; gap: 6px; padding: 12px; }
+.m-imp-stats { display: grid; gap: 6px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 4px; }
+.m-imp-stats > span { background: hsl(var(--card)); border-radius: 8px; display: grid; font-size: 11.5px; padding: 6px 8px; }
+.m-imp-stats b { font-size: 18px; line-height: 1.1; }
+.m-imp-confirm { background: hsl(var(--m-amber-bg)); border: 1px solid hsl(var(--m-amber-fg) / .35); border-radius: 12px; display: grid; gap: 6px; justify-items: start; padding: 12px; }
+.m-imp-title { align-items: center; display: flex; flex-wrap: wrap; font-size: 13px; font-weight: 700; gap: 8px; justify-content: space-between; }
+.m-imp-title .m-link { align-items: center; display: inline-flex; gap: 4px; }
+.m-imp-changes { display: grid; gap: 6px; }
+.m-imp-change { align-items: center; background: transparent; border: 1px solid hsl(var(--border)); border-radius: 10px; color: inherit; cursor: pointer; display: grid; gap: 10px; grid-template-columns: auto minmax(0, 1fr); padding: 8px 10px; text-align: left; }
+.m-imp-change:hover { background: hsl(var(--secondary) / .6); }
+.m-imp-change > span:last-child { display: grid; gap: 2px; }
+.m-imp-cloud { align-items: center; background: #fef2f2; border: 2px solid #dc2626; border-radius: 999px; color: #dc2626; display: grid; font-size: 11px; font-weight: 800; height: 28px; min-width: 28px; padding: 0 6px; place-items: center; }
+.m-imp-item { border: 1px solid hsl(var(--m-amber-fg) / .45); border-radius: 10px; display: grid; gap: 8px; padding: 8px 10px; }
+.m-imp-item-done { border-color: hsl(var(--m-green-fg) / .4); opacity: .85; }
+.m-imp-item-main { align-items: center; background: none; border: 0; color: inherit; cursor: pointer; display: grid; gap: 8px; grid-template-columns: auto minmax(0, 1fr); padding: 0; text-align: left; }
+.m-imp-item-main > span { display: grid; }
+.m-imp-acks { display: grid; gap: 6px; }
+.m-imp-ack { align-items: center; display: flex; gap: 8px; justify-content: space-between; min-width: 0; }
+.m-imp-ack-name { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-imp-ack-state { align-items: center; display: inline-flex; flex: none; gap: 8px; }
+.m-imp-ack-state .m-small { align-items: center; display: inline-flex; gap: 3px; }
+.m-imp-how { background: hsl(var(--secondary) / .6); border-radius: 10px; display: grid; font-size: 12.5px; gap: 4px; padding: 10px 12px; }
+/* Four side tabs (Revisions, Changes, Pins, Info) fit the 330 px panel. */
+.m-drw-side .m-tabs { gap: 0; justify-content: space-between; scrollbar-width: none; }
+.m-drw-side .m-tab { font-size: 13px; padding: 10px 6px; }
+.m-drw-side .m-tab-count { margin-left: 4px; padding: 1px 6px; }
+/* styles.css centres every <section> at 1100 px; these sit in the page's own grid. */
+.m-drw-recent, .m-imp section { margin: 0 0 16px; max-width: none; }
+.m-imp section { margin: 0; }

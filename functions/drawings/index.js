@@ -20,6 +20,12 @@
 //   { action: "movePin", projectId, pinId, revisionIndex, x, y }    -> { pin }
 //   { action: "removePin", projectId, pinId }                        -> { pinId }
 //   { action: "photoPins", projectId, photoIds }                     -> { pins: { [photoId]: { pinId, sheetId, sheetNumber } } }
+//   Revision impact (§4.7):
+//   { action: "saveChanges", projectId, revisionId, status, areas? } -> { state, areas, notified }   (the browser's comparison)
+//   { action: "checkPin", projectId, pinId, undo? }                   -> { pin }   ("still fits the current revision")
+//   { action: "confirmRevision", projectId, revisionId }             -> {}        (a subcontractor builds to it)
+//   { action: "remindRevision", projectId, revisionId, companyId? }  -> { reminded, skipped }
+//   { action: "askHolders", projectId, revisionId }                  -> { notified }
 //
 // Rules (Phase 3 decisions, 24 Nov 2026):
 // - The caller must be an active member of the project. Everyone on the team sees the register
@@ -47,6 +53,16 @@
 //   and never trigger "sheet revised" notices.
 // - Every sheet change matches the row's `version` (compare-and-set); revisions are never
 //   overwritten, nothing is deleted.
+// - Revision impact (2026-11-27): after a new revision is published, the uploader's browser renders
+//   it and the previous revision with pdf.js and saves the areas that changed (saveChanges; first
+//   result wins, a failed comparison may be tried again by anyone who uploads). Open RFIs and active
+//   punch items placed on an earlier revision inside a changed area are "to check" until someone
+//   confirms they still fit (checkPin: GC team, the ball holder or who placed the pin) or moves the
+//   pin. Their ball holders get one bell when the result is saved; when the PDFs couldn't be compared
+//   or the sheet was redrawn, every such item is to check. Each subcontractor company on the team
+//   confirms it builds to the current revision (confirmRevision); opening the sheet marks it
+//   "opened". The GC team (drawing.follow_up_revision) sees every company's answer and reminds
+//   (at most every 12 hours per company); a subcontractor sees only their own company's.
 // Never returns or logs a token; download links only go to people who may open the sheet.
 
 // >>> shared: functions/_shared/blocks.js (copied by tools/sync-functions.mjs, do not edit here)
@@ -579,6 +595,10 @@ const PROJECT_PERMISSIONS = {
   "drawing.pin": [PM, SUPT, DC, SUB], // DC added 2026-11-25 (P8, client agreed)
   "drawing.upload": [PM, DC, DESIGN], // design: revisions of their own discipline
   "drawing.manage_versions": [PM, DC], // supersede, void, register
+  // Revision impact (2026-11-27): the GC team follows up a new revision (who confirmed, reminders,
+  // flagged pins still valid); each subcontractor company confirms it builds to the new revision.
+  "drawing.follow_up_revision": [PM, SUPT, DC],
+  "drawing.confirm_revision": [SUB],
   // Documents and photos
   "document.view": [PM, SUPT, DC, OWNER],
   "document.view_relevant": [SUB, DESIGN],
@@ -692,10 +712,15 @@ const SHEET_FIELDS =
   "currentThumbFileId currentRevisionLabel lastIssuedDate currentRevisionIndex createdByUserId createdAt updatedAt isVoided voidReason";
 const REV_FIELDS =
   "ItemId projectId sheetId sheetNumber revisionLabel issuedDate note status revisionIndex sizeBytes fileId thumbFileId fileName " +
-  "pageWidthPt pageHeightPt uploadedByUserId uploadedByCompanyId uploadedByName uploadedAt supersededAt voidedAt voidedByUserId isVoided voidReason";
+  "pageWidthPt pageHeightPt uploadedByUserId uploadedByCompanyId uploadedByName uploadedAt supersededAt voidedAt voidedByUserId isVoided voidReason " +
+  "changesStatus changeAreas { x y w h } changesComparedAt changesComparedByUserId";
 const PIN_FIELDS =
   "ItemId projectId sheetId fromRevisionIndex toRevisionIndex version x y linkedRecordType linkedRecordNumber linkedRecordId " +
-  "createdByUserId createdByCompanyId movedFromPinId createdByName createdAt voidedAt voidedByUserId isVoided";
+  "createdByUserId createdByCompanyId movedFromPinId createdByName createdAt voidedAt voidedByUserId isVoided " +
+  "checkedRevisionIndex checkedByUserId checkedByName checkedAt";
+const ACK_FIELDS =
+  "ItemId projectId sheetId revisionId revisionIndex companyId companyName status version openedAt openedByUserId " +
+  "confirmedAt confirmedByUserId confirmedByName remindedAt";
 const TEAM_FIELDS = "ItemId userId displayName email companyId companyName role status";
 const RFI_FIELDS =
   "ItemId number subject status isVoided dueDate ballInCourtUserId ballInCourtName createdByUserId createdByCompanyId assigneeUserIds distributionUserIds";
@@ -768,7 +793,9 @@ async function projectContext(db, me, projectId, { write = false } = {}) {
     disciplines: fromSettings.length ? fromSettings : DEFAULT_DISCIPLINES,
     upload: projectCan(role, "drawing.upload"),
     manager: projectCan(role, "drawing.manage_versions"),
-    pinner: projectCan(role, "drawing.pin")
+    pinner: projectCan(role, "drawing.pin"),
+    followUp: projectCan(role, "drawing.follow_up_revision"),
+    confirmer: projectCan(role, "drawing.confirm_revision") && Boolean(mine.companyId)
   };
 }
 
@@ -777,7 +804,9 @@ const can = (c) => ({
   manage: c.manager && !c.archived,
   pin: c.pinner && !c.archived,
   createRfi: projectCan(c.role, "rfi.create") && c.pinner && !c.archived,
-  createPunch: projectCan(c.role, "punch_item.create") && c.pinner && !c.archived
+  createPunch: projectCan(c.role, "punch_item.create") && c.pinner && !c.archived,
+  followUp: c.followUp && !c.archived,
+  confirm: c.confirmer && !c.archived
 });
 
 // ---------- RFIs the caller can open (same rules as functions/rfis canSee) ----------
@@ -884,6 +913,18 @@ async function linksFor(db, fileIds) {
   return out;
 }
 
+/**
+ * Revision impact: on which revision someone confirmed the pin still fits, and who; `canCheck` =
+ * this caller may confirm it (the GC team, whoever holds the ball, whoever placed the pin).
+ */
+const checkOf = (p, c, rec) => ({
+  checkedRevisionIndex: Number(p.checkedRevisionIndex ?? 0),
+  checkedByName: p.checkedByName ?? "",
+  checkedAt: p.checkedAt ?? undefined,
+  movedFromPinId: p.movedFromPinId ?? undefined,
+  canCheck: Boolean(rec) && !c.archived && (c.followUp || rec.ballInCourtUserId === c.me.userId || p.createdByUserId === c.me.userId)
+});
+
 /** What a pin shows to this caller, or null when they may not see it. `hidden` counts the rest. */
 function pinView(p, c) {
   if (p.isVoided) return null;
@@ -902,6 +943,7 @@ function pinView(p, c) {
     fromRevisionIndex: Number(p.fromRevisionIndex ?? 1),
     toRevisionIndex: Number(p.toRevisionIndex ?? 0),
     version: Number(p.version ?? 0),
+    ...checkOf(p, c, r),
     type: "rfi",
     recordId: r.ItemId,
     number: r.number || "",
@@ -930,6 +972,7 @@ function punchPinView(p, c) {
     fromRevisionIndex: Number(p.fromRevisionIndex ?? 1),
     toRevisionIndex: Number(p.toRevisionIndex ?? 0),
     version: Number(p.version ?? 0),
+    ...checkOf(p, c, i),
     type: "punchItem",
     recordId: i.ItemId,
     number: i.number || "",
@@ -960,6 +1003,7 @@ function photoPinView(p, c) {
     fromRevisionIndex: Number(p.fromRevisionIndex ?? 1),
     toRevisionIndex: Number(p.toRevisionIndex ?? 0),
     version: Number(p.version ?? 0),
+    ...checkOf(p, c),
     type: "photo",
     recordId: ph.ItemId,
     number: "",
@@ -1015,7 +1059,9 @@ function presentRevision(r, c, links = {}) {
     uploadedByName: r.uploadedByName ?? "",
     uploadedByUserId: r.uploadedByUserId ?? "",
     uploadedAt: r.uploadedAt,
-    supersededAt: r.supersededAt ?? undefined
+    supersededAt: r.supersededAt ?? undefined,
+    changesStatus: r.changesStatus ?? "",
+    changeAreas: areasOf(r)
   };
   if (r.isVoided) Object.assign(out, { voidReason: r.voidReason ?? "", voidedAt: r.voidedAt ?? undefined });
   if (links[r.thumbFileId]) out.thumbUrl = links[r.thumbFileId];
@@ -1062,10 +1108,156 @@ const bySheet = (rows) => {
   return m;
 };
 
+// ---------- revision impact (docs/architecture/02-drawings.md §4.7) ----------
+const CHANGE_STATUSES = ["compared", "redrawn", "notComparable", "failed"];
+const MAX_AREAS = 60;
+// A pin this close to a changed area (share of the page) counts as in it. 4 %: pins are placed by
+// their tip and drawn above it, so a pin that looks "on" a new wall can be 3-4 % below it.
+const AREA_PAD = 0.04;
+const REMIND_EVERY_MS = 12 * 3600_000;
+
+function areasOf(r) {
+  return (Array.isArray(r?.changeAreas) ? r.changeAreas : [])
+    .map((a) => ({ x: Number(a?.x), y: Number(a?.y), w: Number(a?.w), h: Number(a?.h) }))
+    .filter((a) => [a.x, a.y, a.w, a.h].every(Number.isFinite));
+}
+const clamp01 = (v) => Math.round(Math.min(1, Math.max(0, Number(v))) * 100000) / 100000;
+/** Areas from the browser: at most 60, inside the page, not empty. */
+function cleanAreas(list) {
+  if (!Array.isArray(list)) return [];
+  if (list.length > MAX_AREAS) throw new Refused("TOO_MANY_AREAS", `At most ${MAX_AREAS} changed areas; save a redrawn sheet as "redrawn".`);
+  return list
+    .map((a) => ({ x: Number(a?.x), y: Number(a?.y), w: Number(a?.w), h: Number(a?.h) }))
+    .filter((a) => [a.x, a.y, a.w, a.h].every(Number.isFinite) && a.w > 0 && a.h > 0)
+    .map((a) => {
+      const x = clamp01(a.x);
+      const y = clamp01(a.y);
+      return { x, y, w: clamp01(Math.min(a.w, 1 - x)), h: clamp01(Math.min(a.h, 1 - y)) };
+    })
+    .filter((a) => a.w > 0 && a.h > 0);
+}
+const inArea = (p, a) => p.x >= a.x - AREA_PAD && p.x <= a.x + a.w + AREA_PAD && p.y >= a.y - AREA_PAD && p.y <= a.y + a.h + AREA_PAD;
+const liveOn = (p, n) => !p.isVoided && Number(p.fromRevisionIndex) <= n && (!Number(p.toRevisionIndex) || Number(p.toRevisionIndex) >= n);
+/** The revision before this one (voided ones skipped), or undefined for the first issue. */
+function previousOf(rev, revs) {
+  return revs.filter((r) => !r.isVoided && Number(r.revisionIndex) < Number(rev.revisionIndex)).sort((a, b) => b.revisionIndex - a.revisionIndex)[0];
+}
+/** first | pending | compared | redrawn | notComparable | failed (revisions from before this feature: pending). */
+function changeStateOf(rev, revs) {
+  if (!previousOf(rev, revs)) return "first";
+  return CHANGE_STATUSES.includes(rev.changesStatus) ? rev.changesStatus : "pending";
+}
+/** The open RFI or active punch item behind a pin; photos are not issues. Needs loadRfis + loadPunch. */
+function openRecordOf(p, c) {
+  if (p.linkedRecordType === "rfi") {
+    const r = c.rfiById?.get(p.linkedRecordId);
+    return r && !r.isVoided && !["closed", "void", "draft"].includes(r.status) ? r : null;
+  }
+  if (p.linkedRecordType === "punchItem") {
+    const i = c.punchById?.get(p.linkedRecordId);
+    return i && !i.isVoided && PUNCH_ACTIVE.includes(i.status) ? i : null;
+  }
+  return null;
+}
+/**
+ * The open items a revision may have broken: placed on an earlier revision, still shown on this one,
+ * inside (or next to) a changed area; every such item when the PDFs couldn't be compared or the
+ * sheet was redrawn. `checked`: confirmed on this revision, or moved on it.
+ */
+function impactOf(rev, revs, pins, c) {
+  const n = Number(rev.revisionIndex);
+  const state = changeStateOf(rev, revs);
+  const out = { state, toCheck: [], checked: [] };
+  if (state === "first" || state === "pending") return out;
+  const areas = areasOf(rev);
+  const hit = (p) => state !== "compared" || areas.some((a) => inArea({ x: Number(p.x), y: Number(p.y) }, a));
+  const byId = new Map(pins.map((p) => [p.ItemId, p]));
+  for (const p of pins) {
+    if (!liveOn(p, n) || !openRecordOf(p, c)) continue;
+    if (Number(p.fromRevisionIndex) < n) {
+      if (hit(p)) (Number(p.checkedRevisionIndex) === n ? out.checked : out.toCheck).push(p);
+    } else if (p.movedFromPinId) {
+      const from = byId.get(p.movedFromPinId);
+      if (from && Number(from.fromRevisionIndex) < n && hit(from)) out.checked.push(p);
+    }
+  }
+  return out;
+}
+
+/** Subcontractor companies on the team: each confirms it builds to a new revision. */
+function confirmingCompanies(c) {
+  const m = new Map();
+  for (const x of c.active) {
+    if (x.companyId && projectCan(x.role, "drawing.confirm_revision") && !m.has(x.companyId)) m.set(x.companyId, { companyId: x.companyId, companyName: x.companyName || "" });
+  }
+  return [...m.values()].sort((a, b) => a.companyName.localeCompare(b.companyName));
+}
+async function loadAcks(db, c, where = {}) {
+  return db.list("RevisionAck", ACK_FIELDS, c.me.tenantRole, { projectId: c.projectId, ...where }).catch(() => []);
+}
+const ACK_RANK = { confirmed: 2, opened: 1 };
+/** One answer per company for a revision (two people at once may both have written a row). */
+function answersFor(revisionId, acks, companies) {
+  const rows = acks.filter((a) => a.revisionId === revisionId);
+  return companies.map((co) => {
+    const mine = rows.filter((a) => a.companyId === co.companyId);
+    const best = [...mine].sort((a, b) => (ACK_RANK[b.status] ?? 0) - (ACK_RANK[a.status] ?? 0))[0];
+    const reminded = mine.map((a) => a.remindedAt).filter(Boolean).sort().pop();
+    return {
+      ...co,
+      status: best && ACK_RANK[best.status] ? best.status : "notOpened",
+      openedAt: mine.map((a) => a.openedAt).filter(Boolean).sort()[0],
+      confirmedAt: best?.status === "confirmed" ? best.confirmedAt : undefined,
+      confirmedByName: best?.status === "confirmed" ? best.confirmedByName ?? "" : undefined,
+      remindedAt: reminded,
+      row: best
+    };
+  });
+}
+const publicAnswer = ({ row: _r, ...a }) => a;
+
+/** What the Changes tab shows this caller about the current revision. */
+function presentImpact(s, revs, pins, acks, c) {
+  const live = revs.filter((r) => !r.isVoided);
+  const cur = live.find((r) => r.ItemId === s.currentRevisionId) ?? [...live].sort((a, b) => b.revisionIndex - a.revisionIndex)[0];
+  if (!cur) return undefined;
+  const prev = previousOf(cur, revs);
+  const { state, toCheck, checked } = impactOf(cur, revs, pins, c);
+  const views = (list) => list.map((p) => pinView(p, c));
+  const shownIds = (list) => views(list).filter((v) => v && v !== "hidden").map((v) => v.ItemId);
+  const answers = answersFor(cur.ItemId, acks, confirmingCompanies(c));
+  const mine = c.confirmer ? answers.find((a) => a.companyId === c.mine.companyId) : undefined;
+  return {
+    revisionId: cur.ItemId,
+    revisionIndex: Number(cur.revisionIndex),
+    revisionLabel: cur.revisionLabel,
+    previousLabel: prev?.revisionLabel ?? "",
+    previousIndex: prev ? Number(prev.revisionIndex) : 0,
+    state,
+    areas: state === "compared" ? areasOf(cur) : [],
+    comparedAt: cur.changesComparedAt ?? undefined,
+    toCheck: shownIds(toCheck),
+    checked: shownIds(checked),
+    hiddenToCheck: views(toCheck).filter((v) => v === "hidden").length,
+    confirmed: answers.filter((a) => a.status === "confirmed").length,
+    total: answers.length,
+    // Every company's answer for the GC team; a subcontractor sees their own only.
+    companies: c.followUp ? answers.map(publicAnswer) : [],
+    mine: mine ? publicAnswer(mine) : undefined
+  };
+}
+
+/** The register's line per sheet: the current revision's changes, items to check, confirmations. */
+function impactSummary(s, revs, pins, acks, c) {
+  const i = presentImpact(s, revs, pins, acks, c);
+  if (!i) return undefined;
+  return { state: i.state, revisionLabel: i.revisionLabel, previousLabel: i.previousLabel, changes: i.areas.length, toCheck: i.toCheck.length, confirmed: i.confirmed, total: i.total, mine: i.mine?.status };
+}
+
 // ---------- actions: reading ----------
 async function list(db, me, args) {
   const c = await projectContext(db, me, args.projectId);
-  const [sheets, revisions, pins] = await Promise.all([loadSheets(db, c), loadRevisions(db, c), loadPins(db, c), loadRfis(db, c), loadPunch(db, c)]);
+  const [sheets, revisions, pins, acks] = await Promise.all([loadSheets(db, c), loadRevisions(db, c), loadPins(db, c), loadAcks(db, c), loadRfis(db, c), loadPunch(db, c)]);
   const live = sheets.filter((s) => !s.isVoided).sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
   const revsBy = bySheet(revisions);
   const pinsBy = bySheet(pins);
@@ -1075,7 +1267,11 @@ async function list(db, me, args) {
   const rows = live.map((s) => {
     const cur = Number(s.currentRevisionIndex ?? 0);
     const { shown, hidden } = pinsFor((pinsBy.get(s.ItemId) ?? []).filter((p) => isIssue(p) && Number(p.fromRevisionIndex) <= cur && (!Number(p.toRevisionIndex) || Number(p.toRevisionIndex) >= cur)), c);
-    return presentSheet(s, c, revsBy.get(s.ItemId) ?? [], { open: shown.filter((p) => !p.closed).length, total: shown.length, hidden }, links);
+    const revs = revsBy.get(s.ItemId) ?? [];
+    return {
+      ...presentSheet(s, c, revs, { open: shown.filter((p) => !p.closed).length, total: shown.length, hidden }, links),
+      impact: impactSummary(s, revs, pinsBy.get(s.ItemId) ?? [], acks, c)
+    };
   });
   return {
     ok: true,
@@ -1102,12 +1298,13 @@ async function links(db, me, args) {
   return { ok: true, links: out, linksExpireAt: expiry() };
 }
 
-async function sheetDetail(db, c, sheetId) {
+async function sheetDetail(db, c, sheetId, { markOpened = false } = {}) {
   const s = await loadSheet(db, c, sheetId);
-  const [revisions, pins, punchPins] = await Promise.all([
+  const [revisions, pins, punchPins, acks] = await Promise.all([
     loadRevisions(db, c, { sheetId: s.ItemId }),
     loadPins(db, c, { sheetId: s.ItemId }),
     loadPins(db, c, { linkedRecordType: "punchItem" }),
+    loadAcks(db, c, { sheetId: s.ItemId }),
     loadRfis(db, c),
     loadPunch(db, c),
     loadLogPhotos(db, c)
@@ -1119,6 +1316,7 @@ async function sheetDetail(db, c, sheetId) {
   await photoLinks(db, c, shown);
   const cur = Number(s.currentRevisionIndex ?? 0);
   const live = (p) => p.type !== "photo" && p.fromRevisionIndex <= cur && (!p.toRevisionIndex || p.toRevisionIndex >= cur);
+  if (markOpened) await markOpenedBy(db, c, s, revisions, acks);
   return {
     ok: true,
     role: c.role,
@@ -1131,6 +1329,7 @@ async function sheetDetail(db, c, sheetId) {
     revisions: visibleRevs.map((r) => presentRevision(r, c, urls)),
     pins: shown,
     hiddenPins: hidden,
+    impact: s.isVoided ? undefined : presentImpact(s, revisions, pins, acks, c),
     rfis: c.allRfis
       .filter((r) => pinnable(r, c))
       .map((r) => ({ ItemId: r.ItemId, number: r.number, subject: r.subject ?? "", status: r.status }))
@@ -1143,9 +1342,39 @@ async function sheetDetail(db, c, sheetId) {
   };
 }
 
+// A subcontractor opening the current revision: their company has "opened" it (once per company).
+async function markOpenedBy(db, c, s, revisions, acks) {
+  if (!c.confirmer || c.archived || s.isVoided) return;
+  const cur = revisions.find((r) => r.ItemId === s.currentRevisionId && !r.isVoided);
+  if (!cur || !previousOf(cur, revisions)) return; // the first issue needs no confirmation
+  if (acks.some((a) => a.revisionId === cur.ItemId && a.companyId === c.mine.companyId)) return;
+  const row = {
+    tenantRole: c.me.tenantRole,
+    projectId: c.projectId,
+    sheetId: s.ItemId,
+    sheetNumber: s.sheetNumber,
+    revisionId: cur.ItemId,
+    revisionIndex: Number(cur.revisionIndex),
+    revisionLabel: cur.revisionLabel,
+    companyId: c.mine.companyId,
+    companyName: c.mine.companyName ?? "",
+    status: "opened",
+    version: 0,
+    openedAt: new Date().toISOString(),
+    openedByUserId: c.me.userId,
+    lastChange: { kind: "opened", nonce: crypto.randomUUID(), actorUserId: c.me.userId }
+  };
+  try {
+    const itemId = await db.insert("RevisionAck", row);
+    acks.push({ ...row, ItemId: itemId });
+  } catch {
+    // reading the sheet never fails for this
+  }
+}
+
 async function sheet(db, me, args) {
   const c = await projectContext(db, me, args.projectId);
-  return sheetDetail(db, c, args.sheetId);
+  return sheetDetail(db, c, args.sheetId, { markOpened: true });
 }
 
 // ---------- upload tickets (the PDF and its thumbnail) ----------
@@ -1349,6 +1578,7 @@ async function publishOne(db, c, row, sheets, existingByFile) {
       uploadedByName: actorName(c),
       uploadedAt: now,
       isVoided: false,
+      changesStatus: live.length ? "pending" : "first", // the uploader's browser compares it next
       lastChange: { kind: "published", nonce: row.fileId, actorUserId: c.me.userId }
     };
     const revId = await db.insert("SheetRevision", rev);
@@ -1406,8 +1636,8 @@ async function publish(db, me, args) {
 }
 
 // The team hears about new sheets and revisions: a bell for everyone, an email when a revision
-// replaces an older one ("don't build from the old sheet"). People holding the ball on an RFI or a
-// punch item pinned to a revised sheet are told to check their pin.
+// replaces an older one ("don't build from the old sheet"). People holding the ball on a pinned RFI
+// or punch item hear once the browser has compared the revisions (tellImpact).
 async function tellIssued(db, c, issued) {
   const result = { bell: 0, email: 0, failed: [] };
   try {
@@ -1441,33 +1671,8 @@ async function tellIssued(db, c, issued) {
           SettingsUrl: `${db.appUrl}/inbox?tab=settings`
         }).then(() => { result.email += 1; }));
       }
-      // Ball holders of open RFIs and active punch items pinned on a revised sheet: check the pin still fits.
-      const sheetIds = new Set(revised.map((r) => r.sheetId));
-      const pins = (await loadPins(db, c)).filter((p) => sheetIds.has(p.sheetId) && !p.isVoided && !Number(p.toRevisionIndex) && (p.linkedRecordType === "rfi" || p.linkedRecordType === "punchItem"));
-      if (pins.length) {
-        await Promise.all([loadRfis(db, c), loadPunch(db, c)]);
-        const ask = new Map();
-        for (const p of pins) {
-          const punch = p.linkedRecordType === "punchItem";
-          const r = punch ? c.punchById.get(p.linkedRecordId) : c.rfiById.get(p.linkedRecordId);
-          if (!r || r.isVoided) continue;
-          if (punch ? !PUNCH_ACTIVE.includes(r.status) : r.status === "closed" || r.status === "void" || r.status === "draft") continue;
-          const u = r.ballInCourtUserId;
-          if (!u || u === c.me.userId || !c.active.some((m) => m.userId === u)) continue;
-          const s = revised.find((x) => x.sheetId === p.sheetId);
-          if (!ask.has(u)) ask.set(u, []);
-          ask.get(u).push(`${r.number} on ${s.sheetNumber}`);
-        }
-        for (const [u, items] of ask) {
-          tasks.push(db.notify([u], {
-            title: "A sheet with your pin was revised",
-            body: `Check that ${items.join(", ")} still ${items.length === 1 ? "points" : "point"} at the right spot.`,
-            link: `/drawings/${revised[0].sheetId}?project=${c.projectId}`,
-            projectId: c.projectId,
-            kind: "drawing.pinned_sheet_revised"
-          }).then(() => { result.bell += 1; }));
-        }
-      }
+      // Ball holders of pinned items hear later, and only when the comparison finds a change where
+      // their item is (saveChanges -> tellImpact).
     }
     for (const x of await Promise.allSettled(tasks)) if (x.status === "rejected") result.failed.push(String(x.reason?.message ?? x.reason).slice(0, 200));
   } catch (error) {
@@ -1789,6 +1994,216 @@ async function removePin(db, me, args) {
   return { ok: true, pinId: p.ItemId };
 }
 
+// ---------- actions: revision impact ----------
+async function revisionFor(db, c, revisionId) {
+  const [r] = await loadRevisions(db, c, { ItemId: String(revisionId ?? "") });
+  if (!r || r.isVoided) throw new Refused("NOT_FOUND", "This revision doesn't exist any more.");
+  const s = await loadSheet(db, c, r.sheetId);
+  if (s.isVoided) throw new Refused("NOT_FOUND", "This sheet was removed.");
+  const revs = await loadRevisions(db, c, { sheetId: s.ItemId });
+  return { r, s, revs, current: Number(r.revisionIndex) === Number(s.currentRevisionIndex) };
+}
+const tabLink = (c, s) => `/drawings/${s.ItemId}?project=${c.projectId}&tab=changes`;
+
+/** One bell per ball holder of the items the revision may have broken. Returns how many were told. */
+async function tellImpact(db, c, s, r, revs) {
+  const [pins] = await Promise.all([loadPins(db, c, { sheetId: s.ItemId }), loadRfis(db, c), loadPunch(db, c)]);
+  const { state, toCheck } = impactOf(r, revs, pins, c);
+  const ask = new Map();
+  for (const p of toCheck) {
+    const u = openRecordOf(p, c)?.ballInCourtUserId;
+    if (!u || u === c.me.userId || !c.active.some((m) => m.userId === u)) continue;
+    if (!ask.has(u)) ask.set(u, []);
+    ask.get(u).push(p.linkedRecordNumber);
+  }
+  const why = {
+    compared: `rev ${r.revisionLabel} changed the drawing where`,
+    redrawn: `rev ${r.revisionLabel} redrew most of the sheet, including where`,
+    notComparable: `rev ${r.revisionLabel} has a different page size, so check where`,
+    failed: `rev ${r.revisionLabel} couldn't be compared automatically, so check where`
+  }[state];
+  let told = 0;
+  const sends = [...ask].map(([u, items]) => db.notify([u], {
+    title: `${s.sheetNumber} rev ${r.revisionLabel}: check ${items.length === 1 ? items[0] : plural(items.length, "pinned item")}`,
+    body: `On ${s.sheetNumber}, ${why} ${items.join(", ")} ${items.length === 1 ? "is" : "are"} pinned. Confirm ${items.length === 1 ? "it still fits" : "they still fit"} or move the pin.`,
+    link: tabLink(c, s),
+    projectId: c.projectId,
+    kind: "drawing.revision_impact"
+  }).then(() => { told += 1; }));
+  await Promise.allSettled(sends);
+  return told;
+}
+
+async function saveChanges(db, me, args) {
+  const c = await projectContext(db, me, args.projectId, { write: true });
+  if (!c.upload && !c.manager) throw new Refused("NOT_ALLOWED", "Revisions are compared by the project manager, the document controller or a designer.");
+  const { r, s, revs, current } = await revisionFor(db, c, args.revisionId);
+  const prev = previousOf(r, revs);
+  if (!prev) throw new Refused("FIRST_ISSUE", `Rev ${r.revisionLabel} is the first issue of ${s.sheetNumber}: there is nothing to compare it with.`);
+  const status = String(args.status ?? "");
+  if (!CHANGE_STATUSES.includes(status)) throw new Refused("BAD_STATUS", "Unknown comparison result.");
+  const was = changeStateOf(r, revs);
+  // The first finished comparison wins; a failed one may be tried again.
+  if (was !== "pending" && was !== "failed") return { ok: true, already: true, state: was };
+  if (was === "failed" && status === "failed") return { ok: true, already: true, state: was };
+  const areas = status === "compared" ? cleanAreas(args.areas) : [];
+  const now = new Date().toISOString();
+  const guard = typeof r.changesStatus === "string" && r.changesStatus ? { changesStatus: { eq: r.changesStatus } } : {};
+  const n = await db.updateWhere("SheetRevision", { ItemId: { eq: r.ItemId }, ...guard }, c.me.tenantRole, {
+    changesStatus: status,
+    changeAreas: areas,
+    changesComparedAt: now,
+    changesComparedByUserId: me.userId,
+    lastChange: { kind: "changesSaved", nonce: crypto.randomUUID(), actorUserId: me.userId, before: was, after: status }
+  });
+  if (n !== 1) return { ok: true, already: true };
+  const saved = { ...r, changesStatus: status, changeAreas: areas, changesComparedAt: now };
+  const vs = `rev ${r.revisionLabel} with rev ${prev.revisionLabel}`;
+  await history(db, c, "sheet", s.ItemId, s.sheetNumber, "compared", {
+    compared: areas.length ? `Comparing ${vs} found ${plural(areas.length, "changed area")}` : `Comparing ${vs} found no visible change`,
+    redrawn: `Comparing ${vs}: most of the sheet was redrawn`,
+    notComparable: `${s.sheetNumber} ${vs} couldn't be compared: the page size changed`,
+    failed: `${s.sheetNumber} ${vs} couldn't be compared automatically`
+  }[status]);
+  // Ball holders hear once: when the first result comes in for the current revision.
+  const notified = current && was === "pending" ? await tellImpact(db, c, s, saved, revs.map((x) => (x.ItemId === r.ItemId ? saved : x))) : 0;
+  return { ok: true, state: status, areas: areas.length, notified };
+}
+
+async function checkPin(db, me, args) {
+  const c = await projectContext(db, me, args.projectId, { write: true });
+  const { p, v } = await loadPin(db, c, args.pinId);
+  if (v.type === "photo") throw new Refused("NOT_AN_ISSUE", "Photo pins don't need checking.");
+  const s = await loadSheet(db, c, p.sheetId);
+  if (s.isVoided) throw new Refused("NOT_FOUND", "This sheet was removed.");
+  const cur = Number(s.currentRevisionIndex);
+  if (!liveOn(p, cur)) throw new Refused("NOT_CURRENT", "This pin isn't on the current revision.");
+  const rec = openRecordOf(p, c);
+  if (!rec) throw new Refused("NOT_OPEN", `${p.linkedRecordNumber} is closed: it needs no check.`);
+  if (!c.followUp && rec.ballInCourtUserId !== me.userId && p.createdByUserId !== me.userId) {
+    throw new Refused("NOT_ALLOWED", "The GC team, whoever holds the ball or whoever placed the pin confirms it still fits.");
+  }
+  if (c.archived) throw new Refused("ARCHIVED", "This project is archived and read-only.");
+  const undo = Boolean(args.undo);
+  const patch = undo
+    ? { checkedRevisionIndex: 0 }
+    : { checkedRevisionIndex: cur, checkedByUserId: me.userId, checkedByName: actorName(c), checkedAt: new Date().toISOString() };
+  const n = await db.updateWhere("Pin", { ItemId: { eq: p.ItemId }, version: { eq: Number(p.version ?? 0) } }, c.me.tenantRole, {
+    ...patch,
+    version: Number(p.version ?? 0) + 1,
+    lastChange: { kind: undo ? "uncheck" : "checked", nonce: crypto.randomUUID(), actorUserId: me.userId }
+  });
+  if (n !== 1) throw new Refused("STATE_CHANGED", "Someone else just changed this pin. The sheet has been reloaded.");
+  await history(db, c, "sheet", s.ItemId, s.sheetNumber, undo ? "pinUnchecked" : "pinChecked",
+    undo ? `${actorName(c)} took back the check of ${p.linkedRecordNumber} on rev ${s.currentRevisionLabel}` : `${actorName(c)} checked that ${p.linkedRecordNumber} still fits rev ${s.currentRevisionLabel}`);
+  return { ok: true, pin: pinView({ ...p, ...patch, version: Number(p.version ?? 0) + 1 }, c) };
+}
+
+async function confirmRevision(db, me, args) {
+  const c = await projectContext(db, me, args.projectId, { write: true });
+  if (!c.confirmer) throw new Refused("NOT_ALLOWED", "Subcontractors confirm the revision they build to.");
+  const { r, s, revs, current } = await revisionFor(db, c, args.revisionId);
+  if (!current) throw new Refused("NOT_CURRENT", `Rev ${r.revisionLabel} isn't current any more: rev ${s.currentRevisionLabel} is. The sheet has been reloaded.`);
+  if (!previousOf(r, revs)) throw new Refused("FIRST_ISSUE", "The first issue of a sheet needs no confirmation.");
+  const company = c.mine.companyId;
+  const rows = (await loadAcks(db, c, { revisionId: r.ItemId })).filter((a) => a.companyId === company);
+  if (rows.some((a) => a.status === "confirmed")) return { ok: true, already: true };
+  const now = new Date().toISOString();
+  const patch = {
+    status: "confirmed",
+    confirmedAt: now,
+    confirmedByUserId: me.userId,
+    confirmedByName: actorName(c),
+    lastChange: { kind: "confirmed", nonce: crypto.randomUUID(), actorUserId: me.userId }
+  };
+  const row = rows[0];
+  if (row) {
+    const n = await db.updateWhere("RevisionAck", { ItemId: { eq: row.ItemId }, version: { eq: Number(row.version ?? 0) } }, c.me.tenantRole, { ...patch, version: Number(row.version ?? 0) + 1 });
+    if (n !== 1) throw new Refused("STATE_CHANGED", "Someone from your company just answered. The sheet has been reloaded.");
+  } else {
+    await db.insert("RevisionAck", {
+      tenantRole: c.me.tenantRole,
+      projectId: c.projectId,
+      sheetId: s.ItemId,
+      sheetNumber: s.sheetNumber,
+      revisionId: r.ItemId,
+      revisionIndex: Number(r.revisionIndex),
+      revisionLabel: r.revisionLabel,
+      companyId: company,
+      companyName: c.mine.companyName ?? "",
+      version: 0,
+      openedAt: now,
+      openedByUserId: me.userId,
+      ...patch
+    });
+  }
+  await history(db, c, "sheet", s.ItemId, s.sheetNumber, "revisionConfirmed", `${c.mine.companyName || actorName(c)} confirmed they build to rev ${r.revisionLabel} (${actorName(c)})`);
+  return { ok: true };
+}
+
+async function remindRevision(db, me, args) {
+  const c = await projectContext(db, me, args.projectId, { write: true });
+  if (!c.followUp) throw new Refused("NOT_ALLOWED", "The project manager, the superintendent or the document controller sends reminders.");
+  const { r, s, revs, current } = await revisionFor(db, c, args.revisionId);
+  if (!current) throw new Refused("NOT_CURRENT", `Rev ${r.revisionLabel} isn't current any more. The sheet has been reloaded.`);
+  const prev = previousOf(r, revs);
+  if (!prev) throw new Refused("FIRST_ISSUE", "The first issue of a sheet needs no confirmation.");
+  const answers = answersFor(r.ItemId, await loadAcks(db, c, { revisionId: r.ItemId }), confirmingCompanies(c));
+  const one = args.companyId ? String(args.companyId) : "";
+  const wanted = answers.filter((a) => a.status !== "confirmed" && (!one || a.companyId === one));
+  if (one && !answers.some((a) => a.companyId === one)) throw new Refused("NOT_FOUND", "That company isn't on this project's team.");
+  const due = wanted.filter((a) => !(a.remindedAt && Date.now() - Date.parse(a.remindedAt) < REMIND_EVERY_MS));
+  const now = new Date().toISOString();
+  const reminded = [];
+  for (const a of due) {
+    const people = c.active.filter((m) => m.companyId === a.companyId && projectCan(m.role, "drawing.confirm_revision")).map((m) => m.userId);
+    if (!people.length) continue;
+    try {
+      await db.notify(people, {
+        title: `Confirm ${s.sheetNumber} rev ${r.revisionLabel}`,
+        body: `${actorName(c)} asks ${a.companyName || "your company"} to confirm you build to rev ${r.revisionLabel} of ${s.sheetNumber} (it replaces rev ${prev.revisionLabel}).`,
+        link: tabLink(c, s),
+        projectId: c.projectId,
+        kind: "drawing.revision_reminder"
+      });
+    } catch {
+      continue;
+    }
+    reminded.push(a.companyName || a.companyId);
+    if (a.row) {
+      await db.updateWhere("RevisionAck", { ItemId: { eq: a.row.ItemId } }, c.me.tenantRole, { remindedAt: now }).catch(() => undefined);
+    } else {
+      await db.insert("RevisionAck", {
+        tenantRole: c.me.tenantRole,
+        projectId: c.projectId,
+        sheetId: s.ItemId,
+        sheetNumber: s.sheetNumber,
+        revisionId: r.ItemId,
+        revisionIndex: Number(r.revisionIndex),
+        revisionLabel: r.revisionLabel,
+        companyId: a.companyId,
+        companyName: a.companyName,
+        status: "notOpened",
+        version: 0,
+        remindedAt: now,
+        lastChange: { kind: "reminded", nonce: crypto.randomUUID(), actorUserId: me.userId }
+      }).catch(() => undefined);
+    }
+  }
+  if (reminded.length) await history(db, c, "sheet", s.ItemId, s.sheetNumber, "revisionReminded", `${actorName(c)} reminded ${reminded.join(", ")} to confirm rev ${r.revisionLabel}`);
+  return { ok: true, reminded, skipped: wanted.length - reminded.length };
+}
+
+async function askHolders(db, me, args) {
+  const c = await projectContext(db, me, args.projectId, { write: true });
+  if (!c.followUp) throw new Refused("NOT_ALLOWED", "The project manager, the superintendent or the document controller asks for checks.");
+  const { r, s, revs, current } = await revisionFor(db, c, args.revisionId);
+  if (!current) throw new Refused("NOT_CURRENT", `Rev ${r.revisionLabel} isn't current any more. The sheet has been reloaded.`);
+  const state = changeStateOf(r, revs);
+  if (state === "first" || state === "pending") throw new Refused("NOT_COMPARED", "The revisions haven't been compared yet.");
+  return { ok: true, notified: await tellImpact(db, c, s, r, revs) };
+}
+
 export default async function handler(input, ctx) {
   return handle(input, ctx, "drawings", {
     list: (args, { db, me }) => list(db, me, args),
@@ -1801,6 +2216,11 @@ export default async function handler(input, ctx) {
     pin: (args, { db, me }) => pin(db, me, args),
     movePin: (args, { db, me }) => movePin(db, me, args),
     removePin: (args, { db, me }) => removePin(db, me, args),
-    photoPins: (args, { db, me }) => photoPins(db, me, args)
+    photoPins: (args, { db, me }) => photoPins(db, me, args),
+    saveChanges: (args, { db, me }) => saveChanges(db, me, args),
+    checkPin: (args, { db, me }) => checkPin(db, me, args),
+    confirmRevision: (args, { db, me }) => confirmRevision(db, me, args),
+    remindRevision: (args, { db, me }) => remindRevision(db, me, args),
+    askHolders: (args, { db, me }) => askHolders(db, me, args)
   });
 }

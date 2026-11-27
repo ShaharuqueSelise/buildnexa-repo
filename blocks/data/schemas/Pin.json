@@ -102,6 +102,26 @@
       "name": "isVoided",
       "type": "Boolean",
       "isArray": false
+    },
+    {
+      "name": "checkedRevisionIndex",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "checkedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "checkedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "checkedAt",
+      "type": "DateTime",
+      "isArray": false
     }
   ]
 }

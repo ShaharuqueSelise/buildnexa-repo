@@ -1,0 +1,97 @@
+{
+  "schemaName": "RevisionAck",
+  "collectionName": "RevisionAcks",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "sheetId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "revisionId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "companyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "revisionIndex",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "sheetNumber",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "revisionLabel",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "companyName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "openedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "confirmedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "remindedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "openedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "confirmedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "confirmedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    }
+  ]
+}

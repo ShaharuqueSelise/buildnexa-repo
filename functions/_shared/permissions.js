@@ -52,6 +52,10 @@ const PROJECT_PERMISSIONS = {
   "drawing.pin": [PM, SUPT, DC, SUB], // DC added 2026-11-25 (P8, client agreed)
   "drawing.upload": [PM, DC, DESIGN], // design: revisions of their own discipline
   "drawing.manage_versions": [PM, DC], // supersede, void, register
+  // Revision impact (2026-11-27): the GC team follows up a new revision (who confirmed, reminders,
+  // flagged pins still valid); each subcontractor company confirms it builds to the new revision.
+  "drawing.follow_up_revision": [PM, SUPT, DC],
+  "drawing.confirm_revision": [SUB],
   // Documents and photos
   "document.view": [PM, SUPT, DC, OWNER],
   "document.view_relevant": [SUB, DESIGN],

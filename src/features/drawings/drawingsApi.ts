@@ -11,7 +11,13 @@ import { FUNCTIONS, callFunction } from "../../lib/blocks/functions";
 import { MAX_FILE_BYTES, put } from "../files/files";
 import { pdfjs } from "../files/FileViewer";
 
-export type DrawingCan = { upload: boolean; manage: boolean; pin: boolean; createRfi: boolean; createPunch?: boolean };
+export type DrawingCan = {
+  upload: boolean; manage: boolean; pin: boolean; createRfi: boolean; createPunch?: boolean;
+  /** GC team: sees every company's answer to a new revision and reminds them. */
+  followUp?: boolean;
+  /** A subcontractor: confirms their company builds to the newest revision. */
+  confirm?: boolean;
+};
 export type Discipline = { code: string; name: string };
 
 export type RevisionStatus = "current" | "superseded" | "void";
@@ -38,6 +44,56 @@ export type Revision = RevisionSummary & {
   voidedAt?: string;
   thumbUrl?: string;
   pdfUrl?: string;
+  changesStatus?: ChangesState;
+  changeAreas?: ChangeArea[];
+};
+
+// ---------- revision impact ----------
+/** A changed part of the sheet, as fractions of the page (0..1). */
+export type ChangeArea = { x: number; y: number; w: number; h: number };
+/**
+ * first: nothing to compare with. pending: not compared yet. compared: `areas` changed.
+ * redrawn / notComparable / failed: every pinned open item is to check.
+ */
+export type ChangesState = "first" | "pending" | "compared" | "redrawn" | "notComparable" | "failed";
+export type CompanyAnswer = {
+  companyId: string;
+  companyName: string;
+  status: "notOpened" | "opened" | "confirmed";
+  openedAt?: string;
+  confirmedAt?: string;
+  confirmedByName?: string;
+  remindedAt?: string;
+};
+export type Impact = {
+  revisionId: string;
+  revisionIndex: number;
+  revisionLabel: string;
+  previousLabel: string;
+  previousIndex: number;
+  state: ChangesState;
+  areas: ChangeArea[];
+  comparedAt?: string;
+  /** Pin ids: open items placed earlier, in a changed area, not checked yet. */
+  toCheck: string[];
+  checked: string[];
+  hiddenToCheck: number;
+  confirmed: number;
+  total: number;
+  /** Every subcontractor company's answer: the GC team only. */
+  companies: CompanyAnswer[];
+  /** The caller's company (a subcontractor). */
+  mine?: CompanyAnswer;
+};
+export type ImpactSummary = {
+  state: ChangesState;
+  revisionLabel: string;
+  previousLabel: string;
+  changes: number;
+  toCheck: number;
+  confirmed: number;
+  total: number;
+  mine?: CompanyAnswer["status"];
 };
 
 export type SheetRow = {
@@ -55,6 +111,7 @@ export type SheetRow = {
   pins: number;
   pinsTotal: number;
   hiddenPins: number;
+  impact?: ImpactSummary;
 };
 
 export type SheetPin = {
@@ -87,6 +144,14 @@ export type SheetPin = {
   createdAt: string;
   canMove: boolean;
   canRemove: boolean;
+  /** Revision impact: someone confirmed the pin still fits this revision. */
+  checkedRevisionIndex?: number;
+  checkedByName?: string;
+  checkedAt?: string;
+  /** A pin moved on a newer revision starts as a new pin. */
+  movedFromPinId?: string;
+  /** The caller may confirm it still fits (GC team, ball holder, whoever placed it). */
+  canCheck?: boolean;
   /** Only in the page: saved here, the answer is on its way. */
   saving?: boolean;
 };
@@ -97,7 +162,7 @@ export type PinnablePunch = { ItemId: string; number: string; title: string; sta
 
 type Common = { role: string; archived: boolean; can: DrawingCan; today: string; disciplines: Discipline[]; linksExpireAt: string };
 export type Register = Common & { sets: string[]; sheets: SheetRow[] };
-export type SheetDetail = Common & { sheet: SheetRow; revisions: Revision[]; pins: SheetPin[]; hiddenPins: number; rfis: PinnableRfi[]; punchItems?: PinnablePunch[] };
+export type SheetDetail = Common & { sheet: SheetRow; revisions: Revision[]; pins: SheetPin[]; hiddenPins: number; rfis: PinnableRfi[]; punchItems?: PinnablePunch[]; impact?: Impact };
 
 const call = <T,>(body: Record<string, unknown>) => callFunction<T>(FUNCTIONS.drawings, body);
 const listKey = (projectId?: string) => ["drawings", projectId ?? "", "list"];
@@ -144,9 +209,15 @@ type SheetAction =
   | { action: "voidRevision"; sheetId: string; revisionId: string; reason: string }
   | { action: "pin"; sheetId: string; revisionIndex: number; x: number; y: number; recordType: "rfi" | "punchItem" | "photo"; recordId: string; temp: SheetPin }
   | { action: "movePin"; sheetId: string; pinId: string; revisionIndex: number; x: number; y: number }
-  | { action: "removePin"; sheetId: string; pinId: string };
+  | { action: "removePin"; sheetId: string; pinId: string }
+  | { action: "checkPin"; sheetId: string; pinId: string; undo?: boolean; revisionIndex: number; byName: string }
+  | { action: "confirmRevision"; sheetId: string; revisionId: string; byName: string }
+  | { action: "remindRevision"; sheetId: string; revisionId: string; companyId?: string }
+  | { action: "askHolders"; sheetId: string; revisionId: string };
 
-type ActionAnswer = Partial<SheetDetail> & { pin?: SheetPin; replacedPinId?: string; pinId?: string; sheetRemoved?: boolean };
+const IMPACT_ACTIONS = new Set(["checkPin", "confirmRevision", "remindRevision", "askHolders"]);
+
+type ActionAnswer = Partial<SheetDetail> & { pin?: SheetPin; replacedPinId?: string; pinId?: string; sheetRemoved?: boolean; already?: boolean; reminded?: string[]; skipped?: number; notified?: number };
 
 /**
  * Changes on one sheet. Pins move, appear and disappear at once on screen (a call can wait up to
@@ -155,7 +226,8 @@ type ActionAnswer = Partial<SheetDetail> & { pin?: SheetPin; replacedPinId?: str
 export function useDrawingAction(projectId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ temp: _t, ...body }: SheetAction & { temp?: SheetPin }) => call<ActionAnswer>({ ...body, projectId }),
+    mutationFn: ({ temp: _t, byName: _b, ...body }: SheetAction & { temp?: SheetPin; byName?: string }) =>
+      call<ActionAnswer>(body.action === "checkPin" ? { action: "checkPin", pinId: body.pinId, undo: body.undo, projectId } : { ...body, projectId }),
     onMutate: async (body) => {
       const k = sheetKey(projectId, body.sheetId);
       await queryClient.cancelQueries({ queryKey: k });
@@ -177,6 +249,22 @@ export function useDrawingAction(projectId?: string) {
           };
         }
         if (body.action === "removePin") return { ...old, pins: old.pins.filter((p) => p.ItemId !== body.pinId) };
+        if (body.action === "checkPin" && old.impact) {
+          const i = old.impact;
+          const toCheck = body.undo ? [...i.toCheck, body.pinId] : i.toCheck.filter((id) => id !== body.pinId);
+          const checked = body.undo ? i.checked.filter((id) => id !== body.pinId) : [...i.checked, body.pinId];
+          return {
+            ...old,
+            impact: { ...i, toCheck, checked },
+            pins: old.pins.map((p) => (p.ItemId === body.pinId ? { ...p, checkedRevisionIndex: body.undo ? 0 : body.revisionIndex, checkedByName: body.undo ? "" : body.byName, saving: true } : p))
+          };
+        }
+        if (body.action === "confirmRevision" && old.impact?.mine) {
+          const i = old.impact;
+          const mine = i.mine!;
+          const counted = mine.status === "confirmed" ? 0 : 1;
+          return { ...old, impact: { ...i, confirmed: i.confirmed + counted, mine: { ...mine, status: "confirmed", confirmedAt: new Date().toISOString(), confirmedByName: body.byName } } };
+        }
         return old;
       });
       return { before };
@@ -202,6 +290,10 @@ export function useDrawingAction(projectId?: string) {
       void queryClient.invalidateQueries({ queryKey: k });
     },
     onSettled: (_a, _e, body) => {
+      if (IMPACT_ACTIONS.has(body.action)) {
+        void queryClient.invalidateQueries({ queryKey: sheetKey(projectId, body.sheetId) });
+        void queryClient.invalidateQueries({ queryKey: listKey(projectId) });
+      }
       if (body.action === "pin" || body.action === "movePin" || body.action === "removePin") {
         void queryClient.invalidateQueries({ queryKey: listKey(projectId) });
         // A punch item shows where it is pinned, and the sheet offers only unpinned items to link.
@@ -330,10 +422,11 @@ export type PublishRow = {
   note: string;
 };
 
-export type PublishResult = { key: string; ok: boolean; sheetId?: string; error?: string };
+/** `revisionId` + `previous`: a new revision of an existing sheet, to compare with the one before. */
+export type PublishResult = { key: string; ok: boolean; sheetId?: string; revisionId?: string; previous?: string; error?: string };
 
 type Upload = { fileId: string; thumbFileId: string; fileName: string; sizeBytes: number; uploadedAt: string; uploadUrl: string; thumbUploadUrl?: string; ticket: string };
-type PublishAnswer = { results: { fileId: string; ok: boolean; sheetId?: string; code?: string; error?: string }[] };
+type PublishAnswer = { results: { fileId: string; ok: boolean; sheetId?: string; revisionId?: string; previous?: string; repeated?: boolean; code?: string; error?: string }[] };
 
 export const MAX_SHEET_BYTES = MAX_FILE_BYTES;
 const BATCH = 10;
@@ -381,7 +474,7 @@ export async function publishSheets(projectId: string, rows: PublishRow[], onPro
     batch.forEach((r, j) => {
       const res = answer.results.find((x) => x.fileId === slot(j).fileId);
       onProgress(r.key, 1);
-      out.push({ key: r.key, ok: Boolean(res?.ok), sheetId: res?.sheetId, error: res?.ok ? undefined : res?.error ?? "Not published." });
+      out.push({ key: r.key, ok: Boolean(res?.ok), sheetId: res?.sheetId, revisionId: res?.revisionId, previous: res?.previous, error: res?.ok ? undefined : res?.error ?? "Not published." });
     });
   }
   return out;

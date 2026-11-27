@@ -170,11 +170,11 @@ await test("company admin not on the team gets nothing; what each role may do", 
   expect(r.sheets.length === 0, "foreign sheet hidden");
   expect(r.disciplines.some((d) => d.name === "Architectural"), "default disciplines");
   const want = {
-    pm: "upload manage pin createRfi createPunch",
-    dc: "upload manage pin createRfi", // P8
+    pm: "upload manage pin createRfi createPunch followUp",
+    dc: "upload manage pin createRfi followUp", // P8
     design: "upload",
-    supt: "pin createRfi createPunch",
-    sub: "pin createRfi",
+    supt: "pin createRfi createPunch followUp",
+    sub: "pin createRfi confirm",
     owner: ""
   };
   for (const [u, w] of Object.entries(want)) {
@@ -286,15 +286,21 @@ await test("pins: on the current revision only, for records the person can open;
   expect(row.pins === 1 && row.hiddenPins === 1, `register for sub ${row.pins}/${row.hiddenPins}`);
 });
 
-await test("a new revision carries the pins and tells the RFI's ball holder to check them", async () => {
+await test("a new revision carries the pins; ball holders hear once the browser has compared it", async () => {
   sent.length = 0;
   ok(await publish("dc", [{ sheetNumber: "A-101", revisionLabel: "C", pageWidthPt: 2384, pageHeightPt: 3370 }]), "dc publishes rev C");
   const forPm = await call("pm", { action: "sheet", sheetId: a101.ItemId });
   const cur = forPm.sheet.current.revisionIndex;
   expect(cur === 4, `current index ${cur}`);
   expect(forPm.pins.every((p) => p.fromRevisionIndex <= cur && !p.toRevisionIndex), "both pins still on the current revision");
-  const told = bells("drawing.pinned_sheet_revised");
+  expect(forPm.impact.state === "pending" && forPm.impact.previousLabel === "A", `impact ${JSON.stringify(forPm.impact)}`);
+  expect(bells("drawing.pinned_sheet_revised").length === 0 && bells("drawing.revision_impact").length === 0, "nobody hears about pins before the comparison");
+  // The page turned from landscape to portrait: the browser can't compare, so every pin is to check.
+  const saved = await call("dc", { action: "saveChanges", revisionId: forPm.impact.revisionId, status: "notComparable" });
+  ok(saved, "dc saves the result");
+  const told = bells("drawing.revision_impact");
   expect(told.map((b) => b.userIds[0]).sort().join(",") === "design,sub", `told ${told.map((b) => b.userIds)}`);
+  expect(told.every((b) => b.payload.link.endsWith("&tab=changes")), "links to the Changes tab");
 });
 
 await test("moving a pin keeps it on the older revisions; only the placer or a manager moves or removes it", async () => {
@@ -385,13 +391,18 @@ await test("a new revision also tells who holds the ball on a pinned punch item;
   ok(await call("pm", { action: "pin", ...at, x: 0.3, y: 0.3, recordId: "pi-other" }), "pm pins PI-002 on A-102");
   sent.length = 0;
   ok(await publish("dc", [{ sheetNumber: "A-102", revisionLabel: "A" }]), "dc publishes A-102 rev A");
-  const told = bells("drawing.pinned_sheet_revised");
+  const revA = mine("SheetRevision").find((r) => r.sheetId === s.ItemId && r.revisionLabel === "A");
+  ok(await call("dc", { action: "saveChanges", revisionId: revA.ItemId, status: "compared", areas: [{ x: 0.25, y: 0.25, w: 0.1, h: 0.1 }] }), "a change where PI-002 is");
+  const told = bells("drawing.revision_impact");
   expect(told.length === 1 && told[0].userIds.join(",") === "supt", `told ${JSON.stringify(told.map((b) => b.userIds))}`);
-  expect(told[0].payload.body === "Check that PI-002 on A-102 still points at the right spot.", told[0].payload.body);
+  expect(told[0].payload.title === "A-102 rev A: check PI-002", told[0].payload.title);
+  expect(told[0].payload.body === "On A-102, rev A changed the drawing where PI-002 is pinned. Confirm it still fits or move the pin.", told[0].payload.body);
   Object.assign(pi, { status: "closed" });
   sent.length = 0;
   ok(await publish("dc", [{ sheetNumber: "A-102", revisionLabel: "B" }]), "rev B");
-  expect(bells("drawing.pinned_sheet_revised").length === 0, "a closed item's pin tells nobody");
+  const revB = mine("SheetRevision").find((r) => r.sheetId === s.ItemId && r.revisionLabel === "B");
+  ok(await call("dc", { action: "saveChanges", revisionId: revB.ItemId, status: "compared", areas: [{ x: 0.25, y: 0.25, w: 0.1, h: 0.1 }] }), "same spot again");
+  expect(bells("drawing.revision_impact").length === 0, "a closed item's pin tells nobody");
 });
 
 // ---------- daily log photos pinned on a sheet (Phase 3 small gap, 2026-11-26) ----------
@@ -480,6 +491,150 @@ await test("log photo pins: move and remove with history on the log; a new revis
   expect(mine("ActivityEvent").some((e) => e.recordType === "dailyLog" && e.recordId === "log-draft" && e.action === "photoUnpinned" && e.summary === "DC removed a photo's pin from A-101"), "log history: removed");
   expect(!(await call("pm", { action: "photoPins", photoIds: ["ph-gc"] })).pins["ph-gc"], "no chip once removed");
   ok(await call("supt", { action: "pin", sheetId: sheetBy("A-101").ItemId, revisionIndex: sheetBy("A-101").currentRevisionIndex, recordType: "photo", x: 0.5, y: 0.5, recordId: "ph-gc" }), "can be pinned again");
+});
+
+// ---------- revision impact (2026-11-27, docs/architecture/02-drawings.md §4.7) ----------
+// A second subcontractor company on the team.
+people.sub2 = { role: "field-user", account: "external", company: "sub2-co" };
+rows("ProjectMember").push({ ItemId: "p1-sub2", tenantRole: T, projectId: P, userId: "sub2", displayName: "SUB2", email: "sub2@test.example", companyId: "sub2-co", companyName: "Sub Two", role: "field-user", status: "active" });
+rows("PunchItem").push({ ItemId: "pi-m", tenantRole: T, projectId: P, number: "PI-003", title: "Duct clash", status: "open", assigneeCompanyId: "sub-co", assigneeCompanyName: "Sub Co", ballInCourtName: "SUB", createdByUserId: "supt" });
+let m201;
+let rev0;
+
+await test("impact: the first issue needs nothing; a revision waits for the comparison", async () => {
+  ok(await publish("pm", [{ sheetNumber: "M-201", title: "Level 2 HVAC", discipline: "Mechanical", revisionLabel: "0" }]), "pm issues M-201");
+  m201 = sheetBy("M-201");
+  rev0 = mine("SheetRevision").find((r) => r.sheetId === m201.ItemId);
+  expect(rev0.changesStatus === "first", `rev 0 ${rev0.changesStatus}`);
+  const sub = await call("sub", { action: "sheet", sheetId: m201.ItemId });
+  expect(sub.impact.state === "first", "first issue");
+  expect(!mine("RevisionAck").some((a) => a.sheetId === m201.ItemId), "nothing to confirm on a first issue");
+  const at = { sheetId: m201.ItemId, revisionIndex: 1 };
+  ok(await call("supt", { action: "pin", ...at, recordType: "rfi", x: 0.5, y: 0.5, recordId: "rfi-gc" }), "RFI-002 in the middle");
+  ok(await call("sub", { action: "pin", ...at, recordType: "rfi", x: 0.1, y: 0.1, recordId: "rfi-sub" }), "RFI-001 in a corner");
+  ok(await call("pm", { action: "pin", ...at, recordType: "punchItem", x: 0.52, y: 0.52, recordId: "pi-m" }), "PI-003 next to RFI-002");
+  sent.length = 0;
+  ok(await publish("pm", [{ sheetNumber: "M-201", title: "Level 2 HVAC", discipline: "Mechanical", revisionLabel: "A" }]), "rev A");
+  const pm = await call("pm", { action: "sheet", sheetId: m201.ItemId });
+  expect(pm.impact.state === "pending" && pm.impact.toCheck.length === 0 && pm.impact.total === 2, JSON.stringify(pm.impact));
+  const reg = (await call("pm", { action: "list" })).sheets.find((x) => x.sheetNumber === "M-201");
+  expect(reg.impact.state === "pending" && reg.impact.revisionLabel === "A" && reg.impact.previousLabel === "0", JSON.stringify(reg.impact));
+});
+
+await test("impact: who saves the comparison, once; areas are checked", async () => {
+  const revA = mine("SheetRevision").find((r) => r.sheetId === m201.ItemId && r.revisionLabel === "A");
+  refused(await call("owner", { action: "saveChanges", revisionId: revA.ItemId, status: "compared", areas: [] }), "NOT_ALLOWED", "owner");
+  refused(await call("sub", { action: "saveChanges", revisionId: revA.ItemId, status: "compared", areas: [] }), "NOT_ALLOWED", "sub");
+  refused(await call("supt", { action: "saveChanges", revisionId: revA.ItemId, status: "compared", areas: [] }), "NOT_ALLOWED", "supt doesn't upload");
+  refused(await call("dc", { action: "saveChanges", revisionId: rev0.ItemId, status: "compared", areas: [] }), "FIRST_ISSUE", "rev 0");
+  refused(await call("dc", { action: "saveChanges", revisionId: revA.ItemId, status: "maybe" }), "BAD_STATUS", "status");
+  const many = Array.from({ length: 61 }, () => ({ x: 0.1, y: 0.1, w: 0.01, h: 0.01 }));
+  refused(await call("dc", { action: "saveChanges", revisionId: revA.ItemId, status: "compared", areas: many }), "TOO_MANY_AREAS", "61 areas");
+  // A failed attempt may be tried again; it tells everyone holding a pinned item to check it.
+  sent.length = 0;
+  ok(await call("dc", { action: "saveChanges", revisionId: revA.ItemId, status: "failed" }), "dc's browser failed");
+  expect(bells("drawing.revision_impact").map((b) => b.userIds[0]).sort().join(",") === "design,sub", `failed tells ${bells("drawing.revision_impact").map((b) => b.userIds)}`);
+  sent.length = 0;
+  const r = await call("dc", { action: "saveChanges", revisionId: revA.ItemId, status: "compared", areas: [{ x: 0.45, y: 0.45, w: 0.1, h: 0.1 }, { x: 2, y: 0.2, w: 0.1, h: 0.1 }, { x: 0.9, y: 0.9, w: 0.5, h: 0.5 }] });
+  ok(r, "dc's browser compared");
+  expect(r.state === "compared" && r.areas === 2, JSON.stringify(r));
+  const row = mine("SheetRevision").find((x) => x.ItemId === revA.ItemId);
+  expect(JSON.stringify(row.changeAreas) === JSON.stringify([{ x: 0.45, y: 0.45, w: 0.1, h: 0.1 }, { x: 0.9, y: 0.9, w: 0.1, h: 0.1 }]), JSON.stringify(row.changeAreas));
+  expect(bells("drawing.revision_impact").length === 0, "after a failed attempt nobody is told twice");
+  const again = await call("pm", { action: "saveChanges", revisionId: revA.ItemId, status: "compared", areas: [] });
+  expect(again.ok && again.already, "the first result stays");
+  expect(mine("ActivityEvent").some((e) => e.recordId === m201.ItemId && e.action === "compared" && e.summary === "Comparing rev A with rev 0 found 2 changed areas"), "history");
+});
+
+await test("impact: what each person sees; subs mark the revision opened", async () => {
+  const pm = await call("pm", { action: "sheet", sheetId: m201.ItemId });
+  const num = (ids) => ids.map((id) => pm.pins.find((p) => p.ItemId === id)?.number).sort().join(",");
+  expect(pm.impact.state === "compared" && pm.impact.areas.length === 2, JSON.stringify(pm.impact));
+  expect(num(pm.impact.toCheck) === "PI-003,RFI-002", `pm to check ${num(pm.impact.toCheck)}`);
+  expect(pm.revisions[0].changeAreas.length === 2 && pm.revisions[0].changesStatus === "compared", "areas with the revision");
+  const sub = await call("sub", { action: "sheet", sheetId: m201.ItemId });
+  expect(sub.impact.toCheck.length === 1 && sub.impact.hiddenToCheck === 1, `sub ${sub.impact.toCheck.length} + ${sub.impact.hiddenToCheck} hidden`);
+  expect(sub.impact.companies.length === 0 && sub.impact.mine?.status === "opened", JSON.stringify(sub.impact));
+  await call("sub", { action: "sheet", sheetId: m201.ItemId });
+  expect(mine("RevisionAck").filter((a) => a.sheetId === m201.ItemId).length === 1, "opened once per company");
+  const again = await call("pm", { action: "sheet", sheetId: m201.ItemId });
+  expect(again.impact.companies.map((c) => `${c.companyId}:${c.status}`).join(",") === "sub-co:opened,sub2-co:notOpened", JSON.stringify(again.impact.companies));
+  expect(again.impact.confirmed === 0 && again.impact.total === 2 && !again.impact.mine, "counts for the GC");
+  const owner = await call("owner", { action: "sheet", sheetId: m201.ItemId });
+  expect(owner.impact.companies.length === 0 && owner.impact.toCheck.length === 2, "owner sees what changed, not who confirmed");
+});
+
+await test("impact: checking a pin, undoing it, moving it", async () => {
+  const pm = await call("pm", { action: "sheet", sheetId: m201.ItemId });
+  const pin = (n) => pm.pins.find((p) => p.number === n);
+  const subView = await call("sub", { action: "sheet", sheetId: m201.ItemId });
+  expect(subView.pins.find((p) => p.number === "PI-003").canCheck === false && subView.pins.find((p) => p.number === "RFI-001").canCheck === true, "sub may check their own pin only");
+  expect((await call("design", { action: "sheet", sheetId: m201.ItemId })).pins.find((p) => p.number === "RFI-002").canCheck === true, "the ball holder may check");
+  expect(pin("PI-003").canCheck === true, "the GC may check");
+  refused(await call("sub", { action: "checkPin", pinId: pin("PI-003").ItemId }), "NOT_ALLOWED", "sub didn't place it and doesn't hold the ball");
+  refused(await call("owner", { action: "checkPin", pinId: pin("RFI-002").ItemId }), "NOT_ALLOWED", "owner");
+  const d = await call("design", { action: "checkPin", pinId: pin("RFI-002").ItemId });
+  ok(d, "the designer holds the ball on RFI-002");
+  expect(d.pin.checkedRevisionIndex === 2 && d.pin.checkedByName === "DESIGN", JSON.stringify(d.pin));
+  ok(await call("supt", { action: "checkPin", pinId: pin("PI-003").ItemId }), "supt checks PI-003");
+  let now = await call("pm", { action: "sheet", sheetId: m201.ItemId });
+  expect(now.impact.toCheck.length === 0 && now.impact.checked.length === 2, JSON.stringify(now.impact));
+  ok(await call("supt", { action: "checkPin", pinId: pin("PI-003").ItemId, undo: true }), "undo");
+  now = await call("pm", { action: "sheet", sheetId: m201.ItemId });
+  expect(now.impact.toCheck.length === 1, "PI-003 to check again");
+  const moved = await call("pm", { action: "movePin", pinId: pin("PI-003").ItemId, revisionIndex: 2, x: 0.8, y: 0.2 });
+  ok(moved, "pm moves PI-003");
+  now = await call("pm", { action: "sheet", sheetId: m201.ItemId });
+  expect(now.impact.toCheck.length === 0 && now.impact.checked.includes(moved.pin.ItemId), "a moved pin counts as checked");
+  expect(mine("ActivityEvent").some((e) => e.recordId === m201.ItemId && e.action === "pinChecked" && e.summary === "DESIGN checked that RFI-002 still fits rev A"), "history");
+  const reg = (await call("pm", { action: "list" })).sheets.find((x) => x.sheetNumber === "M-201");
+  expect(reg.impact.toCheck === 0 && reg.impact.changes === 2, JSON.stringify(reg.impact));
+});
+
+await test("impact: subcontractors confirm the current revision; the GC reminds, at most twice a day", async () => {
+  const revA = mine("SheetRevision").find((r) => r.sheetId === m201.ItemId && r.revisionLabel === "A");
+  refused(await call("pm", { action: "confirmRevision", revisionId: revA.ItemId }), "NOT_ALLOWED", "pm doesn't confirm");
+  refused(await call("sub", { action: "confirmRevision", revisionId: rev0.ItemId }), "NOT_CURRENT", "old revision");
+  ok(await call("sub", { action: "confirmRevision", revisionId: revA.ItemId }), "sub confirms");
+  const twice = await call("sub", { action: "confirmRevision", revisionId: revA.ItemId });
+  expect(twice.ok && twice.already, "twice is fine");
+  const sub = await call("sub", { action: "sheet", sheetId: m201.ItemId });
+  expect(sub.impact.mine.status === "confirmed" && sub.impact.mine.confirmedByName === "SUB", JSON.stringify(sub.impact.mine));
+  refused(await call("sub", { action: "remindRevision", revisionId: revA.ItemId }), "NOT_ALLOWED", "sub doesn't remind");
+  refused(await call("design", { action: "remindRevision", revisionId: revA.ItemId }), "NOT_ALLOWED", "designer doesn't remind");
+  sent.length = 0;
+  const r = await call("supt", { action: "remindRevision", revisionId: revA.ItemId });
+  ok(r, "supt reminds");
+  expect(r.reminded.join(",") === "Sub Two" && r.skipped === 0, JSON.stringify(r));
+  const b = bells("drawing.revision_reminder");
+  expect(b.length === 1 && b[0].userIds.join(",") === "sub2" && b[0].payload.title === "Confirm M-201 rev A", JSON.stringify(b));
+  const soon = await call("pm", { action: "remindRevision", revisionId: revA.ItemId, companyId: "sub2-co" });
+  expect(soon.reminded.length === 0 && soon.skipped === 1, "not again within 12 hours");
+  refused(await call("pm", { action: "remindRevision", revisionId: revA.ItemId, companyId: "nobody" }), "NOT_FOUND", "unknown company");
+  const pm = await call("pm", { action: "sheet", sheetId: m201.ItemId });
+  expect(pm.impact.confirmed === 1 && pm.impact.companies.find((c) => c.companyId === "sub2-co").remindedAt, JSON.stringify(pm.impact.companies));
+  ok(await call("sub2", { action: "confirmRevision", revisionId: revA.ItemId }), "sub2 confirms after the reminder");
+  const reg = (await call("pm", { action: "list" })).sheets.find((x) => x.sheetNumber === "M-201");
+  expect(reg.impact.confirmed === 2 && reg.impact.total === 2, JSON.stringify(reg.impact));
+  expect((await call("sub", { action: "list" })).sheets.find((x) => x.sheetNumber === "M-201").impact.mine === "confirmed", "sub's register knows");
+});
+
+await test("impact: asking holders again; a newer revision starts over", async () => {
+  const revA = mine("SheetRevision").find((r) => r.sheetId === m201.ItemId && r.revisionLabel === "A");
+  ok(await call("supt", { action: "checkPin", pinId: (await call("pm", { action: "sheet", sheetId: m201.ItemId })).pins.find((p) => p.number === "RFI-002").ItemId, undo: true }), "RFI-002 unchecked");
+  sent.length = 0;
+  refused(await call("design", { action: "askHolders", revisionId: revA.ItemId }), "NOT_ALLOWED", "designer");
+  const asked = await call("pm", { action: "askHolders", revisionId: revA.ItemId });
+  expect(asked.ok && asked.notified === 1 && bells("drawing.revision_impact")[0].userIds.join(",") === "design", JSON.stringify(asked));
+  ok(await publish("pm", [{ sheetNumber: "M-201", title: "Level 2 HVAC", discipline: "Mechanical", revisionLabel: "B" }]), "rev B");
+  refused(await call("pm", { action: "askHolders", revisionId: revA.ItemId }), "NOT_CURRENT", "rev A is superseded");
+  const revB = mine("SheetRevision").find((r) => r.sheetId === m201.ItemId && r.revisionLabel === "B");
+  refused(await call("pm", { action: "askHolders", revisionId: revB.ItemId }), "NOT_COMPARED", "not compared yet");
+  const sub = await call("sub", { action: "sheet", sheetId: m201.ItemId });
+  expect(sub.impact.revisionLabel === "B" && sub.impact.mine.status === "opened", JSON.stringify(sub.impact.mine));
+  ok(await call("pm", { action: "saveChanges", revisionId: revB.ItemId, status: "compared", areas: [] }), "no visible change");
+  const pm = await call("pm", { action: "sheet", sheetId: m201.ItemId });
+  expect(pm.impact.state === "compared" && pm.impact.areas.length === 0 && pm.impact.toCheck.length === 0, JSON.stringify(pm.impact));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

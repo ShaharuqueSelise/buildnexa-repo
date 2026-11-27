@@ -63,6 +63,9 @@ const dtos = {
     ...id("thumbnailFileId", "uploadedBy"),
     ...date("uploadedAt")
   ],
+  // Revision impact (docs/architecture/02-drawings.md §4.7): one area of a sheet that changed
+  // between two revisions, as fractions 0..1 of the page (origin top left, like pins).
+  ChangeArea: [f("x", "Float"), f("y", "Float"), f("w", "Float"), f("h", "Float")],
   // One version of a document (newest last). A restored version points at the same file.
   DocVersion: [
     ...int("versionNo"),
@@ -296,7 +299,13 @@ const entities = {
     ...id("voidedByUserId"),
     f("lastChange", "LastChange"),
     ...bool("isVoided"),
-    ...str("voidReason")
+    ...str("voidReason"),
+    // Revision impact: the browser compares this revision with the previous one and saves where
+    // the drawing changed. changesStatus: first | pending | compared | redrawn | notComparable | failed
+    ...str("changesStatus"),
+    f("changeAreas", "ChangeArea", true),
+    ...date("changesComparedAt"),
+    ...id("changesComparedByUserId")
   ],
   // A pin belongs to the sheet and shows on every revision from fromRevisionIndex up to
   // toRevisionIndex (0 = still open). Moving a pin on a newer revision closes the old row.
@@ -312,7 +321,24 @@ const entities = {
     ...date("createdAt", "voidedAt"),
     ...id("voidedByUserId"),
     f("lastChange", "LastChange"),
-    ...bool("isVoided")
+    ...bool("isVoided"),
+    // Revision impact: someone checked that the pin still fits the revision with this index.
+    ...int("checkedRevisionIndex"),
+    ...id("checkedByUserId"),
+    ...str("checkedByName"),
+    ...date("checkedAt")
+  ],
+  // Revision impact: one row per subcontractor company and revision. "opened" when someone of the
+  // company first opens the revision, "confirmed" when they confirm they build to it.
+  RevisionAck: [
+    ...PROJECT,
+    ...id("sheetId", "revisionId", "companyId"),
+    ...int("revisionIndex", "version"),
+    ...str("sheetNumber", "revisionLabel", "companyName", "status"), // status: opened | confirmed
+    ...date("openedAt", "confirmedAt", "remindedAt"),
+    ...id("openedByUserId", "confirmedByUserId"),
+    ...str("confirmedByName"),
+    f("lastChange", "LastChange")
   ],
   Photo: [
     ...PROJECT,
@@ -478,6 +504,7 @@ const access = {
   // Drawings: only through the drawings Function (subcontractors see only the pins they can open).
   Sheet: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   SheetRevision: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  RevisionAck: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   Pin: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Photos: only through the photos Function (subcontractors see their company's photos and
   // photos on records they can open).

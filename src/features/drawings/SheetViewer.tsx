@@ -5,7 +5,9 @@
 // panel (revisions, pins, info). ?placePhoto=<photoId> (from "Pin on a drawing" on a log photo) makes the next tap pin that photo.
 // The page is drawn again at a higher resolution after zooming in, within a pixel budget that is
 // smaller on phones. Pins sit in page coordinates (0..1), so they stay on the spot at any zoom.
-// Not real yet: compare (R2), markups and offline sheets (R3).
+// The Changes tab (revision impact, ImpactPanel): red clouds where the newest revision changed, a "!"
+// on open items pinned there, and each subcontractor's "we build to rev X".
+// Not real yet: side-by-side compare (R2), markups and offline sheets (R3).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import {
@@ -27,6 +29,8 @@ import { fetchBytes, pdfjs, saveUrlAs } from "../files/FileViewer";
 import { RfiFormDialog, makeRfiCtx } from "../rfis/RfisPage";
 import { PunchHereDialog } from "../punch/PunchPage";
 import { addPendingPin, refreshDrawings, showSavingPin, useDrawingAction, useSheet } from "./drawingsApi";
+import { compareRevision, useComparing } from "./compare";
+import { ImpactPanel } from "./ImpactPanel";
 import type { Revision, SheetDetail, SheetPin } from "./drawingsApi";
 import { DEFAULT_SET, UploadDialog, errorText } from "./DrawingsPage";
 import type { T, Toast } from "./DrawingsPage";
@@ -47,7 +51,7 @@ const dayOf = (iso?: string) => (iso ? new Date(`${iso}T12:00:00Z`).toLocaleDate
 const whenOf = (iso?: string) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
 
 type View = { s: number; tx: number; ty: number };
-type SideTab = "revisions" | "pins" | "info";
+type SideTab = "revisions" | "changes" | "pins" | "info";
 
 const query = () => new URLSearchParams(window.location.search);
 const aspect = (r?: Revision) => (r && r.pageWidthPt > 0 ? r.pageHeightPt / r.pageWidthPt : 0);
@@ -203,7 +207,8 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
   const [moving, setMoving] = useState<string>();
   const [draft, setDraft] = useState<{ x: number; y: number } | null>(null);
   const [selPin, setSelPin] = useState<string | null>(() => query().get("pin"));
-  const [tab, setTab] = useState<SideTab>(() => (query().get("pin") ? "pins" : "revisions"));
+  const [tab, setTab] = useState<SideTab>(() => (query().get("tab") === "changes" && data.impact ? "changes" : query().get("pin") ? "pins" : "revisions"));
+  const [showClouds, setShowClouds] = useState(true);
   const [showClosed, setShowClosed] = useState(true);
   const [showRfi, setShowRfi] = useState(true);
   const [showPunch, setShowPunch] = useState(true);
@@ -246,6 +251,19 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
     return Boolean(a && b && Math.abs(a - b) / b > 0.01);
   };
   const misplaced = onThis.filter(outOfPlace).length;
+  // ----- revision impact -----
+  const impact = data.impact;
+  const comparing = useComparing(impact?.revisionId);
+  const onImpactRev = Boolean(impact && impact.revisionIndex === R);
+  const toCheckIds = new Set(onImpactRev ? impact?.toCheck ?? [] : []);
+  const clouds = onImpactRev && showClouds && impact?.state === "compared" ? impact.areas : [];
+  // Nobody compared the newest revision yet (the uploader closed the tab): whoever uploads drawings does it now.
+  useEffect(() => {
+    if (impact?.state === "pending" && (can.upload || can.manage)) {
+      void compareRevision({ projectId, sheetId: sheet.ItemId, revisionId: impact.revisionId, detail: data, queryClient });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [impact?.state, impact?.revisionId, can.upload, can.manage, projectId, sheet.ItemId, queryClient]);
   const pinnedIds = new Set(data.pins.filter((p) => onRevision(p, current?.revisionIndex ?? 0)).map((p) => p.recordId));
   // Only open RFIs and active punch items without a pin are offered; a closed one keeps the pins it has.
   const linkable = [
@@ -559,8 +577,13 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
               {viewed?.pdfUrl ? <PdfSheet key={viewed.ItemId} url={viewed.pdfUrl} paperW={PAPER_W} paperH={paperH} scale={view.s} t={t} /> : (
                 <div className="m-drw-sheet-wait" style={{ width: PAPER_W, height: paperH }}><Ban size={30} /><span>{t(viewed?.status === "void" ? "drw.v.voidNoPdf" : "drw.v.noPdf")}</span></div>
               )}
+              {clouds.map((a, i) => (
+                <span key={`cloud-${i}`} className="m-drw-cloud" style={{ left: a.x * PAPER_W, top: a.y * paperH, width: a.w * PAPER_W, height: a.h * paperH, borderWidth: Math.max(2, 2.5 / view.s) }}>
+                  <b style={{ transform: `scale(${1 / view.s})` }}>{i + 1}</b>
+                </span>
+              ))}
               {shown.map((p) => (
-                <PinMarker key={p.ItemId} pin={p} scale={view.s} paperW={PAPER_W} paperH={paperH} warn={outOfPlace(p)} selected={p.ItemId === selPin}
+                <PinMarker key={p.ItemId} pin={p} scale={view.s} paperW={PAPER_W} paperH={paperH} warn={outOfPlace(p) || toCheckIds.has(p.ItemId)} selected={p.ItemId === selPin}
                   onSelect={() => { setDraft(null); setConfirmRemove(false); setSelPin(p.ItemId); setTab("pins"); }} />
               ))}
               {draft ? (
@@ -584,6 +607,7 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
               <Badge tone="amber">{punchCount === 1 ? t("drw.v.punchPin1") : fmt(t("drw.v.punchPins"), { count: punchCount })}</Badge>
               {photoCount ? <Badge tone="teal">{photoCount === 1 ? t("drw.photo.pin1") : fmt(t("drw.photo.pins"), { count: photoCount })}</Badge> : null}
               {data.hiddenPins ? <Badge tone="gray">{fmt(t("drw.v.hiddenBadge"), { count: data.hiddenPins })}</Badge> : null}
+              {toCheckIds.size ? <button type="button" className="m-drw-legend-btn" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()} onClick={() => setTab("changes")}><Badge tone="red">{fmt(t("drw.v.toCheckBadge"), { count: toCheckIds.size })}</Badge></button> : null}
             </div>
             {anchor && popStyle ? (
               <div ref={popRef} className="m-drw-pop" style={popStyle}onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
@@ -689,6 +713,7 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
             onChange={setTab}
             tabs={[
               { key: "revisions", label: t("drw.v.tab.revisions"), count: revisions.filter((r) => r.status !== "void").length },
+              ...(impact ? [{ key: "changes" as const, label: <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{t("drw.v.tab.changes")}{comparing ? <Loader2 className="spin" size={12} /> : null}</span>, count: impact.toCheck.length || undefined }] : []),
               { key: "pins", label: t("drw.v.tab.pins"), count: onThis.length },
               { key: "info", label: t("drw.v.tab.info") }
             ]}
@@ -721,6 +746,24 @@ function Viewer({ projectId, data, onNavigate, toast, t }: { projectId: string; 
                   )
                 }))} />
               </div>
+            ) : null}
+
+            {tab === "changes" && impact ? (
+              <ImpactPanel
+                projectId={projectId}
+                data={data}
+                impact={impact}
+                comparing={comparing}
+                viewingIndex={R}
+                showClouds={showClouds}
+                myName={ws?.team.find((m) => m.userId === myUserId && m.projectId === projectId)?.displayName ?? ""}
+                t={t}
+                toast={toast}
+                onShowClouds={setShowClouds}
+                onFocus={(x, y, pinId) => { if (!onImpactRev) viewRev(impact.revisionIndex); setDraft(null); setSelPin(pinId ?? null); focusOn(x, y); }}
+                onMove={(p) => { if (!onImpactRev) viewRev(impact.revisionIndex); setSelPin(null); setMoving(p.ItemId); toast(fmt(t("drw.imp.moveHint"), { number: p.number, label: impact.revisionLabel })); }}
+                onViewCurrent={() => viewRev(impact.revisionIndex)}
+              />
             ) : null}
 
             {tab === "pins" ? (
