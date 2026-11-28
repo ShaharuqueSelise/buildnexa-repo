@@ -1,0 +1,282 @@
+{
+  "schemaName": "Submittal",
+  "collectionName": "Submittals",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "number",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "seq",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "version",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "revision",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "clientRequestId",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "title",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "specSection",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "specSectionTitle",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "type",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "status",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "decision",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "responsibleCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "responsibleUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "gcReviewerUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "designReviewerUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "responsibleCompanyName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "responsibleName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "gcReviewerName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "designReviewerName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "requiredOnSiteDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "submitByDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "dueDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "leadTimeDays",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "gcReviewDays",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "designReviewDays",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "ballInCourtUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "ballInCourtName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "ballInCourtRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "files",
+      "type": "Attachment",
+      "isArray": true
+    },
+    {
+      "name": "decisionFiles",
+      "type": "Attachment",
+      "isArray": true
+    },
+    {
+      "name": "decisionComment",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "description",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "internalNotes",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "createdByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "createdByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "createdAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "sentAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "submittedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "forwardedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "decidedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "stepStartedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "decidedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "decidedByName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "dueSoonNotifiedFor",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "overdueNoticeLastDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "submitByNotifiedFor",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "lastChange",
+      "type": "LastChange",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    },
+    {
+      "name": "voidedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "voidedByUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "voidReason",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "searchText",
+      "type": "String",
+      "isArray": false
+    }
+  ]
+}

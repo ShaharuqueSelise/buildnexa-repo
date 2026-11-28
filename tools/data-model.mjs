@@ -393,6 +393,52 @@ const entities = {
     ...id("voidedByUserId"),
     ...str("voidReason", "searchText")
   ],
+  // Submittals (docs/architecture/04-submittals.md, changed like the other modules: written and
+  // read only by the submittals Function, which checks the caller's role and company itself, so no
+  // responsibleCompanyUserIds copy). One row per number; the current revision's package and the last
+  // decision's markups live on the row, every finished step is a SubmittalReview row.
+  Submittal: [
+    ...PROJECT,
+    ...str("number"), // SUB-014
+    ...int("seq", "version", "revision"), // version: compare-and-set guard; revision: 0, then +1 per resubmission
+    ...str("clientRequestId", "title", "specSection", "specSectionTitle", "type"), // type: shopDrawing | productData | sample | mockup | calculation | certificate | warranty | other
+    ...str("status", "decision"), // status: draft | awaitingSubmission | inGcReview | inDesignReview | closed | void; decision: approved | approvedAsNoted | reviseResubmit | rejected
+    ...id("responsibleCompanyId", "responsibleUserId", "gcReviewerUserId", "designReviewerUserId"),
+    ...str("responsibleCompanyName", "responsibleName", "gcReviewerName", "designReviewerName"),
+    ...str("requiredOnSiteDate", "submitByDate", "dueDate"), // yyyy-MM-dd in the project's timezone; dueDate: the current step's
+    ...int("leadTimeDays", "gcReviewDays", "designReviewDays"), // lead time in calendar days, review in working days
+    ...id("ballInCourtUserId"),
+    ...str("ballInCourtName", "ballInCourtRole"), // role: gc | sub | reviewer | none
+    f("files", "Attachment", true), // the current revision's package, from the submit step
+    f("decisionFiles", "Attachment", true), // the last decision's marked-up files
+    ...str("decisionComment", "description", "internalNotes"),
+    ...id("createdByUserId", "createdByCompanyId"),
+    ...str("createdByName"),
+    ...date("createdAt", "sentAt", "submittedAt", "forwardedAt", "decidedAt", "stepStartedAt"),
+    ...id("decidedByUserId"),
+    ...str("decidedByName"),
+    ...str("dueSoonNotifiedFor", "overdueNoticeLastDate", "submitByNotifiedFor"), // reminder markers (Part 4)
+    f("lastChange", "LastChange"),
+    ...bool("isVoided"),
+    ...date("voidedAt"),
+    ...id("voidedByUserId"),
+    ...str("voidReason", "searchText")
+  ],
+  // One finished step of one revision: the submission, the GC check or the design review.
+  SubmittalReview: [
+    ...PROJECT,
+    ...id("submittalId"),
+    ...str("submittalNumber"),
+    ...int("revision", "stepOrder"), // 1 submit, 2 GC check, 3 design review
+    ...str("stepType", "outcome"), // stepType: submit | gcReview | designReview; outcome: submitted | forwarded | returnedIncomplete | approved | approvedAsNoted | reviseResubmit | rejected
+    ...str("comment"),
+    f("attachments", "Attachment", true),
+    ...id("actorUserId", "actorCompanyId"),
+    ...str("actorName", "actorRole"),
+    ...date("startedAt", "completedAt"),
+    ...str("dueDate"),
+    ...bool("isVoided")
+  ],
   // Comments on a record (punch items first). Written by the module's Function, so the author is
   // stored here (Blocks' own CreatedBy is the service identity).
   Comment: [
@@ -511,6 +557,9 @@ const access = {
   Photo: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Punch list: only through the punch Function (subcontractors see their company's items).
   PunchItem: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  // Submittals: only through the submittals Function (subcontractors see their company's).
+  Submittal: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
+  SubmittalReview: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },
   // Daily logs: only through the daily-logs Function (subcontractors see the day's header and their
   // own company's crew; owners see submitted logs only).
   DailyLog: { view: [SERVICE], create: [SERVICE], edit: [SERVICE] },

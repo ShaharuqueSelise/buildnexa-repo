@@ -1,0 +1,97 @@
+{
+  "schemaName": "SubmittalReview",
+  "collectionName": "SubmittalReviews",
+  "schemaType": 1,
+  "fields": [
+    {
+      "name": "tenantRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "projectId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "submittalId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "submittalNumber",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "revision",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "stepOrder",
+      "type": "Int",
+      "isArray": false
+    },
+    {
+      "name": "stepType",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "outcome",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "comment",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "attachments",
+      "type": "Attachment",
+      "isArray": true
+    },
+    {
+      "name": "actorUserId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "actorCompanyId",
+      "type": "ID",
+      "isArray": false
+    },
+    {
+      "name": "actorName",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "actorRole",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "startedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "completedAt",
+      "type": "DateTime",
+      "isArray": false
+    },
+    {
+      "name": "dueDate",
+      "type": "String",
+      "isArray": false
+    },
+    {
+      "name": "isVoided",
+      "type": "Boolean",
+      "isArray": false
+    }
+  ]
+}

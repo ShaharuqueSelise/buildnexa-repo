@@ -592,7 +592,10 @@ const PROJECT_PERMISSIONS = {
   "submittal.view_own": [SUB],
   "submittal.manage": [PM, DC],
   "submittal.upload_own": [SUB],
-  "submittal.review": [PM, DESIGN],
+  "submittal.review": [PM, DESIGN], // design: when assigned; the PM may decide for the design team
+  "submittal.void": [PM],
+  "submittal.comment": [PM, SUPT, DC, DESIGN, SUB], // subcontractors on their company's; the owner reads only
+  "submittal.see_internal": [PM, SUPT, DC], // internal notes
   // Daily logs
   "daily_log.view": [PM, SUPT, DC], // every section, drafts included
   "daily_log.view_submitted": [OWNER], // submitted logs only; designers get none (decided 2026-11-26)

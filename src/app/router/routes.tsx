@@ -18,6 +18,7 @@ import { ComingSoonPage } from "../../features/home/ComingSoonPage";
 import { HomePage } from "../../features/home/HomePage";
 import { PlatformAdminPage } from "../../features/platform/PlatformAdminPage";
 import { RfisPage } from "../../features/rfis/RfisPage";
+import { SubmittalsPage } from "../../features/submittals/SubmittalsPage";
 import { DocumentsPage } from "../../features/documents/DocumentsPage";
 import { DrawingsPage } from "../../features/drawings/DrawingsPage";
 import { PhotosPage } from "../../features/photos/PhotosPage";
@@ -39,6 +40,7 @@ type PageProps = { onNavigate: (path: string) => void; params?: string[] };
 const protectedRoutes: Record<string, ComponentType<PageProps>> = {
   "/": HomePage,
   "/rfis": RfisPage,
+  "/submittals": SubmittalsPage,
   "/drawings": DrawingsPage,
   "/photos": PhotosPage,
   "/punch": PunchPage,
@@ -55,7 +57,7 @@ const protectedRoutes: Record<string, ComponentType<PageProps>> = {
 };
 
 // Pages that also open one record by id: /rfis/<id> renders the /rfis page with params ["<id>"].
-const ROUTES_WITH_ID = new Set(["/rfis", "/photos", "/drawings", "/punch", "/daily-logs"]);
+const ROUTES_WITH_ID = new Set(["/rfis", "/submittals", "/photos", "/drawings", "/punch", "/daily-logs"]);
 
 function matchRoute(path: string): { base: string; params: string[] } {
   if (protectedRoutes[path]) return { base: path, params: [] };

@@ -1,10 +1,10 @@
 // Project home (PRJ-02), built from the demo app's HomePage (mock/src/mock/pages/HomePage.tsx):
 // the project header, quick actions, "My items" first, then the project's health.
 // Real now: the header (project, dates, time elapsed, contract value for cost roles), the role
-// notes, "My items" for RFIs and punch items (ball in court on me), and the RFI and punch numbers.
-// Submittals, daily logs and activity fill in as each module is built; until then their panels say
-// which phase brings them.
-import { CalendarDays, Camera, CheckCircle2, ClipboardCheck, FileQuestion, HardHat, Lock, MapPin, Plus, Users } from "lucide-react";
+// notes, "My items" for RFIs, submittals and punch items (ball in court on me), and the RFI,
+// submittal and punch numbers. Daily logs and activity fill in as each module is built; until then
+// their panels say which phase brings them.
+import { CalendarDays, Camera, CheckCircle2, ClipboardCheck, FileQuestion, FileStack, HardHat, Lock, MapPin, Plus, Users } from "lucide-react";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { useT } from "../../lib/i18n/LocalizationProvider";
@@ -20,6 +20,9 @@ import { DueLabel, StatusPill } from "../rfis/RfisPage";
 import { punchOnMe, usePunchList } from "../punch/punchApi";
 import type { PunchRow } from "../punch/punchApi";
 import { StatusPill as PunchStatusPill } from "../punch/PunchPage";
+import { submittalsOnMe, useSubmittalList } from "../submittals/submittalsApi";
+import type { SubmittalRow } from "../submittals/submittalsApi";
+import { ViewPill } from "../submittals/submittalsUi";
 import "./Home.css";
 import { Sk, SkRows, SkeletonPage } from "../../shared/m/Skeleton";
 
@@ -36,7 +39,15 @@ function punchAction(p: PunchRow): "verify" | "start" | "fix" {
   return p.status === "open" ? "start" : "fix";
 }
 
-type MineRow = { key: string; kind: "rfi" | "punch"; number: string; title: string; status: ReactNode; due?: string; over: boolean; done: boolean; action: string; link: string };
+// What the person does next on a submittal that waits on them.
+function submittalAction(s: SubmittalRow): "finish" | "upload" | "resubmit" | "checkForward" | "decide" {
+  if (s.status === "draft") return "finish";
+  if (s.status === "inGcReview") return "checkForward";
+  if (s.status === "inDesignReview") return "decide";
+  return Number(s.revision) > 0 ? "resubmit" : "upload";
+}
+
+type MineRow = { key: string; kind: "rfi" | "submittal" | "punch"; number: string; title: string; status: ReactNode; due?: string; over: boolean; done: boolean; action: string; link: string };
 
 const DAY = 86_400_000;
 const daysBetween = (a: number, b: number) => Math.round((b - a) / DAY);
@@ -49,6 +60,8 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
   const rfiList = useRfiList(myRole ? project?.ItemId : undefined);
   const seesPunch = Boolean(myRole) && myRole !== "design-reviewer";
   const punchList = usePunchList(seesPunch ? project?.ItemId : undefined);
+  // Every project role sees submittals (a subcontractor only their company's).
+  const subList = useSubmittalList(myRole ? project?.ItemId : undefined);
   const [showAllMine, setShowAllMine] = useState(false);
 
   if (query.isLoading) return <SkeletonPage kind="home" label={t("shell.loading")} />;
@@ -92,11 +105,17 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
   const rfisLoading = rfiList.isLoading && Boolean(myRole);
   const punch = punchList.data?.items ?? [];
   const punchLoading = punchList.isLoading && seesPunch;
+  const subs = subList.data?.submittals ?? [];
+  const subsLoading = subList.isLoading && Boolean(myRole);
   const mine: MineRow[] = [
     ...rfisOnMe(rfis, myUserId, today).map((r): MineRow => ({
       key: r.ItemId, kind: "rfi", number: r.number || t("rfi.status.draft"), title: r.subject, status: <StatusPill status={r.status} t={t} />,
       due: r.dueDate, over: r.status === "open" && Boolean(r.dueDate) && String(r.dueDate) < today, done: r.status !== "open" && r.status !== "draft",
       action: t(`home.action.${rfiAction(r)}`), link: `/rfis/${r.ItemId}`
+    })),
+    ...submittalsOnMe(subs, myUserId).map((x): MineRow => ({
+      key: x.ItemId, kind: "submittal", number: `${x.number} rev ${Number(x.revision ?? 0)}`, title: x.title, status: <ViewPill s={x} t={t} />,
+      due: x.dueDate, over: x.overdue, done: false, action: t(`home.action.${submittalAction(x)}`), link: `/submittals/${x.ItemId}`
     })),
     ...punchOnMe(punch, myUserId).map((p): MineRow => ({
       key: p.ItemId, kind: "punch", number: p.number, title: p.location ? `${p.title} · ${p.location}` : p.title, status: <PunchStatusPill status={p.status} t={t} />,
@@ -108,7 +127,10 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
   const openPunch = punch.filter((p) => p.status === "open" || p.status === "inProgress" || p.status === "readyForReview");
   const readyPunch = openPunch.filter((p) => p.status === "readyForReview").length;
   const overduePunch = openPunch.filter((p) => p.overdue).length;
-  const mineLoading = rfisLoading || punchLoading;
+  const mineLoading = rfisLoading || punchLoading || subsLoading;
+  // Submittals in review or not yet submitted (drafts and decided ones aside), and the overdue ones.
+  const openSubs = subs.filter((x) => x.status === "awaitingSubmission" || x.status === "inGcReview" || x.status === "inDesignReview");
+  const overdueSubs = openSubs.filter((x) => x.overdue).length;
   const openRfis = rfis.filter((r) => r.status === "open" || r.status === "answered");
   const answeredRfis = rfis.filter((r) => r.status === "answered").length;
   const overdueRfis = openRfis.filter((r) => r.status === "open" && r.dueDate && r.dueDate < today);
@@ -155,7 +177,7 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
         </div>
       ) : null}
 
-      {!mineLoading && !rfiList.isError && rfis.length === 0 && punch.length === 0 ? (
+      {!mineLoading && !rfiList.isError && rfis.length === 0 && punch.length === 0 && subs.length === 0 ? (
         <Panel>
           <Empty icon={<HardHat size={28} />} title={t("home.emptyTitle")}>{t("home.emptyText")}</Empty>
         </Panel>
@@ -178,9 +200,9 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
               <div className="m-home-mine">
                 {shownMine.map((r) => (
                   <button key={`${r.kind}-${r.key}`} className={cx("m-home-mine-row", r.over && "m-home-mine-over")} onClick={() => onNavigate(r.link)}>
-                    <span className="m-home-mine-icon">{r.kind === "punch" ? <ClipboardCheck size={16} /> : <FileQuestion size={16} />}</span>
+                    <span className="m-home-mine-icon">{r.kind === "punch" ? <ClipboardCheck size={16} /> : r.kind === "submittal" ? <FileStack size={16} /> : <FileQuestion size={16} />}</span>
                     <span className="m-home-mine-text">
-                      <span className="m-row" style={{ gap: 6 }}><b className="m-mono">{r.number}</b><span className="m-muted m-small">{r.kind === "punch" ? t("home.kindPunch") : "RFI"}</span></span>
+                      <span className="m-row" style={{ gap: 6 }}><b className="m-mono">{r.number}</b><span className="m-muted m-small">{r.kind === "punch" ? t("home.kindPunch") : r.kind === "submittal" ? t("home.kindSubmittal") : "RFI"}</span></span>
                       <span className="m-home-mine-title">{r.title}</span>
                       <span className="m-small m-muted">{r.action}</span>
                     </span>
@@ -208,7 +230,13 @@ export function HomePage({ onNavigate }: { onNavigate: (path: string) => void })
               tone={overdueRfis.length ? "red" : "green"}
               onClick={() => onNavigate("/rfis")}
             />
-            <Kpi label={t("home.kpi.overdueSubmittals")} value="—" hint={later(4)} />
+            <Kpi
+              label={t("home.kpi.overdueSubmittals")}
+              value={subsLoading ? <Sk w={40} h={24} /> : subList.isError ? "—" : overdueSubs}
+              hint={fmt(t("home.kpi.overdueSubmittalsHint"), { count: openSubs.length })}
+              tone={overdueSubs ? "red" : "green"}
+              onClick={() => onNavigate("/submittals")}
+            />
             {seesPunch ? (
               <Kpi
                 label={isSub ? t("home.kpi.myPunch") : t("home.kpi.openPunch")}

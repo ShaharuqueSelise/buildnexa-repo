@@ -1,0 +1,59 @@
+/* Submittals page (from mock/src/mock/pages/SubmittalsPage.css): register, New submittal formula,
+   the submittal's header. The review chain and the action panel come with Part 3. */
+.m-subs-head { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; margin-bottom: 16px; }
+.m-subs-head h1 { font-size: 22px; margin: 4px 0 6px; }
+.m-subs-meta { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.m-subs-back { margin-bottom: 8px; }
+.m-subs-rev { background: hsl(var(--foreground)); border-radius: 6px; color: hsl(var(--background)); font-size: 11.5px; font-weight: 600; padding: 3px 7px; }
+.m-subs-c-num { white-space: nowrap; }
+.m-subs-rev-sm { background: hsl(var(--secondary)); border-radius: 5px; color: hsl(var(--muted-foreground)); font-size: 10.5px; font-weight: 600; margin-left: 6px; padding: 1px 5px; }
+.m-subs-late { color: hsl(var(--m-red-fg)); font-weight: 600; }
+.m-subs-formula { align-items: center; background: hsl(var(--secondary)); border-radius: 10px; display: flex; flex-wrap: wrap; font-size: 13px; gap: 6px; padding: 10px 12px; }
+.m-subs-formula b { font-variant-numeric: tabular-nums; }
+.m-subs-title { font-weight: 600; }
+.m-subs-title small { color: hsl(var(--muted-foreground)); display: block; font-weight: 400; }
+.m-subs-only-mobile { display: none !important; }
+
+/* The submittal page (Part 3): review chain, Your action, files, comments. */
+.m-subs-chain { display: grid; gap: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 14px; }
+.m-subs-node { align-items: center; display: flex; flex-direction: column; gap: 6px; padding: 0 6px; position: relative; text-align: center; }
+.m-subs-node::before { background: hsl(var(--border)); content: ""; height: 3px; left: -50%; position: absolute; top: 21px; width: 100%; z-index: 0; }
+.m-subs-node:first-child::before { display: none; }
+.m-subs-node-done::before, .m-subs-node-current::before, .m-subs-node-bad::before { background: hsl(var(--m-green-fg) / .7); }
+.m-subs-node-icon { align-items: center; background: hsl(var(--card)); border: 2px solid hsl(var(--border)); border-radius: 999px; color: hsl(var(--muted-foreground)); display: inline-flex; height: 44px; justify-content: center; position: relative; width: 44px; z-index: 1; }
+.m-subs-node-done .m-subs-node-icon { background: hsl(var(--m-green-bg)); border-color: hsl(var(--m-green-fg)); color: hsl(var(--m-green-fg)); }
+.m-subs-node-current .m-subs-node-icon { background: hsl(var(--primary)); border-color: hsl(var(--primary)); box-shadow: 0 0 0 5px hsl(var(--primary) / .18); color: #fff; }
+.m-subs-node-bad .m-subs-node-icon { background: hsl(var(--m-red-bg)); border-color: hsl(var(--m-red-fg)); color: hsl(var(--m-red-fg)); }
+.m-subs-node-title { font-size: 13px; font-weight: 600; }
+.m-subs-node-sub { color: hsl(var(--muted-foreground)); font-size: 12px; }
+.m-subs-ball { background: hsl(var(--primary)); border-radius: 999px; color: #fff; font-size: 10.5px; font-weight: 600; letter-spacing: .03em; padding: 2px 8px; text-transform: uppercase; }
+.m-subs-action { border: 1px solid hsl(var(--primary) / .4); box-shadow: 0 0 0 3px hsl(var(--primary) / .07); }
+.m-subs-quote { border-left: 3px solid hsl(var(--m-amber-fg)); color: hsl(var(--muted-foreground)); margin: 0 0 8px; padding: 2px 0 2px 10px; white-space: pre-wrap; }
+.m-subs-msg-text { margin: 6px 0 0; white-space: pre-wrap; }
+.m-subs-composer { display: grid; gap: 8px; }
+.m-subs-pick { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); max-height: 280px; overflow-y: auto; }
+
+/* Phones: the register becomes cards (number + status, title, whose turn + due date). */
+@media (max-width: 640px) {
+  .m-subs-table { background: transparent; border: 0; }
+  .m-subs-table thead { display: none; }
+  .m-subs-table table, .m-subs-table tbody { display: block; }
+  .m-subs-table tr { background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 12px; display: grid; gap: 6px 10px; grid-template-areas: "num status" "title title" "ball due"; grid-template-columns: minmax(0, 1fr) auto; margin-bottom: 10px; padding: 12px 14px; }
+  .m-subs-table td { border: 0; padding: 0; }
+  .m-subs-table td.m-hide-mobile { display: none; }
+  .m-subs-c-num { grid-area: num; }
+  .m-subs-c-status { grid-area: status; justify-self: end; }
+  .m-subs-c-title { grid-area: title; }
+  .m-subs-c-ball { grid-area: ball; min-width: 0; }
+  .m-subs-c-due { align-self: center; grid-area: due; justify-self: end; white-space: nowrap; }
+  .m-subs-only-mobile { display: block !important; }
+  .m-subs-head h1 { font-size: 19px; }
+  .m-subs-chain { gap: 8px 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .m-subs-node:nth-child(3)::before { display: none; }
+  .m-subs-node-icon { height: 36px; width: 36px; }
+  .m-subs-node::before { top: 17px; }
+  /* One column that may shrink below its content's widest word (a plain 1fr can't). */
+  .m-subs-detail.m-grid-main, .m-subs-detail > .m-stack-v, .m-subs-detail .m-panel .m-stack-v { grid-template-columns: minmax(0, 1fr); }
+  /* Long action labels ("Submit on behalf of Elektro Braun GmbH") wrap instead of pushing out. */
+  .m-subs-detail .m-panel .m-btn { height: auto; min-height: 38px; padding-bottom: 8px; padding-top: 8px; text-align: left; white-space: normal; }
+}
